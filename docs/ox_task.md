@@ -38,14 +38,14 @@
   - `docker-compose.yaml` PostgreSQL 설정 추가
   - 로컬 개발환경 설정 스크립트
 
-- [ ] **2.1.2** 환경 설정 및 Configuration
+- [x] **2.1.2** 환경 설정 및 Configuration
 
   - `myapi/utils/config.py` 개선
   - Pydantic Settings 클래스 구현
   - 환경별 설정 분리 (development, staging, production)
   - OAuth 및 EOD API 설정
 
-- [ ] **2.1.3** 로깅 및 미들웨어 설정
+- [x] **2.1.3** 로깅 및 미들웨어 설정
   - 구조화된 로깅 설정 (JSON 포맷)
   - CORS 미들웨어 설정
   - 요청/응답 로깅 미들웨어

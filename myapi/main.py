@@ -8,7 +8,8 @@ from starlette.middleware.cors import CORSMiddleware
 from myapi import containers
 from myapi.exceptions.index import ServiceException
 from myapi.routers import health_router
-from myapi.utils.config import init_logging
+from myapi.utils.config import get_settings, init_logging
+
 
 app = FastAPI()
 load_dotenv("myapi/.env")
@@ -16,10 +17,11 @@ app.container = containers.Container()  # type: ignore
 
 init_logging()
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
