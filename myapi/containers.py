@@ -1,18 +1,21 @@
 from dependency_injector import containers, providers
 
-from myapi.database import get_db
+from myapi.database.session import get_db
 from myapi.services.aws_service import AwsService
-from myapi.utils.config import Settings
+from myapi.config import Settings
+
 
 class ConfigModule(containers.DeclarativeContainer):
     """Application configuration."""
 
     config = providers.Singleton(Settings)
 
+
 class RepositoryModule(containers.DeclarativeContainer):
     """Database repositories."""
 
     get_db = providers.Resource(get_db)
+
 
 class ServiceModule(containers.DeclarativeContainer):
     """Service layer dependencies."""
@@ -22,11 +25,12 @@ class ServiceModule(containers.DeclarativeContainer):
 
     aws_service = providers.Factory(AwsService, settings=config.config)
 
+
 class Container(containers.DeclarativeContainer):
     """Application container."""
 
     wiring_config = containers.WiringConfiguration(
-        modules=["myapi.routers.health_router"],
+        modules=["myapi.routers.batch_router"],
     )
 
     config = providers.Container(ConfigModule)

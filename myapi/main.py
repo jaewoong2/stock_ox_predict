@@ -1,55 +1,42 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+import asyncio
 import logging
-from dotenv import load_dotenv
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from mangum import Mangum
-from starlette.middleware.cors import CORSMiddleware
 
-from myapi import containers
-from myapi.exceptions.index import ServiceException
-from myapi.routers import health_router
-from myapi.utils.config import get_settings, init_logging
+from myapi.config import settings
+from myapi.database.connection import engine
+from myapi.middleware.rate_limit import RateLimitMiddleware
 
-
-app = FastAPI()
-load_dotenv("myapi/.env")
-app.container = containers.Container()  # type: ignore
-
-init_logging()
 logger = logging.getLogger(__name__)
-settings = get_settings()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    logger.info(f"Request: {request.method} {request.url}")
-    response = await call_next(request)
-    logger.info(f"Response: {response.status_code}")
-    return response
-
-
-@app.exception_handler(ServiceException)
-async def service_exception_handler(request: Request, exc: ServiceException):
-    logger.error(f"ServiceException: {exc.name} - {exc.detail}")
-    return JSONResponse(
-        status_code=400,
-        content={"error": exc.name, "detail": exc.detail},
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="O/X Prediction API",
+        version="1.0.0",
+        docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
+        redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
     )
 
+    # Middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-@app.get("/")
-def hello() -> dict:
-    return {"message": "Hello World!"}
+    # Rate Limiting Middleware
+    app.add_middleware(
+        RateLimitMiddleware,
+        exclude_paths=["/health", "/docs", "/openapi.json", "/redoc", "/metrics"],
+    )
+
+    # app.add_middleware(LoggingMiddleware) # This will be added later
+
+    return app
 
 
-app.include_router(health_router.router)
-
-handler = Mangum(app)
+app = create_app()

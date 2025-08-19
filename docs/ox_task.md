@@ -1,3 +1,4 @@
+
 # 미국주식 O/X 예측 서비스 - 작업 계획
 
 ## 1. 프로젝트 개요
@@ -38,14 +39,14 @@
   - `docker-compose.yaml` PostgreSQL 설정 추가
   - 로컬 개발환경 설정 스크립트
 
-- [x] **2.1.2** 환경 설정 및 Configuration
+- [ ] **2.1.2** 환경 설정 및 Configuration
 
   - `myapi/utils/config.py` 개선
   - Pydantic Settings 클래스 구현
   - 환경별 설정 분리 (development, staging, production)
   - OAuth 및 EOD API 설정
 
-- [x] **2.1.3** 로깅 및 미들웨어 설정
+- [ ] **2.1.3** 로깅 및 미들웨어 설정
   - 구조화된 로깅 설정 (JSON 포맷)
   - CORS 미들웨어 설정
   - 요청/응답 로깅 미들웨어
@@ -322,7 +323,6 @@
 - [ ] **3.5.1** EOD 데이터 수집 서비스
 
   - `myapi/services/eod_service.py` 생성
-  - Alpha Vantage API 클라이언트
   - Yahoo Finance API 클라이언트 (백업)
   - `crypto.eod_prices` 테이블 저장
   - `crypto.eod_fetch_logs` 로깅
@@ -415,7 +415,7 @@
   - Advisory Lock 동시성 제어
 
 - [ ] **4.1.3** 포인트 라우터 구현
-  - `myapi/routers/points_router.py` 생성
+  - `myapi/api/v1/points.py` 생성
   - `GET /v1/points/balance` - 잔액 조회
   - `GET /v1/points/ledger` - 내역 조회
 
@@ -447,7 +447,42 @@
   - 트랜잭션 기반 롤백 처리
 
 - [ ] **4.2.3** 리워드 라우터 구현
-  - `myapi/routers/rewards_router.py` 생성
+  - `myapi/api/v1/rewards.py` 생성
+  - `GET /v1/rewards` - 리워드 카탈로그 조회
+  - `POST /v1/rewards/{sku}/redeem` - 리워드 교환
+  - `GET /v1/rewards/redemptions` - 교환 내역 조회
+
+- [ ] **4.2.4** 관리자용 리워드 관리
+  - `myapi/api/internal/rewards.py` 생성
+  - 리워드 재고 업데이트
+  - 교환 상태 관리 (ISSUED/CANCELLED/FAILED)
+
+#### 완료 기준
+
+- 리워드 카탈로그 조회 정상 동작
+- 리워드 교환 프로세스 정상 동작
+- 포인트 차감/환불 정확성 검증
+
+### 4.3 사용자 경험 개선
+
+**담당자**: Backend Developer  
+**예상 시간**: 1일  
+**우선순위**: 중간
+
+#### 작업 내용
+
+- [ ] **4.3.1** 대시보드 API
+  - `myapi/api/v1/dashboard.py` 생성 (또는 통합)
+  - 사용자 통계 조회 (`GET /v1/users/stats`)
+  - 포인트 잔액, 예측 내역 요약
+  - 최근 정산 결과
+
+- [ ] **4.3.2** 광고 시스템 기본 구현
+  - `myapi/api/v1/ads.py` 생성
+  - 광고 목록 조회 (`GET /v1/ads`)
+  - 광고 클릭 추적 (`POST /v1/ads/{ad_id}/click`)
+  - 포인트 보상 지급
+  - `myapi/api/v1/rewards.py` 생성
   - `GET /v1/rewards/catalog` - 카탈로그 조회
   - `POST /v1/rewards/redeem` - 리워드 교환
 
@@ -465,7 +500,21 @@
 
 #### 작업 내용
 
-- [ ] **4.3.1** 데이터 정합성 검증
+- [ ] **4.4.1** 배치 스케줄링 시스템
+  - `myapi/services/scheduler_service.py` 생성
+  - KST 기반 스케줄링 (pytz 사용)
+  - 4단계 일일 배치 사이클:
+    - 06:00 - 이전 세션 CLOSED 처리
+    - 06:15 - EOD 데이터 수집
+    - 06:30 - 정산 및 포인트 지급
+    - 22:25 - 새 세션 OPEN
+  - 배치 실행 상태 추적 및 로깅
+
+- [ ] **4.4.2** 배치 라우터 구현
+  - `myapi/api/internal/batch.py` 생성
+  - 수동 배치 실행 엔드포인트들
+  - 배치 상태 조회 API
+  - 스케줄러 시작/중지 제어
 
   - 포인트 총합 검증 스크립트
   - 예측 vs 정산 데이터 일치성 검증
@@ -509,7 +558,7 @@
 
 - [ ] **5.1.2** 메트릭 대시보드 API
 
-  - `myapi/routers/metrics_router.py` 생성
+  - `myapi/api/v1/metrics.py` 생성
   - `GET /v1/metrics/daily` - 일일 지표
   - `GET /v1/metrics/predictions` - 예측 관련 지표
   - `GET /v1/metrics/points` - 포인트 관련 지표
@@ -572,7 +621,7 @@
 
 - [ ] **5.3.2** 관리자 대시보드 API
 
-  - `myapi/routers/admin_router.py` 생성
+  - `myapi/api/v1/admin.py` 생성
   - `GET /admin/dashboard` - 주요 지표 요약
   - `GET /admin/health` - 시스템 헬스 체크
   - `GET /admin/audit` - 감사 로그 조회
@@ -598,14 +647,17 @@
 **우선순위**: 매우 낮음 (MVP에서 제거 고려)
 
 #### 작업 내용
-- [ ] **5.4.1** 
-  - 광고 시청시 +1 예측 기회 (일일 최대 1회)
-  - 복잡한 쿨다운 제거
-  - 서버 검증 최소화
+- [ ] **5.4.1** 광고 시스템 기본 구현
+  - `myapi/api/v1/ads.py` 구현  
+  - 광고 목록 조회 (`GET /v1/ads`)
+  - 광고 클릭 추적 (`POST /v1/ads/{ad_id}/click`)
+  - 포인트 보상 지급 (일일 제한 적용)
 
 #### 완료 기준
 
-- **권장**: 이 기능 자체를 Phase 2로 연기
+- [ ] 광고 목록 조회 정상 동작
+- [ ] 광고 클릭 추적 및 포인트 지급  
+- [ ] 일일 제한 정상 동작
 
 ## 6. Phase 5: 테스트 및 배포 준비
 
@@ -768,7 +820,6 @@
 - **데이터베이스 성능**: 인덱스 최적화, 쿼리 튜닝, 연결 풀 설정
 - **동시성 문제**: Advisory Lock, 트랜잭션 격리 수준
 - **SQS 메시지 유실**: DLQ 설정, 재시도 로직, 멱등성 보장
-- **외부 API 의존성**: Alpha Vantage/Yahoo Finance API 장애 대응
 - **포인트 데이터 정합성**: 실시간 검증, 감사 로그, 백업 전략
 
 ### 7.2 일정 위험
@@ -782,7 +833,6 @@
 
 - **주간 진행 상황 리뷰**: 매주 금요일 진행률 점검
 - **위험 요소 조기 식별**: 일일 스탠드업에서 블로커 공유
-- **외부 API 백업**: Yahoo Finance API를 Alpha Vantage 백업으로 활용
 - **데이터 백업**: 일일 백업, 주간 복구 테스트 실시
 
 ## 8. 성공 기준
