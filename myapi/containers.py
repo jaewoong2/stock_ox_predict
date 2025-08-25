@@ -4,6 +4,12 @@ from myapi.database.session import get_db
 from myapi.services.aws_service import AwsService
 from myapi.services.auth_service import AuthService
 from myapi.services.user_service import UserService
+from myapi.services.prediction_service import PredictionService
+from myapi.services.session_service import SessionService
+from myapi.services.universe_service import UniverseService
+from myapi.services.batch_service import BatchService
+from myapi.services.price_service import PriceService
+from myapi.services.settlement_service import SettlementService
 from myapi.config import Settings
 from myapi.repositories.oauth_state_repository import OAuthStateRepository
 
@@ -30,6 +36,17 @@ class ServiceModule(containers.DeclarativeContainer):
     aws_service = providers.Factory(AwsService, settings=config.config)
     auth_service = providers.Factory(AuthService, db=repositories.get_db)
     user_service = providers.Factory(UserService, db=repositories.get_db)
+    prediction_service = providers.Factory(PredictionService, db=repositories.get_db)
+    session_service = providers.Factory(SessionService, db=repositories.get_db)
+    universe_service = providers.Factory(UniverseService, db=repositories.get_db)
+    batch_service = providers.Factory(
+        BatchService, 
+        db=repositories.get_db,
+        aws_service=aws_service,
+        settings=config.config
+    )
+    price_service = providers.Factory(PriceService, db=repositories.get_db)
+    settlement_service = providers.Factory(SettlementService, db=repositories.get_db)
 
 
 class Container(containers.DeclarativeContainer):
@@ -39,6 +56,10 @@ class Container(containers.DeclarativeContainer):
         modules=[
             "myapi.routers.auth_router",
             "myapi.routers.user_router",
+            "myapi.routers.prediction_router",
+            "myapi.routers.session_router",
+            "myapi.routers.universe_router",
+            "myapi.routers.batch_router",
         ],
     )
 

@@ -1,0 +1,233 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from typing import List, Optional, Tuple
+
+from sqlalchemy.orm import Session
+
+from myapi.core.exceptions import (
+    ValidationError,
+    NotFoundError,
+    ConflictError,
+    BusinessLogicError,
+    RateLimitError,
+)
+from myapi.models.prediction import (
+    Prediction as PredictionModel,
+    ChoiceEnum,
+    StatusEnum,
+)
+from myapi.repositories.prediction_repository import (
+    PredictionRepository,
+    UserDailyStatsRepository,
+)
+from myapi.repositories.active_universe_repository import ActiveUniverseRepository
+from myapi.repositories.session_repository import SessionRepository
+from myapi.schemas.prediction import (
+    PredictionCreate,
+    PredictionUpdate,
+    PredictionResponse,
+    UserPredictionsResponse,
+    PredictionStats,
+    PredictionSummary,
+    PredictionChoice,
+)
+
+
+class PredictionService:
+    """예측 관련 비즈니스 로직 서비스"""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.pred_repo = PredictionRepository(db)
+        self.stats_repo = UserDailyStatsRepository(db)
+        self.universe_repo = ActiveUniverseRepository(db)
+        self.session_repo = SessionRepository(db)
+
+    # 제출/수정/취소
+    def submit_prediction(
+        self, user_id: int, trading_day: date, payload: PredictionCreate
+    ) -> PredictionResponse:
+        # 세션 상태 확인 (예측 가능 여부)
+        session = self.session_repo.get_session_by_date(trading_day)
+        if not session:
+            session = self.session_repo.get_current_session()
+        if not session or not session.is_prediction_open:
+            raise BusinessLogicError(
+                error_code="PREDICTION_CLOSED",
+                message="Predictions are not open for this trading day.",
+            )
+        # 서버가 관리하는 거래일 사용
+        trading_day = session.trading_day
+
+        symbol = payload.symbol.upper()
+
+        # 심볼 유효성: 오늘의 유니버스 포함 여부
+        if not self.universe_repo.symbol_exists_in_universe(trading_day, symbol):
+            raise NotFoundError(
+                message=f"Symbol not available for predictions: {symbol}"
+            )
+
+        # 중복 제출 방지
+        if self.pred_repo.prediction_exists(user_id, trading_day, symbol):
+            raise ConflictError("Prediction already submitted for this symbol")
+
+        # 일일 한도 확인
+        if not self.stats_repo.can_make_prediction(user_id, trading_day):
+            remaining = self.stats_repo.get_remaining_predictions(user_id, trading_day)
+            raise RateLimitError(
+                message="Daily prediction limit reached",
+                details={"remaining": remaining},
+            )
+
+        # 생성
+        choice = ChoiceEnum(payload.choice.value)
+        now = datetime.now(timezone.utc)
+        created = self.pred_repo.create_prediction(
+            user_id=user_id,
+            trading_day=trading_day,
+            symbol=symbol,
+            choice=choice,
+            submitted_at=now,
+        )
+
+        if not created:
+            raise ValidationError("Failed to create prediction")
+
+        # 일일 통계 증가
+        self.stats_repo.increment_predictions_made(user_id, trading_day)
+
+        return created
+
+    def update_prediction(
+        self, user_id: int, prediction_id: int, payload: PredictionUpdate
+    ) -> PredictionResponse:
+        # 본인 소유/상태 확인을 위해 모델 직접 조회
+        model: Optional[PredictionModel] = (
+            self.db.query(PredictionModel)
+            .filter(PredictionModel.id == prediction_id)
+            .first()
+        )
+
+        if not model:
+            raise NotFoundError("Prediction not found")
+
+        if int(str(model.user_id)) != int(user_id):
+            raise BusinessLogicError(
+                error_code="FORBIDDEN_PREDICTION",
+                message="Cannot modify another user's prediction",
+            )
+
+        if str(model.status) != StatusEnum.PENDING:
+            raise BusinessLogicError(
+                error_code="PREDICTION_LOCKED",
+                message="Only pending predictions can be updated",
+            )
+
+        if getattr(model, "locked_at", None) is not None:
+            raise BusinessLogicError(
+                error_code="PREDICTION_LOCKED",
+                message="Prediction has been locked for settlement",
+            )
+
+        new_choice = ChoiceEnum(payload.choice.value)
+        updated = self.pred_repo.update_prediction_choice(prediction_id, new_choice)
+        if not updated:
+            raise ValidationError("Failed to update prediction")
+        return updated
+
+    def cancel_prediction(self, user_id: int, prediction_id: int) -> PredictionResponse:
+        model: Optional[PredictionModel] = (
+            self.db.query(PredictionModel)
+            .filter(PredictionModel.id == prediction_id)
+            .first()
+        )
+        if not model:
+            raise NotFoundError("Prediction not found")
+
+        if int(str(model.user_id)) != int(user_id):
+            raise BusinessLogicError(
+                error_code="FORBIDDEN_PREDICTION",
+                message="Cannot cancel another user's prediction",
+            )
+
+        if str(model.status) != StatusEnum.PENDING:
+            raise BusinessLogicError(
+                error_code="PREDICTION_NOT_CANCELABLE",
+                message="Only pending predictions can be canceled",
+            )
+
+        if getattr(model, "locked_at", None) is not None:
+            raise BusinessLogicError(
+                error_code="PREDICTION_LOCKED",
+                message="Prediction has been locked for settlement",
+            )
+
+        canceled = self.pred_repo.cancel_prediction(prediction_id)
+        if not canceled:
+            raise ValidationError("Failed to cancel prediction")
+        return canceled
+
+    # 조회/통계
+    def get_user_predictions_for_day(
+        self, user_id: int, trading_day: date
+    ) -> UserPredictionsResponse:
+        return self.pred_repo.get_user_predictions_for_day(user_id, trading_day)
+
+    def get_predictions_by_symbol_and_date(
+        self, symbol: str, trading_day: date, status_filter: Optional[StatusEnum] = None
+    ) -> List[PredictionResponse]:
+        return self.pred_repo.get_predictions_by_symbol_and_date(
+            symbol=symbol.upper(),
+            trading_day=trading_day,
+            status_filter=status_filter or StatusEnum.PENDING,
+        )
+
+    def get_prediction_stats(self, trading_day: date) -> PredictionStats:
+        return self.pred_repo.get_prediction_stats(trading_day)
+
+    def get_user_prediction_summary(
+        self, user_id: int, trading_day: date
+    ) -> PredictionSummary:
+        return self.pred_repo.get_user_prediction_summary(user_id, trading_day)
+
+    def get_user_prediction_history(
+        self, user_id: int, limit: int = 50, offset: int = 0
+    ) -> List[PredictionResponse]:
+        return self.pred_repo.get_user_prediction_history(
+            user_id, limit=limit, offset=offset
+        )
+
+    # 정산 관련
+    def lock_predictions_for_settlement(self, trading_day: date) -> int:
+        return self.pred_repo.lock_predictions_for_settlement(trading_day)
+
+    def bulk_update_predictions_status(
+        self,
+        trading_day: date,
+        symbol: str,
+        correct_choice: PredictionChoice,
+        points_per_correct: int = 10,
+    ) -> Tuple[int, int]:
+        return self.pred_repo.bulk_update_predictions_status(
+            trading_day=trading_day,
+            symbol=symbol.upper(),
+            correct_choice=ChoiceEnum(correct_choice.value),
+            points_per_correct=points_per_correct,
+        )
+
+    def get_pending_predictions_for_settlement(
+        self, trading_day: date
+    ) -> List[PredictionResponse]:
+        return self.pred_repo.get_pending_predictions_for_settlement(trading_day)
+
+    # 유저 일일 슬롯 관리
+    def get_remaining_predictions(self, user_id: int, trading_day: date) -> int:
+        return self.stats_repo.get_remaining_predictions(user_id, trading_day)
+
+    def increase_max_predictions(
+        self, user_id: int, trading_day: date, additional_slots: int = 1
+    ) -> None:
+        if additional_slots <= 0:
+            raise ValidationError("additional_slots must be positive")
+        self.stats_repo.increase_max_predictions(user_id, trading_day, additional_slots)

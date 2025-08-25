@@ -4,6 +4,7 @@ import logging
 
 from myapi.config import settings
 from myapi.routers import auth_router, user_router
+from myapi.routers import prediction_router, session_router, universe_router, batch_router
 from myapi.containers import Container
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,10 @@ def create_app() -> FastAPI:
     # Routers
     app.include_router(auth_router.router, prefix=settings.API_V1_STR)
     app.include_router(user_router.router, prefix=settings.API_V1_STR)
+    app.include_router(prediction_router.router, prefix=settings.API_V1_STR)
+    app.include_router(session_router.router, prefix=settings.API_V1_STR)
+    app.include_router(universe_router.router, prefix=settings.API_V1_STR)
+    app.include_router(batch_router.router, prefix=settings.API_V1_STR)
 
     return app
 

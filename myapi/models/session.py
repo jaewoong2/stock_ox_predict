@@ -41,17 +41,20 @@ class SessionControl(BaseModel):
     @property
     def is_prediction_open(self) -> bool:
         """Check if predictions are currently being accepted"""
-        return bool(self.phase == PhaseEnum.OPEN)
+        phase_val = getattr(self, "phase", None)
+        return bool(phase_val == PhaseEnum.OPEN)
 
     @property
     def is_settling(self) -> bool:
         """Check if settlement is in progress"""
-        return bool(self.phase == PhaseEnum.SETTLING)
+        phase_val = getattr(self, "phase", None)
+        return bool(phase_val == PhaseEnum.SETTLING)
 
     @property
     def is_closed(self) -> bool:
         """Check if session is closed (no predictions, no settlement)"""
-        return bool(self.phase == PhaseEnum.CLOSED)
+        phase_val = getattr(self, "phase", None)
+        return bool(phase_val == PhaseEnum.CLOSED)
 
 
 class ActiveUniverse(BaseModel):

@@ -29,4 +29,6 @@ class User(BaseModel):
     @property
     def is_oauth_user(self) -> bool:
         """Check if user is OAuth authenticated"""
-        return bool(self.auth_provider != "local")
+        # Avoid SQLAlchemy ColumnElement truthiness; access instance value safely
+        auth_provider_val = getattr(self, "auth_provider", "local")
+        return bool(auth_provider_val != "local")

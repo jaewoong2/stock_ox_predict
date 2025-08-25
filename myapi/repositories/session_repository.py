@@ -88,6 +88,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
             predict_cutoff_at=predict_cutoff_at,
         )
         self.db.add(model_instance)
+        self.db.commit()
         self.db.flush()
         self.db.refresh(model_instance)
         return self._to_session_status(model_instance)
@@ -130,6 +131,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
         if updated_count == 0:
             return None
 
+        self.db.commit()
         self.db.flush()
 
         # 업데이트된 모델 재조회
