@@ -1,12 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-import asyncio
 import logging
 
 from myapi.config import settings
-from myapi.database.connection import engine
-from myapi.middleware.rate_limit import RateLimitMiddleware
+from myapi.routers import auth_router, user_router
+from myapi.containers import Container
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +17,8 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
     )
 
+    app.container = Container()  # type: ignore
+
     # Middleware
     app.add_middleware(
         CORSMiddleware,
@@ -28,13 +28,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Rate Limiting Middleware
-    app.add_middleware(
-        RateLimitMiddleware,
-        exclude_paths=["/health", "/docs", "/openapi.json", "/redoc", "/metrics"],
-    )
-
     # app.add_middleware(LoggingMiddleware) # This will be added later
+
+    # Routers
+    app.include_router(auth_router.router, prefix=settings.API_V1_STR)
+    app.include_router(user_router.router, prefix=settings.API_V1_STR)
 
     return app
 

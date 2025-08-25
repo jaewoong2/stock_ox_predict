@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
-from datetime import datetime
+from typing import List, Dict, Any, Optional
 
 
 class RewardItem(BaseModel):
@@ -106,7 +105,7 @@ class AdminStockUpdateRequest(BaseModel):
 
 class RewardsInventoryResponse(BaseModel):
     """리워드 인벤토리 응답 스키마"""
-    
+
     sku: str
     title: str
     cost_points: int
@@ -116,14 +115,14 @@ class RewardsInventoryResponse(BaseModel):
     available_stock: int
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-    
+
     class Config:
         from_attributes = True
 
 
 class RewardsRedemptionResponse(BaseModel):
     """리워드 교환 응답 스키마"""
-    
+
     id: int
     user_id: int
     sku: str
@@ -132,6 +131,6 @@ class RewardsRedemptionResponse(BaseModel):
     vendor_code: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-    
+
     class Config:
         from_attributes = True

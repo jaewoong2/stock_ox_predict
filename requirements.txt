@@ -18,3 +18,5 @@ python-multipart==0.0.6
 passlib[bcrypt]==1.7.4
 schedule==1.2.0
 alembic==1.13.1
+jose
+passlib

@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     # OAuth
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    KAKAO_CLIENT_ID: str = ""
+    KAKAO_CLIENT_SECRET: str = ""
     OAUTH_STATE_EXPIRE_MINUTES: int = 10
 
     # External APIs

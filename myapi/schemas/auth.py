@@ -70,7 +70,7 @@ class UserLogin(BaseModel):
     password: str
 
 class OAuthCallbackRequest(BaseModel):
-    provider: str = Field(pattern="^(google)$")
+    provider: str = Field(pattern="^(google|kakao)$")
     code: str
     state: str
     redirect_uri: str

@@ -1,213 +1,417 @@
-from typing import Optional, List
+from typing import List
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, desc
-from datetime import date, datetime
+from sqlalchemy import desc, asc, func, and_
+from sqlalchemy.exc import IntegrityError
+from datetime import date, datetime, timezone
+
+from myapi.models.points import PointsLedger as PointsLedgerModel
+from myapi.schemas.points import (
+    PointsBalanceResponse,
+    PointsLedgerEntry,
+    PointsLedgerResponse,
+    PointsTransactionResponse,
+    PointsIntegrityCheckResponse,
+)
 from myapi.repositories.base import BaseRepository
-from myapi.models.points import PointsLedger
-from myapi.schemas.points import PointsLedgerEntry, PointsBalanceResponse
 
 
-class PointsRepository(BaseRepository[PointsLedger, PointsLedgerEntry]):
-    """포인트 리포지토리 - Pydantic 응답 보장"""
+class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
+    """포인트 리포지토리 - 멱등성 보장"""
 
     def __init__(self, db: Session):
-        super().__init__(PointsLedger, PointsLedgerEntry, db)
+        super().__init__(PointsLedgerModel, PointsLedgerEntry, db)
 
-    def _to_ledger_entry_schema(self, ledger: PointsLedger) -> PointsLedgerEntry:
-        """PointsLedger를 PointsLedgerEntry 스키마로 변환"""
-        if not ledger:
+    def _to_ledger_entry(self, model_instance: PointsLedgerModel) -> PointsLedgerEntry:
+        """PointsLedger 모델을 PointsLedgerEntry 스키마로 변환"""
+        if model_instance is None:
             return None
-            
-        return PointsLedgerEntry(
-            id=ledger.id,
-            transaction_type="credit" if ledger.delta_points > 0 else "debit",
-            delta_points=ledger.delta_points,
-            balance_after=ledger.balance_after,
-            reason=ledger.reason,
-            ref_id=ledger.ref_id,
-            created_at=ledger.created_at.isoformat() if ledger.created_at else None
-        )
+
+        # SQLAlchemy 모델의 속성들을 안전하게 추출
+        delta_points = getattr(model_instance, "delta_points", 0)
+        transaction_type = "CREDIT" if delta_points > 0 else "DEBIT"
+
+        data = {
+            "id": getattr(model_instance, "id", 0),
+            "transaction_type": transaction_type,
+            "delta_points": delta_points,
+            "balance_after": getattr(model_instance, "balance_after", 0),
+            "reason": getattr(model_instance, "reason", ""),
+            "ref_id": getattr(model_instance, "ref_id", ""),
+            "created_at": (
+                model_instance.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                if model_instance.created_at
+                else ""
+            ),
+        }
+        return PointsLedgerEntry(**data)
 
     def get_user_balance(self, user_id: int) -> int:
         """사용자 포인트 잔액 조회"""
-        latest_entry = self.db.query(PointsLedger).filter(
-            PointsLedger.user_id == user_id
-        ).order_by(desc(PointsLedger.id)).first()
-        
-        return latest_entry.balance_after if latest_entry else 0
+        latest_entry = (
+            self.db.query(self.model_class)
+            .filter(self.model_class.user_id == user_id)
+            .order_by(desc(self.model_class.id))
+            .first()
+        )
 
-    def get_user_ledger(self, user_id: int, limit: int = 50, offset: int = 0) -> List[PointsLedgerEntry]:
-        """사용자 포인트 원장 조회"""
-        ledger_entries = self.db.query(PointsLedger).filter(
-            PointsLedger.user_id == user_id
-        ).order_by(desc(PointsLedger.created_at)).offset(offset).limit(limit).all()
-        
-        return [self._to_ledger_entry_schema(entry) for entry in ledger_entries]
+        return getattr(latest_entry, "balance_after", 0) if latest_entry else 0
 
-    def create_transaction(self, user_id: int, delta_points: int, reason: str, 
-                         ref_id: str, trading_day: date = None, symbol: str = None) -> PointsLedgerEntry:
-        """포인트 트랜잭션 생성 (멱등성 보장)"""
-        # 멱등성 체크
-        existing = self.db.query(PointsLedger).filter(PointsLedger.ref_id == ref_id).first()
-        if existing:
-            return self._to_ledger_entry_schema(existing)
-        
+    def add_points(
+        self,
+        user_id: int,
+        points: int,
+        reason: str,
+        ref_id: str,
+        trading_day: date = date.today(),
+        symbol: str = "",
+    ) -> PointsTransactionResponse:
+        """포인트 추가 (멱등성 보장)"""
+        return self._transact_points(
+            user_id, points, reason, ref_id, trading_day, symbol
+        )
+
+    def deduct_points(
+        self,
+        user_id: int,
+        points: int,
+        reason: str,
+        ref_id: str,
+        trading_day: date = date.today(),
+        symbol: str = "",
+    ) -> PointsTransactionResponse:
+        """포인트 차감 (멱등성 보장)"""
+        return self._transact_points(
+            user_id, -points, reason, ref_id, trading_day, symbol
+        )
+
+    def _transact_points(
+        self,
+        user_id: int,
+        delta_points: int,
+        reason: str,
+        ref_id: str,
+        trading_day: date = date.today(),
+        symbol: str = "",
+    ) -> PointsTransactionResponse:
+        """포인트 거래 처리 (멱등성 보장)"""
+        try:
+            # 중복 처리 방지를 위한 ref_id 체크
+            existing_entry = (
+                self.db.query(self.model_class)
+                .filter(self.model_class.ref_id == ref_id)
+                .first()
+            )
+
+            if existing_entry:
+                return PointsTransactionResponse(
+                    success=True,
+                    transaction_id=getattr(existing_entry, "id", None),
+                    delta_points=getattr(existing_entry, "delta_points", 0),
+                    balance_after=getattr(existing_entry, "balance_after", 0),
+                    message="Transaction already processed (idempotent)",
+                )
+
+            # 현재 잔액 조회
+            current_balance = self.get_user_balance(user_id)
+
+            # 차감 시 잔액 부족 체크
+            if delta_points < 0 and current_balance + delta_points < 0:
+                return PointsTransactionResponse(
+                    success=False,
+                    transaction_id=None,
+                    delta_points=0,
+                    balance_after=current_balance,
+                    message="Insufficient balance",
+                )
+
+            # 새 잔액 계산
+            new_balance = current_balance + delta_points
+
+            # 원장 항목 생성
+            ledger_entry = self.model_class(
+                user_id=user_id,
+                trading_day=trading_day,
+                symbol=symbol,
+                delta_points=delta_points,
+                reason=reason,
+                ref_id=ref_id,
+                balance_after=new_balance,
+            )
+
+            self.db.add(ledger_entry)
+            self.db.flush()
+            self.db.refresh(ledger_entry)
+
+            return PointsTransactionResponse(
+                success=True,
+                transaction_id=getattr(ledger_entry, "id", None),
+                delta_points=delta_points,
+                balance_after=new_balance,
+                message="Transaction completed successfully",
+            )
+
+        except IntegrityError as e:
+            self.db.rollback()
+            # ref_id 중복 에러인 경우 기존 항목 반환
+            if "ref_id" in str(e):
+                existing_entry = (
+                    self.db.query(self.model_class)
+                    .filter(self.model_class.ref_id == ref_id)
+                    .first()
+                )
+
+                if existing_entry:
+                    return PointsTransactionResponse(
+                        success=True,
+                        transaction_id=getattr(existing_entry, "id", None),
+                        delta_points=getattr(existing_entry, "delta_points", 0),
+                        balance_after=getattr(existing_entry, "balance_after", 0),
+                        message="Transaction already processed (idempotent, integrity error handled)",
+                    )
+
+            return PointsTransactionResponse(
+                success=False,
+                transaction_id=None,
+                delta_points=0,
+                balance_after=self.get_user_balance(user_id),
+                message=f"Transaction failed: {str(e)}",
+            )
+
+    def get_user_ledger(
+        self, user_id: int, limit: int = 50, offset: int = 0
+    ) -> PointsLedgerResponse:
+        """사용자 포인트 원장 조회 (페이징)"""
+        # 총 항목 수 조회
+        total_count = (
+            self.db.query(self.model_class)
+            .filter(self.model_class.user_id == user_id)
+            .count()
+        )
+
+        # 원장 항목 조회 (최신순)
+        model_instances = (
+            self.db.query(self.model_class)
+            .filter(self.model_class.user_id == user_id)
+            .order_by(desc(self.model_class.id))
+            .limit(limit)
+            .offset(offset)
+            .all()
+        )
+
+        entries = [self._to_ledger_entry(instance) for instance in model_instances]
+
         # 현재 잔액 조회
         current_balance = self.get_user_balance(user_id)
-        new_balance = current_balance + delta_points
-        
-        # 잔액 부족 체크 (차감 시)
-        if delta_points < 0 and new_balance < 0:
-            raise ValueError(f"Insufficient balance. Current: {current_balance}, Required: {abs(delta_points)}")
-        
-        # 새 트랜잭션 생성
-        transaction = PointsLedger(
+
+        # 다음 페이지 존재 여부
+        has_next = offset + limit < total_count
+
+        return PointsLedgerResponse(
+            balance=current_balance,
+            entries=entries,
+            total_count=total_count,
+            has_next=has_next,
+        )
+
+    def get_balance_response(self, user_id: int) -> PointsBalanceResponse:
+        """포인트 잔액 응답"""
+        balance = self.get_user_balance(user_id)
+        return PointsBalanceResponse(balance=balance)
+
+    def award_prediction_points(
+        self,
+        user_id: int,
+        prediction_id: int,
+        points: int,
+        trading_day: date,
+        symbol: str,
+    ) -> PointsTransactionResponse:
+        """예측 성공 포인트 지급"""
+        ref_id = f"prediction_{prediction_id}"
+        reason = f"Correct prediction reward for {symbol}"
+
+        return self.add_points(
             user_id=user_id,
+            points=points,
+            reason=reason,
+            ref_id=ref_id,
             trading_day=trading_day,
             symbol=symbol,
-            delta_points=delta_points,
-            reason=reason,
-            ref_id=ref_id,
-            balance_after=new_balance,
-            created_at=datetime.utcnow()
         )
-        
-        self.db.add(transaction)
-        self.db.flush()
-        self.db.refresh(transaction)
-        
-        return self._to_ledger_entry_schema(transaction)
 
-    def award_points(self, user_id: int, amount: int, reason: str, ref_id: str, 
-                    trading_day: date = None, symbol: str = None) -> PointsLedgerEntry:
-        """포인트 지급"""
-        return self.create_transaction(
+    def charge_prediction_fee(
+        self, user_id: int, prediction_id: int, fee: int, trading_day: date, symbol: str
+    ) -> PointsTransactionResponse:
+        """예측 수수료 차감"""
+        ref_id = f"prediction_fee_{prediction_id}"
+        reason = f"Prediction fee for {symbol}"
+
+        return self.deduct_points(
             user_id=user_id,
-            delta_points=amount,
+            points=fee,
             reason=reason,
             ref_id=ref_id,
             trading_day=trading_day,
-            symbol=symbol
+            symbol=symbol,
         )
 
-    def deduct_points(self, user_id: int, amount: int, reason: str, ref_id: str, 
-                     trading_day: date = None, symbol: str = None) -> PointsLedgerEntry:
-        """포인트 차감"""
-        return self.create_transaction(
+    def admin_adjust_points(
+        self, user_id: int, adjustment: int, reason: str, admin_id: int
+    ) -> PointsTransactionResponse:
+        """관리자 포인트 조정"""
+        ref_id = f"admin_adjustment_{admin_id}_{datetime.now(timezone.utc).timestamp()}"
+        admin_reason = f"Admin adjustment by {admin_id}: {reason}"
+
+        return self._transact_points(
+            user_id=user_id, delta_points=adjustment, reason=admin_reason, ref_id=ref_id
+        )
+
+    def get_transactions_by_date_range(
+        self, user_id: int, start_date: date, end_date: date
+    ) -> List[PointsLedgerEntry]:
+        """날짜 범위별 거래 내역 조회"""
+        model_instances = (
+            self.db.query(self.model_class)
+            .filter(
+                and_(
+                    self.model_class.user_id == user_id,
+                    self.model_class.trading_day.between(start_date, end_date),
+                )
+            )
+            .order_by(desc(self.model_class.id))
+            .all()
+        )
+
+        return [self._to_ledger_entry(instance) for instance in model_instances]
+
+    def get_total_points_awarded_today(self, trading_day: date) -> int:
+        """특정일 총 지급 포인트 조회"""
+        result = (
+            self.db.query(func.sum(self.model_class.delta_points))
+            .filter(
+                and_(
+                    self.model_class.trading_day == trading_day,
+                    self.model_class.delta_points > 0,  # 지급분만
+                )
+            )
+            .scalar()
+        )
+
+        return result or 0
+
+    def verify_integrity_for_user(self, user_id: int) -> PointsIntegrityCheckResponse:
+        """사용자별 포인트 정합성 검증"""
+        # 모든 거래 내역 조회
+        entries = (
+            self.db.query(self.model_class)
+            .filter(self.model_class.user_id == user_id)
+            .order_by(asc(self.model_class.id))
+            .all()
+        )
+
+        if not entries:
+            return PointsIntegrityCheckResponse(
+                status="OK",
+                user_id=user_id,
+                calculated_balance=0,
+                recorded_balance=0,
+                total_balance_from_latest=None,
+                total_deltas=None,
+                user_count=None,
+                total_entries=None,
+                entry_count=0,
+                error=None,
+                entry_id=None,
+                verified_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            )
+
+        # 델타 합계로 잔액 계산
+        calculated_balance = sum(getattr(entry, "delta_points", 0) for entry in entries)
+
+        # 최신 기록된 잔액
+        recorded_balance = getattr(entries[-1], "balance_after", 0)
+
+        status = "OK" if calculated_balance == recorded_balance else "MISMATCH"
+
+        return PointsIntegrityCheckResponse(
+            status=status,
             user_id=user_id,
-            delta_points=-amount,
-            reason=reason,
-            ref_id=ref_id,
-            trading_day=trading_day,
-            symbol=symbol
+            calculated_balance=calculated_balance,
+            recorded_balance=recorded_balance,
+            total_balance_from_latest=None,
+            total_deltas=None,
+            user_count=None,
+            total_entries=None,
+            entry_count=len(entries),
+            error=None,
+            entry_id=None,
+            verified_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         )
 
-    def has_sufficient_balance(self, user_id: int, required_amount: int) -> bool:
-        """잔액 충분 여부 확인"""
-        balance = self.get_user_balance(user_id)
-        return balance >= required_amount
-
-    def get_transactions_by_ref_pattern(self, ref_pattern: str) -> List[PointsLedgerEntry]:
-        """참조 ID 패턴으로 트랜잭션 조회"""
-        transactions = self.db.query(PointsLedger).filter(
-            PointsLedger.ref_id.like(f"%{ref_pattern}%")
-        ).order_by(desc(PointsLedger.created_at)).all()
-        
-        return [self._to_ledger_entry_schema(transaction) for transaction in transactions]
-
-    def get_daily_points_summary(self, trading_day: date) -> dict:
-        """일일 포인트 요약"""
-        # 지급된 포인트
-        awarded_points = self.db.query(func.sum(PointsLedger.delta_points)).filter(
-            and_(
-                PointsLedger.trading_day == trading_day,
-                PointsLedger.delta_points > 0
+    def verify_global_integrity(self) -> PointsIntegrityCheckResponse:
+        """전체 포인트 정합성 검증"""
+        # 모든 사용자의 최신 잔액 합계
+        latest_balances = (
+            self.db.query(func.sum(self.model_class.balance_after))
+            .filter(
+                self.model_class.id.in_(
+                    self.db.query(func.max(self.model_class.id)).group_by(
+                        self.model_class.user_id
+                    )
+                )
             )
-        ).scalar() or 0
-        
-        # 사용된 포인트
-        spent_points = self.db.query(func.sum(PointsLedger.delta_points)).filter(
-            and_(
-                PointsLedger.trading_day == trading_day,
-                PointsLedger.delta_points < 0
+            .scalar()
+        )
+
+        # 모든 델타의 합계
+        total_deltas = self.db.query(func.sum(self.model_class.delta_points)).scalar()
+
+        # 사용자 수
+        user_count = self.db.query(
+            func.count(func.distinct(self.model_class.user_id))
+        ).scalar()
+
+        # 전체 항목 수
+        total_entries = self.db.query(func.count(self.model_class.id)).scalar()
+
+        status = "OK" if (latest_balances or 0) == (total_deltas or 0) else "MISMATCH"
+
+        return PointsIntegrityCheckResponse(
+            status=status,
+            user_id=None,
+            calculated_balance=None,
+            recorded_balance=None,
+            total_balance_from_latest=latest_balances or 0,
+            total_deltas=total_deltas or 0,
+            user_count=user_count or 0,
+            total_entries=total_entries or 0,
+            entry_count=None,
+            error=None,
+            entry_id=None,
+            verified_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+    def transaction_exists(self, ref_id: str) -> bool:
+        """거래 존재 여부 확인 (멱등성 체크용)"""
+        return (
+            self.db.query(self.model_class)
+            .filter(self.model_class.ref_id == ref_id)
+            .first()
+            is not None
+        )
+
+    def get_user_points_earned_today(self, user_id: int, trading_day: date) -> int:
+        """사용자가 오늘 획득한 포인트 총합"""
+        result = (
+            self.db.query(func.sum(self.model_class.delta_points))
+            .filter(
+                and_(
+                    self.model_class.user_id == user_id,
+                    self.model_class.trading_day == trading_day,
+                    self.model_class.delta_points > 0,  # 획득분만
+                )
             )
-        ).scalar() or 0
-        
-        # 트랜잭션 수
-        transaction_count = self.db.query(PointsLedger).filter(
-            PointsLedger.trading_day == trading_day
-        ).count()
-        
-        return {
-            "trading_day": str(trading_day),
-            "points_awarded": awarded_points,
-            "points_spent": abs(spent_points),
-            "net_points": awarded_points + spent_points,  # spent_points는 음수
-            "transaction_count": transaction_count
-        }
+            .scalar()
+        )
 
-    def verify_balance_integrity(self, user_id: int = None) -> dict:
-        """포인트 잔액 정합성 검증"""
-        if user_id:
-            # 특정 사용자 검증
-            calculated_balance = self.db.query(func.sum(PointsLedger.delta_points)).filter(
-                PointsLedger.user_id == user_id
-            ).scalar() or 0
-            
-            latest_entry = self.db.query(PointsLedger).filter(
-                PointsLedger.user_id == user_id
-            ).order_by(desc(PointsLedger.id)).first()
-            
-            recorded_balance = latest_entry.balance_after if latest_entry else 0
-            
-            return {
-                "status": "OK" if calculated_balance == recorded_balance else "MISMATCH",
-                "user_id": user_id,
-                "calculated_balance": calculated_balance,
-                "recorded_balance": recorded_balance,
-                "verified_at": datetime.utcnow().isoformat()
-            }
-        else:
-            # 전체 사용자 검증
-            # 이는 복잡한 로직이므로 기본적인 통계만 반환
-            total_transactions = self.db.query(PointsLedger).count()
-            unique_users = self.db.query(func.count(func.distinct(PointsLedger.user_id))).scalar()
-            
-            return {
-                "status": "OK",
-                "total_entries": total_transactions,
-                "unique_users": unique_users,
-                "verified_at": datetime.utcnow().isoformat()
-            }
-
-    def get_user_transaction_count(self, user_id: int) -> int:
-        """사용자 트랜잭션 수 조회"""
-        return self.db.query(PointsLedger).filter(PointsLedger.user_id == user_id).count()
-
-    def get_leaderboard(self, limit: int = 10) -> List[dict]:
-        """포인트 리더보드 조회"""
-        # 각 사용자의 최신 잔액을 기준으로 리더보드 생성
-        subquery = self.db.query(
-            PointsLedger.user_id,
-            func.max(PointsLedger.id).label('max_id')
-        ).group_by(PointsLedger.user_id).subquery()
-        
-        leaderboard = self.db.query(
-            PointsLedger.user_id,
-            PointsLedger.balance_after
-        ).join(
-            subquery,
-            and_(
-                PointsLedger.user_id == subquery.c.user_id,
-                PointsLedger.id == subquery.c.max_id
-            )
-        ).order_by(desc(PointsLedger.balance_after)).limit(limit).all()
-        
-        return [
-            {
-                "user_id": entry.user_id,
-                "balance": entry.balance_after,
-                "rank": idx + 1
-            }
-            for idx, entry in enumerate(leaderboard)
-        ]
+        return result or 0

@@ -4,16 +4,17 @@ from typing import Any, Literal, Optional
 import boto3
 from fastapi import HTTPException
 
-from myapi.utils.config import Settings
+from myapi.config import Settings
+
 
 SECRET_NAME = "kakao/tokens"
 
 
 class AwsService:
     def __init__(self, settings: Settings):
-        self.aws_access_key_id = settings.AWS_S3_ACCESS_KEY_ID
-        self.aws_secret_access_key = settings.AWS_S3_SECRET_ACCESS_KEY
-        self.region_name = settings.AWS_DEFAULT_REGION
+        self.aws_access_key_id = settings.AWS_ACCESS_KEY_ID
+        self.aws_secret_access_key = settings.AWS_SECRET_ACCESS_KEY
+        self.region_name = settings.AWS_REGION
 
     def _client(self, service: str):
         if self.aws_access_key_id and self.aws_secret_access_key:
@@ -34,19 +35,29 @@ class AwsService:
         except client.exceptions.ResourceNotFoundException:
             raise HTTPException(status_code=404, detail="Secret not found")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error retrieving secret: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Error retrieving secret: {str(e)}"
+            )
 
     def update_secret(self, updated_data: dict) -> dict:
         client = self._client("secretsmanager")
         try:
-            response = client.put_secret_value(SecretId=SECRET_NAME, SecretString=json.dumps(updated_data))
+            response = client.put_secret_value(
+                SecretId=SECRET_NAME, SecretString=json.dumps(updated_data)
+            )
             return response
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error updating secret: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Error updating secret: {str(e)}"
+            )
 
-    def upload_s3(self, bucket_name: str, object_key: str, fileobj: Any, content_type: str):
+    def upload_s3(
+        self, bucket_name: str, object_key: str, fileobj: Any, content_type: str
+    ):
         s3 = self._client("s3")
-        return s3.upload_fileobj(fileobj, bucket_name, object_key, ExtraArgs={"ContentType": content_type})
+        return s3.upload_fileobj(
+            fileobj, bucket_name, object_key, ExtraArgs={"ContentType": content_type}
+        )
 
     def send_sqs_fifo_message(
         self,
@@ -69,9 +80,13 @@ class AwsService:
         try:
             return sqs.send_message(**params)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error sending FIFO message to SQS: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Error sending FIFO message to SQS: {str(e)}"
+            )
 
-    def send_sqs_message(self, queue_url: str, message_body: str, delay_seconds: int = 0) -> dict:
+    def send_sqs_message(
+        self, queue_url: str, message_body: str, delay_seconds: int = 0
+    ) -> dict:
         sqs = self._client("sqs")
         params = {"QueueUrl": queue_url, "MessageBody": message_body}
         if delay_seconds > 0:
@@ -79,7 +94,9 @@ class AwsService:
         try:
             return sqs.send_message(**params)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error sending message to SQS: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Error sending message to SQS: {str(e)}"
+            )
 
     def generate_queue_message_http(
         self,

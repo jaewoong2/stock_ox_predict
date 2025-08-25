@@ -7,6 +7,7 @@ from enum import Enum
 class AuthProvider(str, Enum):
     LOCAL = "local"
     GOOGLE = "google"
+    KAKAO = "kakao"
 
 class User(BaseModel):
     id: int
@@ -33,6 +34,7 @@ class UserProfile(BaseModel):
 
 class UserUpdate(BaseModel):
     nickname: Optional[str] = Field(None, min_length=2, max_length=50)
+    email: Optional[EmailStr] = None
     
     @field_validator('nickname')
     @classmethod
