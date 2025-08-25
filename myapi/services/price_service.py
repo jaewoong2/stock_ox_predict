@@ -198,77 +198,91 @@ class PriceService:
             )
 
     # Private helper methods
-    async def _get_current_price_with_yf(self, ticker: yf.Ticker, symbol: str) -> StockPrice:
+    async def _get_current_price_with_yf(
+        self, ticker: yf.Ticker, symbol: str
+    ) -> StockPrice:
         """yfinance를 사용해 실시간 가격 조회"""
         loop = asyncio.get_event_loop()
-        
+
         # blocking I/O를 async로 실행
         def fetch_info():
             info = ticker.info
             return info
-        
+
         info = await loop.run_in_executor(None, fetch_info)
-        
-        if not info or 'regularMarketPrice' not in info:
+
+        if not info or "regularMarketPrice" not in info:
             raise ValidationError(f"No current price data available for {symbol}")
-        
-        current_price = Decimal(str(info['regularMarketPrice']))
-        previous_close = Decimal(str(info.get('previousClose', current_price)))
+
+        current_price = Decimal(str(info["regularMarketPrice"]))
+        previous_close = Decimal(str(info.get("previousClose", current_price)))
         change = current_price - previous_close
-        change_percent = (change / previous_close) * 100 if previous_close else Decimal("0")
-        
+        change_percent = (
+            (change / previous_close) * 100 if previous_close else Decimal("0")
+        )
+
         return StockPrice(
             symbol=symbol,
             current_price=current_price,
             previous_close=previous_close,
             change=change,
             change_percent=change_percent,
-            volume=info.get('volume'),
-            market_status=info.get('marketState', 'UNKNOWN'),
+            volume=info.get("volume"),
+            market_status=info.get("marketState", "UNKNOWN"),
             last_updated=datetime.now(timezone.utc),
         )
 
-    async def _get_eod_price_with_yf(self, ticker: yf.Ticker, symbol: str, trading_day: date) -> EODPrice:
+    async def _get_eod_price_with_yf(
+        self, ticker: yf.Ticker, symbol: str, trading_day: date
+    ) -> EODPrice:
         """yfinance를 사용해 EOD 가격 조회"""
         loop = asyncio.get_event_loop()
-        
+
         # 역사적 데이터 가져오기 (2일 범위로 조회해 전일 종가 포함)
         end_date = trading_day + timedelta(days=1)
         start_date = trading_day - timedelta(days=1)
-        
+
         def fetch_history():
-            return ticker.history(start=start_date, end=end_date, interval='1d')
-        
+            return ticker.history(start=start_date, end=end_date, interval="1d")
+
         hist = await loop.run_in_executor(None, fetch_history)
-        
-        if hist.empty or trading_day.strftime('%Y-%m-%d') not in hist.index.strftime('%Y-%m-%d'):
-            raise ValidationError(f"No EOD data available for {symbol} on {trading_day}")
-        
+
+        if hist.empty or trading_day.strftime("%Y-%m-%d") not in hist.index.strftime(
+            "%Y-%m-%d"
+        ):
+            raise ValidationError(
+                f"No EOD data available for {symbol} on {trading_day}"
+            )
+
         # 해당 날짜의 데이터 찾기
-        target_date_str = trading_day.strftime('%Y-%m-%d')
-        matching_rows = hist[hist.index.strftime('%Y-%m-%d') == target_date_str]
-        
+        target_date_str = trading_day.strftime("%Y-%m-%d")
+        matching_rows = hist[hist.index.strftime("%Y-%m-%d") == target_date_str]
+
         if matching_rows.empty:
-            raise ValidationError(f"No EOD data available for {symbol} on {trading_day}")
-        
+            raise ValidationError(
+                f"No EOD data available for {symbol} on {trading_day}"
+            )
+
         row = matching_rows.iloc[0]
-        
-        close_price = Decimal(str(row['Close']))
-        open_price = Decimal(str(row['Open']))
-        high_price = Decimal(str(row['High']))
-        low_price = Decimal(str(row['Low']))
-        volume = int(row['Volume'])
-        
+
+        close_price = Decimal(str(row["Close"]))
+        open_price = Decimal(str(row["Open"]))
+        high_price = Decimal(str(row["High"]))
+        low_price = Decimal(str(row["Low"]))
+        volume = int(row["Volume"])
+
         # 이전 역사 데이터에서 전일 종가 찾기
         if len(hist) > 1:
-            previous_close = Decimal(str(hist.iloc[0]['Close']))
+            previous_close = Decimal(str(hist.iloc[0]["Close"]))
         else:
             # 이전 데이터가 없으면 시가를 전일 종가로 사용
             previous_close = open_price
-        
+
         change = close_price - previous_close
-        change_percent = (change / previous_close) * 100 if previous_close else Decimal("0")
-        
+        change_percent = (
+            (change / previous_close) * 100 if previous_close else Decimal("0")
+        )
+
         return EODPrice(
             symbol=symbol,
             trading_date=trading_day.strftime("%Y-%m-%d"),
@@ -282,7 +296,6 @@ class PriceService:
             volume=volume,
             fetched_at=datetime.now(timezone.utc),
         )
-
 
     def _calculate_price_movement(self, current: Decimal, previous: Decimal) -> str:
         """가격 움직임 계산 (UP/DOWN/FLAT)"""
