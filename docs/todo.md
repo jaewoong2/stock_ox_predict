@@ -310,13 +310,6 @@
   - [x] 예측 가능 시간 검증 (06:00-23:59)
   - [x] 다음 정산 시간 계산 및 시간 포맷팅
 
-- [x] **배치 라우터 확장** (`batch_router.py`)
-  - [x] `POST /batch/schedule/daily-workflow` - 일일 전체 워크플로우 스케줄링
-  - [x] `POST /batch/schedule/immediate-settlement` - 즉시 정산 큐잉
-  - [x] `GET /batch/schedule/upcoming` - 예정된 작업 조회
-  - [x] `GET /batch/queue/status` - SQS 큐 상태 확인
-  - [x] `POST /batch/execute/job` - 배치 작업 실행 (SQS 워커용)
-
 - [x] **완전한 사용 예제** (`batch_scheduling_example.py`)
   - [x] 전체 API 사용법 가이드 및 실행 예제
   - [x] 시간대별 스케줄 타임라인 설명
@@ -325,9 +318,8 @@
 **시간대별 자동 배치 워크플로우 (KST 기준):**
 ```
 06:00 - 전날 예측 결과 정산 및 포인트 지급 🎯
-06:01 - 새로운 예측 세션 시작 (OPEN 상태) 🎯  
-06:05 - 오늘의 유니버스 설정 (기본 20개 종목)
-09:30 - 가격 캐시 갱신 (미장 시작 후)
+06:00 - 새로운 예측 세션 시작 (OPEN 상태) 🎯  
+06:00 - 오늘의 유니버스 설정 (기본 50개 종목)
 23:59 - 예측 마감 및 세션 종료 (CLOSED 상태) 🎯
 ```
 
@@ -341,10 +333,7 @@
 
 **새로 생성된 파일들:**
 ```
-myapi/services/batch_scheduler_service.py  - 시간대별 스케줄링 서비스
-myapi/services/batch_job_executor.py       - 배치 작업 실행기
 myapi/utils/timezone_utils.py              - KST 시간 관리 유틸리티
-myapi/examples/batch_scheduling_example.py - 완전한 사용 예제
 ```
 
 ### 🎯 **시스템 완성도**: 예측 시스템 요구사항 100% 달성 ✅

@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+from myapi.logging_config import setup_logging
+
+setup_logging()
 
 from myapi.config import settings
 from myapi.core.logging_middleware import LoggingMiddleware

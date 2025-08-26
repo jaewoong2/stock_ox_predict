@@ -85,6 +85,7 @@ class Settings(BaseSettings):
 
     # Timezone
     TIMEZONE: str = "Asia/Seoul"
+    AUTH_TOKEN: str = ""
 
     class Config:
         env_file = ".env"

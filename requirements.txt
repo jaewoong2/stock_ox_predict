@@ -21,3 +21,4 @@ alembic==1.13.1
 jose
 passlib
 yfinance
+python-json-logger==2.0.7
