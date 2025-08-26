@@ -1,3 +1,29 @@
+"""
+포인트 시스템 API 라우터
+
+이 파일은 포인트 시스템의 모든 HTTP API 엔드포인트를 정의합니다:
+
+사용자용 엔드포인트:
+- GET /points/balance: 내 포인트 잔액 조회
+- GET /points/ledger: 내 포인트 거래 내역
+- GET /points/ledger/date-range: 날짜 범위별 거래 내역
+- GET /points/earned/{trading_day}: 특정일 획득 포인트
+- GET /points/integrity/my: 내 포인트 정합성 검증
+
+관리자용 엔드포인트:
+- POST /points/admin/add: 포인트 추가
+- POST /points/admin/deduct: 포인트 차감
+- POST /points/admin/adjust: 포인트 조정
+- GET /points/admin/balance/{user_id}: 사용자 잔액 조회
+- GET /points/admin/ledger/{user_id}: 사용자 거래 내역
+- GET /points/admin/integrity/*: 정합성 검증 관리
+- GET /points/admin/stats/daily: 일별 통계
+
+인증 및 권한:
+- 모든 엔드포인트는 Bearer 토큰 인증 필요
+- 관리자 엔드포인트는 is_admin=True 권한 필요
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from typing import List
 from datetime import date
@@ -23,6 +49,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# 포인트 관련 API 라우터 - /points 경로 하에 모든 엔드포인트 그룹화
 router = APIRouter(prefix="/points", tags=["points"])
 
 
@@ -32,9 +59,23 @@ async def get_my_balance(
     current_user: dict = Depends(verify_bearer_token),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsBalanceResponse:
-    """내 포인트 잔액 조회
+    """
+    내 포인트 잔액 조회 - 인증된 사용자의 현재 포인트 잔액
 
-    현재 사용자의 포인트 잔액을 조회합니다.
+    인증 필요: Bearer 토큰
+    권한: 일반 사용자
+    
+    Returns:
+        PointsBalanceResponse: 현재 포인트 잔액 정보
+        
+    HTTP Status:
+        200: 성공적으로 잔액 조회
+        401: 인증 실패 또는 잘못된 토큰
+        500: 내부 서버 오류
+    
+    성능:
+        - O(1) 성능 (balance_after 필드 사용)
+        - 인덱스를 통한 빠른 조회
     """
     try:
         user_id = current_user.get("user_id")
@@ -56,9 +97,31 @@ async def get_my_ledger(
     current_user: dict = Depends(verify_bearer_token),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsLedgerResponse:
-    """내 포인트 거래 내역 조회
+    """
+    내 포인트 거래 내역 조회 - 페이징을 통한 거래 내역 조회
 
-    현재 사용자의 포인트 거래 내역을 페이징으로 조회합니다.
+    인증 필요: Bearer 토큰
+    권한: 일반 사용자
+    
+    Query Parameters:
+        limit: 한 페이지에 조회할 항목 수 (1-100, 기본: 50)
+        offset: 건너뛸 항목 수 (기본: 0)
+        
+    Returns:
+        PointsLedgerResponse: 거래 내역 및 페이징 정보
+        - balance: 현재 잔액
+        - entries: 거래 내역 리스트 (최신순)
+        - total_count: 전체 거래 건수
+        - has_next: 다음 페이지 존재 여부
+        
+    HTTP Status:
+        200: 성공적으로 거래 내역 조회
+        401: 인증 실패
+        500: 내부 서버 오류
+    
+    사용 예시:
+        GET /points/ledger?limit=20&offset=0  # 처음 20개 항목
+        GET /points/ledger?limit=10&offset=20 # 21-30번째 항목
     """
     try:
         user_id = current_user.get("user_id")
@@ -151,7 +214,12 @@ async def verify_my_integrity(
         raise HTTPException(status_code=500, detail="Failed to verify integrity")
 
 
-# 관리자 전용 엔드포인트
+# ============================================================================
+# 관리자 전용 엔드포인트 - Admin Only Endpoints
+# ============================================================================
+# 모든 관리자 엔드포인트는 is_admin=True 권한이 필요합니다.
+# 사용자의 포인트를 직접 조작하거나 시스템 전체 정보에 접근할 수 있습니다.
+
 @router.post("/admin/add", response_model=PointsTransactionResponse)
 @inject
 async def admin_add_points(
@@ -160,9 +228,39 @@ async def admin_add_points(
     current_user: dict = Depends(verify_bearer_token),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsTransactionResponse:
-    """포인트 추가 (관리자 전용)
+    """
+    관리자용 포인트 추가 - 특정 사용자에게 포인트 지급
 
-    특정 사용자에게 포인트를 추가합니다.
+    인증 필요: Bearer 토큰
+    권한: 관리자 (is_admin=True)
+    
+    Query Parameters:
+        user_id: 포인트를 추가할 대상 사용자 ID
+        
+    Request Body:
+        PointsTransactionRequest:
+            - points: 추가할 포인트 수 (양수)
+            - reason: 추가 사유
+            - ref_id: 중복 방지용 고유 ID
+            - trading_day: 거래일 (선택사항)
+            - symbol: 관련 심볼 (선택사항)
+            
+    Returns:
+        PointsTransactionResponse: 거래 결과
+        - success: 성공 여부
+        - transaction_id: 거래 ID
+        - balance_after: 거래 후 잔액
+        - message: 결과 메시지
+        
+    HTTP Status:
+        200: 성공적으로 포인트 추가
+        400: 잘못된 요청 또는 유효성 검증 실패
+        403: 관리자 권한 없음
+        500: 내부 서버 오류
+        
+    멱등성:
+        - 동일한 ref_id로 여러 번 호출시 한 번만 처리
+        - 기존 거래가 있으면 기존 결과 반환
     """
     try:
         # 관리자 권한 확인
@@ -316,9 +414,34 @@ async def admin_verify_global_integrity(
     current_user: dict = Depends(verify_bearer_token),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsIntegrityCheckResponse:
-    """전체 포인트 정합성 검증 (관리자 전용)
+    """
+    전체 포인트 정합성 검증 - 시스템 전체의 포인트 무결성 검사
 
-    전체 시스템의 포인트 정합성을 검증합니다.
+    인증 필요: Bearer 토큰
+    권한: 관리자 (is_admin=True)
+    
+    검증 내용:
+    1. 모든 사용자의 최신 잔액 합계
+    2. 모든 거래의 포인트 변동량 총합
+    3. 두 값의 일치 여부 확인
+    
+    Returns:
+        PointsIntegrityCheckResponse:
+        - status: "OK" 또는 "MISMATCH"
+        - total_balance_from_latest: 최신 잔액들의 합
+        - total_deltas: 모든 변동량의 합
+        - user_count: 전체 사용자 수
+        - total_entries: 전체 거래 건수
+        
+    HTTP Status:
+        200: 검증 완료
+        403: 관리자 권한 없음
+        500: 검증 중 오류 발생
+        
+    주의사항:
+        - 대량 데이터에서는 시간이 오래 걸릴 수 있음
+        - 정기적인 모니터링 용도로 사용 권장
+        - MISMATCH 발생 시 시스템 점검 필요
     """
     try:
         # 관리자 권한 확인

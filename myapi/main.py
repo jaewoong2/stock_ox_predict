@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from myapi.config import settings
+from myapi.core.logging_middleware import LoggingMiddleware
 from myapi.routers import auth_router, user_router
 from myapi.routers import prediction_router, session_router, universe_router, batch_router
 from myapi.routers import price_router, settlement_router
@@ -31,7 +32,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # app.add_middleware(LoggingMiddleware) # This will be added later
+    app.add_middleware(LoggingMiddleware)
 
     # Routers
     app.include_router(auth_router.router, prefix=settings.API_V1_STR)

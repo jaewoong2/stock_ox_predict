@@ -2,5 +2,6 @@
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "task-master-ai"
-  ]
+  ],
+  "outputStyle": "default"
 }

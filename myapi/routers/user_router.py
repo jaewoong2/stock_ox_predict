@@ -308,19 +308,15 @@ def get_my_points_balance(
     """내 포인트 잔액 조회"""
     try:
         balance = user_service.get_user_points_balance(current_user.id)
-        
+
         return BaseResponse(
-            success=True,
-            data={
-                "balance": balance.balance,
-                "user_id": current_user.id
-            }
+            success=True, data={"balance": balance.balance, "user_id": current_user.id}
         )
     except Exception as e:
         logger.error(f"Points balance fetch error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve points balance"
+            detail="Failed to retrieve points balance",
         )
 
 
@@ -337,21 +333,21 @@ def get_my_points_ledger(
         ledger = user_service.get_user_points_ledger(
             current_user.id, limit=limit, offset=offset
         )
-        
+
         return BaseResponse(
             success=True,
             data={
                 "balance": ledger.balance,
                 "entries": [entry.model_dump() for entry in ledger.entries],
                 "total_count": ledger.total_count,
-                "has_next": ledger.has_next
-            }
+                "has_next": ledger.has_next,
+            },
         )
     except Exception as e:
         logger.error(f"Points ledger fetch error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve points ledger"
+            detail="Failed to retrieve points ledger",
         )
 
 
@@ -364,16 +360,13 @@ def get_my_profile_with_points(
     """포인트 정보를 포함한 내 프로필 조회"""
     try:
         profile_with_points = user_service.get_user_profile_with_points(current_user.id)
-        
-        return BaseResponse(
-            success=True,
-            data=profile_with_points
-        )
+
+        return BaseResponse(success=True, data=profile_with_points)
     except Exception as e:
         logger.error(f"Profile with points fetch error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve profile with points"
+            detail="Failed to retrieve profile with points",
         )
 
 
@@ -386,23 +379,20 @@ def get_my_financial_summary(
     """내 재정 요약 정보 조회"""
     try:
         summary = user_service.get_user_financial_summary(current_user.id)
-        
-        return BaseResponse(
-            success=True,
-            data=summary
-        )
+
+        return BaseResponse(success=True, data=summary)
     except Exception as e:
         logger.error(f"Financial summary fetch error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve financial summary"
+            detail="Failed to retrieve financial summary",
         )
 
 
 @router.get("/me/can-afford/{amount}", response_model=BaseResponse)
 @inject
 def check_if_i_can_afford(
-    amount: int = Query(..., ge=1, description="확인할 포인트 금액"),
+    amount: int,
     current_user: UserSchema = Depends(get_current_active_user),
     user_service: UserService = Depends(Provide[Container.services.user_service]),
 ) -> Any:
@@ -410,19 +400,21 @@ def check_if_i_can_afford(
     try:
         can_afford = user_service.can_user_afford(current_user.id, amount)
         current_balance = user_service.get_user_points_balance(current_user.id)
-        
+
         return BaseResponse(
             success=True,
             data={
                 "amount": amount,
                 "can_afford": can_afford,
                 "current_balance": current_balance.balance,
-                "shortfall": max(0, amount - current_balance.balance) if not can_afford else 0
-            }
+                "shortfall": (
+                    max(0, amount - current_balance.balance) if not can_afford else 0
+                ),
+            },
         )
     except Exception as e:
         logger.error(f"Affordability check error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to check affordability"
+            detail="Failed to check affordability",
         )

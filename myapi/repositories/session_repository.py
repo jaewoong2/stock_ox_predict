@@ -1,3 +1,4 @@
+from pyexpat import model
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, asc
@@ -9,15 +10,17 @@ from myapi.repositories.base import BaseRepository
 
 
 class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
-    """세션 제어 리포지토리"""
+    """
+    세션 제어 리포지토리
+    """
 
     def __init__(self, db: Session):
         super().__init__(SessionControlModel, SessionStatus, db)
 
     def _to_session_status(self, model_instance: SessionControlModel) -> SessionStatus:
-        """SessionControl 모델을 SessionStatus 스키마로 변환"""
-        if model_instance is None:
-            return None
+        """
+        SessionControl 모델을 SessionStatus 스키마로 변환
+        """
 
         # SQLAlchemy 모델의 속성들을 딕셔너리로 변환 후 Pydantic 생성
         data = {
@@ -31,24 +34,37 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
             "is_settling": model_instance.is_settling,
             "is_closed": model_instance.is_closed,
         }
+
         return SessionStatus(**data)
 
     def get_current_session(self) -> Optional[SessionStatus]:
-        """현재 활성 세션 조회 (가장 최근 거래일)"""
+        """
+        현재 활성 세션 조회 (가장 최근 거래일)
+        """
         model_instance = (
             self.db.query(self.model_class)
             .order_by(desc(self.model_class.trading_day))
             .first()
         )
+
+        if not model_instance:
+            return None
+
         return self._to_session_status(model_instance)
 
     def get_session_by_date(self, trading_day: date) -> Optional[SessionStatus]:
-        """특정 날짜의 세션 조회"""
+        """
+        특정 날짜의 세션 조회
+        """
         model_instance = (
             self.db.query(self.model_class)
             .filter(self.model_class.trading_day == trading_day)
             .first()
         )
+
+        if not model_instance:
+            return None
+
         return self._to_session_status(model_instance)
 
     def get_today_session_info(self, trading_day: date) -> Optional[SessionToday]:

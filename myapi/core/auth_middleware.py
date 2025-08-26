@@ -41,6 +41,7 @@ def get_current_user(
         )
 
     auth_service = AuthService(db)
+
     try:
         user = auth_service.get_current_user(credentials.credentials)
         if not user:
