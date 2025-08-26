@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from dependency_injector.wiring import inject, Provide
 
 from myapi.containers import Container
-from myapi.core.auth_middleware import get_current_active_user
+from myapi.core.auth_middleware import require_admin
 from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.schemas.prediction import PredictionChoice
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/admin/settlement", tags=["settlement"])
 async def settle_day(
     trading_day: str,
     _current_user: UserSchema = Depends(
-        get_current_active_user
+        require_admin
     ),  # Admin authentication required
     settlement_service: SettlementService = Depends(
         Provide[Container.services.settlement_service]
@@ -50,7 +50,7 @@ async def settle_day(
 async def get_settlement_summary(
     trading_day: str,
     _current_user: UserSchema = Depends(
-        get_current_active_user
+        require_admin
     ),  # Admin authentication required
     settlement_service: SettlementService = Depends(
         Provide[Container.services.settlement_service]
@@ -83,7 +83,7 @@ async def manual_settle_symbol(
     correct_choice: PredictionChoice,
     override_price_validation: bool = False,
     _current_user: UserSchema = Depends(
-        get_current_active_user
+        require_admin
     ),  # Admin authentication required
     settlement_service: SettlementService = Depends(
         Provide[Container.services.settlement_service]

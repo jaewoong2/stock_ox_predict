@@ -74,8 +74,8 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
             self.db.add(model_instance)
             created_items.append(item)
 
-        self.db.commit()
         self.db.flush()
+        self.db.commit()
         return created_items
 
     def add_symbol_to_universe(

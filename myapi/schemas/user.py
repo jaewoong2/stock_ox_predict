@@ -17,6 +17,7 @@ class User(BaseModel):
     created_at: datetime
     last_login_at: Optional[datetime] = None
     is_active: bool = True
+    is_admin: bool = False
 
     class Config:
         from_attributes = True

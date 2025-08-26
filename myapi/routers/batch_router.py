@@ -5,22 +5,112 @@ from dependency_injector.wiring import inject, Provide
 
 from myapi.containers import Container
 from myapi.services.aws_service import AwsService
-from myapi.core.auth_middleware import verify_bearer_token
+from myapi.core.auth_middleware import require_admin
 from myapi.config import Settings
 
 # 전체 티커 목록
 DEFAULT_TICKERS = [
-    "CRWV", "SPY", "QQQ", "AMAT", "AMD", "ANET", "ASML", "AVGO", "COHR", "GFS",
-    "KLAC", "MRVL", "MU", "NVDA", "NVMI", "ONTO", "SMCI", "STX", "TSM", "VRT",
-    "WDC", "AXON", "LMT", "NOC", "RCAT", "AFRM", "APP", "COIN", "HOOD", "IREN",
-    "MQ", "MSTR", "SOFI", "TOST", "CEG", "FSLR", "LNG", "NRG", "OKLO", "PWR",
-    "SMR", "VST", "CRWD", "FTNT", "GTLB", "NET", "OKTA", "PANW", "S", "TENB",
-    "ZS", "AAPL", "ADBE", "ADSK", "AI", "AMZN", "ASAN", "BILL", "CRM", "DDOG",
-    "DOCN", "GOOGL", "HUBS", "META", "MNDY", "MSFT", "NOW", "PCOR", "PLTR",
-    "SNOW", "VEEV", "IONQ", "QBTS", "RGTI", "PL", "RKLB", "LUNR", "ACHR",
-    "ARBE", "JOBY", "TSLA", "UBER", "ORCL", "CFLT", "CRNC", "DXCM", "INTU",
-    "IOT", "LRCX", "NFLX", "PODD", "PSTG", "RBLX", "RDDT", "SERV", "SHOP",
-    "SOUN", "TDOC", "PATH", "DXYZ", "NKE"
+    "CRWV",
+    "SPY",
+    "QQQ",
+    "AMAT",
+    "AMD",
+    "ANET",
+    "ASML",
+    "AVGO",
+    "COHR",
+    "GFS",
+    "KLAC",
+    "MRVL",
+    "MU",
+    "NVDA",
+    "NVMI",
+    "ONTO",
+    "SMCI",
+    "STX",
+    "TSM",
+    "VRT",
+    "WDC",
+    "AXON",
+    "LMT",
+    "NOC",
+    "RCAT",
+    "AFRM",
+    "APP",
+    "COIN",
+    "HOOD",
+    "IREN",
+    "MQ",
+    "MSTR",
+    "SOFI",
+    "TOST",
+    "CEG",
+    "FSLR",
+    "LNG",
+    "NRG",
+    "OKLO",
+    "PWR",
+    "SMR",
+    "VST",
+    "CRWD",
+    "FTNT",
+    "GTLB",
+    "NET",
+    "OKTA",
+    "PANW",
+    "S",
+    "TENB",
+    "ZS",
+    "AAPL",
+    "ADBE",
+    "ADSK",
+    "AI",
+    "AMZN",
+    "ASAN",
+    "BILL",
+    "CRM",
+    "DDOG",
+    "DOCN",
+    "GOOGL",
+    "HUBS",
+    "META",
+    "MNDY",
+    "MSFT",
+    "NOW",
+    "PCOR",
+    "PLTR",
+    "SNOW",
+    "VEEV",
+    "IONQ",
+    "QBTS",
+    "RGTI",
+    "PL",
+    "RKLB",
+    "LUNR",
+    "ACHR",
+    "ARBE",
+    "JOBY",
+    "TSLA",
+    "UBER",
+    "ORCL",
+    "CFLT",
+    "CRNC",
+    "DXCM",
+    "INTU",
+    "IOT",
+    "LRCX",
+    "NFLX",
+    "PODD",
+    "PSTG",
+    "RBLX",
+    "RDDT",
+    "SERV",
+    "SHOP",
+    "SOUN",
+    "TDOC",
+    "PATH",
+    "DXYZ",
+    "NKE",
 ]
 
 router = APIRouter(
@@ -34,7 +124,7 @@ router = APIRouter(
 # ====================================================================================
 
 
-@router.post("/all-jobs", dependencies=[Depends(verify_bearer_token)])
+@router.post("/all-jobs", dependencies=[Depends(require_admin)])
 @inject
 def execute_all_jobs(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -46,42 +136,56 @@ def execute_all_jobs(
     queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/crypto.fifo"
     today = dt.date.today()
     yesterday = today - dt.timedelta(days=1)
-    
+
     all_jobs = []
-    
+
     # 1. 정산 작업
-    all_jobs.append({
-        "path": f"admin/settlement/settle-day/{yesterday.isoformat()}",
-        "method": "POST", "body": {}, "group_id": "settlement",
-        "description": f"Settlement for {yesterday.isoformat()}",
-        "deduplication_id": f"settlement-{yesterday.strftime('%Y%m%d')}"
-    })
-    
+    all_jobs.append(
+        {
+            "path": f"admin/settlement/settle-day/{yesterday.isoformat()}",
+            "method": "POST",
+            "body": {},
+            "group_id": "settlement",
+            "description": f"Settlement for {yesterday.isoformat()}",
+            "deduplication_id": f"settlement-{yesterday.strftime('%Y%m%d')}",
+        }
+    )
+
     # 2. 세션 시작 작업
-    all_jobs.append({
-        "path": "session/flip-to-predict",
-        "method": "POST", "body": {}, "group_id": "session",
-        "description": "Start new prediction session",
-        "deduplication_id": f"session-start-{today.strftime('%Y%m%d')}"
-    })
-    
+    all_jobs.append(
+        {
+            "path": "session/flip-to-predict",
+            "method": "POST",
+            "body": {},
+            "group_id": "session",
+            "description": "Start new prediction session",
+            "deduplication_id": f"session-start-{today.strftime('%Y%m%d')}",
+        }
+    )
+
     # 3. 유니버스 설정 작업
-    all_jobs.append({
-        "path": "universe/upsert",
-        "method": "POST",
-        "body": {"trading_day": today.isoformat(), "symbols": DEFAULT_TICKERS},
-        "group_id": "universe",
-        "description": f"Setup universe for {today.isoformat()} with {len(DEFAULT_TICKERS)} symbols",
-        "deduplication_id": f"universe-setup-{today.strftime('%Y%m%d')}"
-    })
+    all_jobs.append(
+        {
+            "path": "universe/upsert",
+            "method": "POST",
+            "body": {"trading_day": today.isoformat(), "symbols": DEFAULT_TICKERS},
+            "group_id": "universe",
+            "description": f"Setup universe for {today.isoformat()} with {len(DEFAULT_TICKERS)} symbols",
+            "deduplication_id": f"universe-setup-{today.strftime('%Y%m%d')}",
+        }
+    )
 
     # 4. 세션 종료 작업
-    all_jobs.append({
-        "path": "session/cutoff",
-        "method": "POST", "body": {}, "group_id": "session",
-        "description": "Close prediction session",
-        "deduplication_id": f"session-close-{today.strftime('%Y%m%d')}"
-    })
+    all_jobs.append(
+        {
+            "path": "session/cutoff",
+            "method": "POST",
+            "body": {},
+            "group_id": "session",
+            "description": "Close prediction session",
+            "deduplication_id": f"session-close-{today.strftime('%Y%m%d')}",
+        }
+    )
 
     responses = []
     for job in all_jobs:
@@ -98,15 +202,25 @@ def execute_all_jobs(
                 message_group_id=job["group_id"],
                 message_deduplication_id=job["deduplication_id"],
             )
-            responses.append({"job": job["description"], "status": "queued", "response": response})
+            responses.append(
+                {"job": job["description"], "status": "queued", "response": response}
+            )
         except Exception as e:
-            responses.append({"job": job["description"], "status": "failed", "error": str(e)})
+            responses.append(
+                {"job": job["description"], "status": "failed", "error": str(e)}
+            )
 
     successful_jobs = [r for r in responses if r["status"] == "queued"]
     failed_jobs = [r for r in responses if r["status"] == "failed"]
 
     if not successful_jobs:
-        raise HTTPException(status_code=500, detail={"message": "All batch jobs failed to queue.", "details": failed_jobs})
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "All batch jobs failed to queue.",
+                "details": failed_jobs,
+            },
+        )
 
     return {
         "message": f"All daily batch jobs have been queued. Success: {len(successful_jobs)}, Failed: {len(failed_jobs)}",
@@ -114,7 +228,7 @@ def execute_all_jobs(
     }
 
 
-@router.post("/prediction-settlement", dependencies=[Depends(verify_bearer_token)])
+@router.post("/prediction-settlement", dependencies=[Depends(require_admin)])
 @inject
 def execute_prediction_settlement(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -171,7 +285,7 @@ def execute_prediction_settlement(
     }
 
 
-@router.post("/session-start", dependencies=[Depends(verify_bearer_token)])
+@router.post("/session-start", dependencies=[Depends(require_admin)])
 @inject
 def execute_session_start(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -226,7 +340,7 @@ def execute_session_start(
     }
 
 
-@router.post("/universe-setup", dependencies=[Depends(verify_bearer_token)])
+@router.post("/universe-setup", dependencies=[Depends(require_admin)])
 @inject
 def execute_universe_setup(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -286,7 +400,7 @@ def execute_universe_setup(
     }
 
 
-@router.post("/session-close", dependencies=[Depends(verify_bearer_token)])
+@router.post("/session-close", dependencies=[Depends(require_admin)])
 @inject
 def execute_session_close(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),

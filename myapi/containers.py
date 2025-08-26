@@ -7,7 +7,6 @@ from myapi.services.user_service import UserService
 from myapi.services.prediction_service import PredictionService
 from myapi.services.session_service import SessionService
 from myapi.services.universe_service import UniverseService
-from myapi.services.batch_service import BatchService
 from myapi.services.price_service import PriceService
 from myapi.services.settlement_service import SettlementService
 from myapi.services.reward_service import RewardService
@@ -41,12 +40,6 @@ class ServiceModule(containers.DeclarativeContainer):
     prediction_service = providers.Factory(PredictionService, db=repositories.get_db)
     session_service = providers.Factory(SessionService, db=repositories.get_db)
     universe_service = providers.Factory(UniverseService, db=repositories.get_db)
-    batch_service = providers.Factory(
-        BatchService, 
-        db=repositories.get_db,
-        aws_service=aws_service,
-        settings=config.config
-    )
     price_service = providers.Factory(PriceService, db=repositories.get_db)
     settlement_service = providers.Factory(SettlementService, db=repositories.get_db)
     reward_service = providers.Factory(RewardService, db=repositories.get_db)

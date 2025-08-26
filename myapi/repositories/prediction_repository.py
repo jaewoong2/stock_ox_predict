@@ -35,8 +35,8 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
 
         # SQLAlchemy 모델의 속성들을 딕셔너리로 변환 후 Pydantic 생성
         data = {
-            "id": int(model_instance.id.__str__()),
-            "user_id": int(model_instance.user_id.__str__()),
+            "id": model_instance.id,
+            "user_id": model_instance.user_id,
             "trading_day": model_instance.trading_day.strftime("%Y-%m-%d"),
             "symbol": str(model_instance.symbol),
             "choice": PredictionChoice(model_instance.choice.value),
@@ -48,8 +48,8 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
                 else None
             ),
             "points_earned": (
-                int(model_instance.points_earned.__str__())
-                if model_instance.points_earned.__str__()
+                model_instance.points_earned
+                if model_instance.points_earned is not None
                 else 0
             ),
         }

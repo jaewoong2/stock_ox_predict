@@ -20,6 +20,7 @@ class User(BaseModel):
     provider_id = Column(String(255), nullable=True)  # OAuth provider user ID
     last_login_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)  # For user deactivation
+    is_admin = Column(Boolean, default=False, nullable=False)  # Admin privileges
 
     def __repr__(self):
         return (

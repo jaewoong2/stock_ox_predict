@@ -77,6 +77,18 @@ def get_current_active_user(
     return current_user
 
 
+def require_admin(
+    current_user: UserSchema = Depends(get_current_active_user),
+) -> UserSchema:
+    """관리자 권한이 필요한 엔드포인트용 의존성"""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
+
+
 # Legacy compatibility - 기존 코드와의 호환성을 위해
 verify_bearer_token = get_current_user
 verify_bearer_token_optional = get_current_user_optional

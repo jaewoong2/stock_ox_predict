@@ -364,6 +364,30 @@ class SettlementService:
                 points_per_correct=100,
             )
 
+            # 수동 정산에서도 포인트 지급 (자동 정산과 동일하게 처리)
+            if correct_count > 0:
+                # 정답 예측한 사용자들에게 포인트 지급
+                correct_predictions = self.pred_repo.get_predictions_by_symbol_and_date(
+                    symbol, trading_day, StatusEnum.CORRECT
+                )
+                
+                for prediction in correct_predictions:
+                    try:
+                        result = self.point_service.award_prediction_points(
+                            user_id=prediction.user_id,
+                            prediction_id=prediction.id,
+                            points=self.CORRECT_PREDICTION_POINTS,
+                            trading_day=trading_day,
+                            symbol=symbol
+                        )
+                        
+                        if result.success:
+                            print(f"✅ Manual settlement: Awarded {self.CORRECT_PREDICTION_POINTS} points to user {prediction.user_id} for prediction {prediction.id}")
+                        else:
+                            print(f"❌ Manual settlement: Failed to award points to user {prediction.user_id}: {result.message}")
+                    except Exception as e:
+                        print(f"❌ Manual settlement: Error awarding points for prediction {prediction.id}: {str(e)}")
+
             return {
                 "symbol": symbol,
                 "trading_day": trading_day.strftime("%Y-%m-%d"),

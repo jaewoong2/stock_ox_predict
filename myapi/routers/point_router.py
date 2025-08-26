@@ -29,7 +29,8 @@ from typing import List
 from datetime import date
 from dependency_injector.wiring import inject, Provide
 
-from myapi.core.auth_middleware import verify_bearer_token
+from myapi.core.auth_middleware import verify_bearer_token, require_admin
+from myapi.schemas.user import User as UserSchema
 from myapi.services.point_service import PointService
 from myapi.containers import Container
 from myapi.schemas.points import (
@@ -56,7 +57,7 @@ router = APIRouter(prefix="/points", tags=["points"])
 @router.get("/balance", response_model=PointsBalanceResponse)
 @inject
 async def get_my_balance(
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsBalanceResponse:
     """
@@ -78,7 +79,7 @@ async def get_my_balance(
         - 인덱스를 통한 빠른 조회
     """
     try:
-        user_id = current_user.get("user_id")
+        user_id = current_user.id
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid user token")
 
@@ -94,7 +95,7 @@ async def get_my_balance(
 async def get_my_ledger(
     limit: int = Query(50, ge=1, le=100, description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsLedgerResponse:
     """
@@ -124,7 +125,7 @@ async def get_my_ledger(
         GET /points/ledger?limit=10&offset=20 # 21-30번째 항목
     """
     try:
-        user_id = current_user.get("user_id")
+        user_id = current_user.id
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid user token")
 
@@ -142,7 +143,7 @@ async def get_my_ledger(
 async def get_ledger_by_date_range(
     start_date: date = Query(..., description="시작 날짜 (YYYY-MM-DD)"),
     end_date: date = Query(..., description="종료 날짜 (YYYY-MM-DD)"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> List[PointsLedgerEntry]:
     """날짜 범위별 포인트 거래 내역 조회
@@ -150,7 +151,7 @@ async def get_ledger_by_date_range(
     지정된 날짜 범위의 포인트 거래 내역을 조회합니다.
     """
     try:
-        user_id = current_user.get("user_id")
+        user_id = current_user.id
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid user token")
 
@@ -169,7 +170,7 @@ async def get_ledger_by_date_range(
 @inject
 async def get_points_earned_today(
     trading_day: date = Path(..., description="거래일 (YYYY-MM-DD)"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> dict:
     """특정일 획득 포인트 조회
@@ -177,7 +178,7 @@ async def get_points_earned_today(
     사용자가 특정일에 획득한 포인트 총합을 조회합니다.
     """
     try:
-        user_id = current_user.get("user_id")
+        user_id = current_user.id
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid user token")
 
@@ -195,7 +196,7 @@ async def get_points_earned_today(
 @router.get("/integrity/my", response_model=PointsIntegrityCheckResponse)
 @inject
 async def verify_my_integrity(
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsIntegrityCheckResponse:
     """내 포인트 정합성 검증
@@ -203,7 +204,7 @@ async def verify_my_integrity(
     현재 사용자의 포인트 정합성을 검증합니다.
     """
     try:
-        user_id = current_user.get("user_id")
+        user_id = current_user.id
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid user token")
 
@@ -225,7 +226,7 @@ async def verify_my_integrity(
 async def admin_add_points(
     request: PointsTransactionRequest,
     user_id: int = Query(..., description="대상 사용자 ID"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsTransactionResponse:
     """
@@ -263,10 +264,7 @@ async def admin_add_points(
         - 기존 거래가 있으면 기존 결과 반환
     """
     try:
-        # 관리자 권한 확인
-        if not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Admin access required")
-
+        # 관리자 권한은 require_admin에서 이미 확인됨
         result = point_service.add_points(user_id=user_id, request=request)
         return result
     except ValidationError as e:
@@ -281,7 +279,7 @@ async def admin_add_points(
 async def admin_deduct_points(
     request: PointsTransactionRequest,
     user_id: int = Query(..., description="대상 사용자 ID"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsTransactionResponse:
     """포인트 차감 (관리자 전용)
@@ -289,9 +287,7 @@ async def admin_deduct_points(
     특정 사용자의 포인트를 차감합니다.
     """
     try:
-        # 관리자 권한 확인
-        if not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Admin access required")
+        # 관리자 권한은 require_admin에서 이미 확인됨
 
         result = point_service.deduct_points(user_id=user_id, request=request)
         return result
@@ -308,7 +304,7 @@ async def admin_deduct_points(
 @inject
 async def admin_adjust_points(
     request: AdminPointsAdjustmentRequest,
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsTransactionResponse:
     """포인트 조정 (관리자 전용)
@@ -316,11 +312,9 @@ async def admin_adjust_points(
     특정 사용자의 포인트를 조정합니다. 양수면 추가, 음수면 차감됩니다.
     """
     try:
-        # 관리자 권한 확인
-        if not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Admin access required")
+        # 관리자 권한은 require_admin에서 이미 확인됨
 
-        admin_id = current_user.get("user_id")
+        admin_id = current_user.id
         if not admin_id:
             raise HTTPException(status_code=401, detail="Invalid admin token")
 
@@ -339,7 +333,7 @@ async def admin_adjust_points(
 @inject
 async def admin_get_user_balance(
     user_id: int = Path(..., description="조회할 사용자 ID"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsBalanceResponse:
     """사용자 포인트 잔액 조회 (관리자 전용)
@@ -347,9 +341,7 @@ async def admin_get_user_balance(
     특정 사용자의 포인트 잔액을 조회합니다.
     """
     try:
-        # 관리자 권한 확인
-        if not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Admin access required")
+        # 관리자 권한은 require_admin에서 이미 확인됨
 
         balance = point_service.get_user_balance(user_id)
         return balance
@@ -364,7 +356,7 @@ async def admin_get_user_ledger(
     user_id: int = Path(..., description="조회할 사용자 ID"),
     limit: int = Query(50, ge=1, le=100, description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsLedgerResponse:
     """사용자 포인트 거래 내역 조회 (관리자 전용)
@@ -372,9 +364,7 @@ async def admin_get_user_ledger(
     특정 사용자의 포인트 거래 내역을 조회합니다.
     """
     try:
-        # 관리자 권한 확인
-        if not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Admin access required")
+        # 관리자 권한은 require_admin에서 이미 확인됨
 
         ledger = point_service.get_user_ledger(
             user_id=user_id, limit=limit, offset=offset
@@ -389,7 +379,7 @@ async def admin_get_user_ledger(
 @inject
 async def admin_verify_user_integrity(
     user_id: int = Path(..., description="검증할 사용자 ID"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsIntegrityCheckResponse:
     """사용자 포인트 정합성 검증 (관리자 전용)
@@ -397,9 +387,7 @@ async def admin_verify_user_integrity(
     특정 사용자의 포인트 정합성을 검증합니다.
     """
     try:
-        # 관리자 권한 확인
-        if not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Admin access required")
+        # 관리자 권한은 require_admin에서 이미 확인됨
 
         integrity_result = point_service.verify_user_integrity(user_id)
         return integrity_result
@@ -411,7 +399,7 @@ async def admin_verify_user_integrity(
 @router.get("/admin/integrity/global", response_model=PointsIntegrityCheckResponse)
 @inject
 async def admin_verify_global_integrity(
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsIntegrityCheckResponse:
     """
@@ -444,9 +432,7 @@ async def admin_verify_global_integrity(
         - MISMATCH 발생 시 시스템 점검 필요
     """
     try:
-        # 관리자 권한 확인
-        if not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Admin access required")
+        # 관리자 권한은 require_admin에서 이미 확인됨
 
         integrity_result = point_service.verify_global_integrity()
         return integrity_result
@@ -459,7 +445,7 @@ async def admin_verify_global_integrity(
 @inject
 async def get_daily_points_stats(
     trading_day: date = Path(..., description="거래일 (YYYY-MM-DD)"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> dict:
     """일별 포인트 통계 (관리자 전용)
@@ -467,9 +453,7 @@ async def get_daily_points_stats(
     특정일의 포인트 지급 통계를 조회합니다.
     """
     try:
-        # 관리자 권한 확인
-        if not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Admin access required")
+        # 관리자 권한은 require_admin에서 이미 확인됨
 
         total_awarded = point_service.get_total_points_awarded_today(trading_day)
 
@@ -487,7 +471,7 @@ async def get_daily_points_stats(
 async def check_user_affordability(
     user_id: int = Path(..., description="확인할 사용자 ID"),
     amount: int = Path(..., description="확인할 포인트 금액"),
-    current_user: dict = Depends(verify_bearer_token),
+    current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> dict:
     """사용자 지불 능력 확인 (관리자 전용)
@@ -495,9 +479,7 @@ async def check_user_affordability(
     특정 사용자가 지정된 포인트를 지불할 수 있는지 확인합니다.
     """
     try:
-        # 관리자 권한 확인
-        if not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Admin access required")
+        # 관리자 권한은 require_admin에서 이미 확인됨
 
         can_afford = point_service.can_afford(user_id, amount)
         current_balance = point_service.get_user_balance(user_id).balance

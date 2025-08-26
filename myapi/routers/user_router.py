@@ -5,6 +5,7 @@ from myapi.services.user_service import UserService
 from myapi.core.auth_middleware import (
     get_current_active_user,
     get_current_user_optional,
+    require_admin,
 )
 from myapi.core.exceptions import NotFoundError, ValidationError
 from myapi.schemas.user import User as UserSchema, UserProfile, UserStats, UserUpdate
@@ -193,7 +194,7 @@ def search_users_by_nickname(
 @router.get("/stats/overview", response_model=BaseResponse)
 @inject
 def get_user_stats(
-    current_user: UserSchema = Depends(get_current_active_user),
+    current_user: UserSchema = Depends(require_admin),
     user_service: UserService = Depends(Provide[Container.services.user_service]),
 ) -> Any:
     """사용자 통계 조회 (관리자 권한 필요)"""
