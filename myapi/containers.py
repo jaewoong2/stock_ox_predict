@@ -57,6 +57,8 @@ class Container(containers.DeclarativeContainer):
             "myapi.routers.auth_router",
             "myapi.routers.user_router",
             "myapi.routers.prediction_router",
+            "myapi.routers.price_router",
+            "myapi.routers.settlement_router",
             "myapi.routers.session_router",
             "myapi.routers.universe_router",
             "myapi.routers.batch_router",

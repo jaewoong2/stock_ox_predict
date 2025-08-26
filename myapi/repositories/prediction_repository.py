@@ -121,7 +121,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         )
 
     def get_predictions_by_symbol_and_date(
-        self, symbol: str, trading_day: date, status_filter: StatusEnum
+        self, symbol: str, trading_day: date, status_filter: Optional[StatusEnum] = None
     ) -> List[PredictionResponse]:
         """특정 심볼과 날짜의 모든 예측 조회"""
 
@@ -169,7 +169,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             )
         )
 
-        self.db.flush()
+        self.db.commit()
         return locked_count
 
     def update_prediction_status(
@@ -234,6 +234,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         )
 
         self.db.flush()
+        self.db.commit()
         return correct_count, incorrect_count
 
     def get_prediction_stats(self, trading_day: date) -> PredictionStats:
@@ -396,6 +397,29 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
 
         return [self._to_prediction_response(instance) for instance in model_instances]
 
+    def count_predictions_by_date(self, trading_day: date) -> int:
+        """특정 날짜의 전체 예측 개수"""
+        return (
+            self.db.query(self.model_class)
+            .filter(self.model_class.trading_day == trading_day)
+            .count()
+        )
+
+    def count_predictions_by_date_and_status(
+        self, trading_day: date, status: StatusEnum
+    ) -> int:
+        """특정 날짜 및 상태의 예측 개수"""
+        return (
+            self.db.query(self.model_class)
+            .filter(
+                and_(
+                    self.model_class.trading_day == trading_day,
+                    self.model_class.status == status,
+                )
+            )
+            .count()
+        )
+
 
 class UserDailyStatsRepository(
     BaseRepository[UserDailyStatsModel, UserDailyStatsResponse]
@@ -446,6 +470,7 @@ class UserDailyStatsRepository(
             self.db.add(model_instance)
             self.db.flush()
             self.db.refresh(model_instance)
+            self.db.commit()
 
         return self._to_response(model_instance)
 
@@ -467,7 +492,7 @@ class UserDailyStatsRepository(
         )
 
         if updated_count > 0:
-            self.db.flush()
+            self.db.commit()
             # 업데이트된 값 재조회
             model_instance = (
                 self.db.query(self.model_class)
@@ -531,7 +556,7 @@ class UserDailyStatsRepository(
                 synchronize_session=False,
             )
 
-        self.db.flush()
+        self.db.commit()
 
         # 업데이트된 모델 재조회
         updated_model = (

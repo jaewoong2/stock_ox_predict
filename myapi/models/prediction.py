@@ -24,6 +24,7 @@ class StatusEnum(enum.Enum):
     CORRECT = "CORRECT"
     INCORRECT = "INCORRECT"
     CANCELLED = "CANCELLED"
+    VOID = "VOID"
 
 
 class Prediction(BaseModel):

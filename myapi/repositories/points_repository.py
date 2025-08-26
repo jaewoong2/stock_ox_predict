@@ -141,6 +141,7 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
             self.db.add(ledger_entry)
             self.db.flush()
             self.db.refresh(ledger_entry)
+            self.db.commit()
 
             return PointsTransactionResponse(
                 success=True,

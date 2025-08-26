@@ -155,6 +155,7 @@ class RewardsRepository(
             self.db.add(model_instance)
             self.db.flush()
             self.db.refresh(model_instance)
+            self.db.commit()
 
             return self._to_inventory_response(model_instance)
 
@@ -186,7 +187,7 @@ class RewardsRepository(
         if updated_count == 0:
             return None
 
-        self.db.flush()
+        self.db.commit()
         # 업데이트된 모델 재조회
         updated_model = (
             self.db.query(RewardsInventoryModel)
@@ -223,7 +224,7 @@ class RewardsRepository(
             )
         )
 
-        self.db.flush()
+        self.db.commit()
         return updated_count > 0
 
     def release_reservation(self, sku: str, quantity: int = 1) -> bool:
@@ -248,7 +249,7 @@ class RewardsRepository(
             )
         )
 
-        self.db.flush()
+        self.db.commit()
         return updated_count > 0
 
     def consume_reserved_item(self, sku: str, quantity: int = 1) -> bool:
@@ -279,7 +280,7 @@ class RewardsRepository(
             )
         )
 
-        self.db.flush()
+        self.db.commit()
         return updated_count > 0
 
     def is_available_for_redemption(self, sku: str, quantity: int = 1) -> bool:
@@ -312,6 +313,7 @@ class RewardsRepository(
         self.db.add(redemption)
         self.db.flush()
         self.db.refresh(redemption)
+        self.db.commit()
 
         return self._to_redemption_response(redemption)
 
@@ -415,7 +417,7 @@ class RewardsRepository(
         if updated_count == 0:
             return None
 
-        self.db.flush()
+        self.db.commit()
 
         # 상태 변경에 따른 재고 처리
         if (
@@ -632,5 +634,5 @@ class RewardsRepository(
             .delete()
         )
 
-        self.db.flush()
+        self.db.commit()
         return deleted_count > 0

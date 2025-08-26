@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 from typing import List, Optional
 
+import pandas as pd
 import yfinance as yf
 from sqlalchemy.orm import Session
 
@@ -247,16 +248,18 @@ class PriceService:
 
         hist = await loop.run_in_executor(None, fetch_history)
 
-        if hist.empty or trading_day.strftime("%Y-%m-%d") not in hist.index.strftime(
-            "%Y-%m-%d"
-        ):
+        if hist.empty or trading_day.strftime("%Y-%m-%d") not in pd.to_datetime(
+            hist.index
+        ).strftime("%Y-%m-%d"):
             raise ValidationError(
                 f"No EOD data available for {symbol} on {trading_day}"
             )
 
         # 해당 날짜의 데이터 찾기
         target_date_str = trading_day.strftime("%Y-%m-%d")
-        matching_rows = hist[hist.index.strftime("%Y-%m-%d") == target_date_str]
+        matching_rows = hist[
+            pd.to_datetime(hist.index).strftime("%Y-%m-%d") == target_date_str
+        ]
 
         if matching_rows.empty:
             raise ValidationError(

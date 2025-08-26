@@ -14,6 +14,7 @@ class PredictionStatus(str, Enum):
     CORRECT = "CORRECT"
     INCORRECT = "INCORRECT"
     CANCELLED = "CANCELLED"
+    VOID = "VOID"
 
 
 class PredictionCreate(BaseModel):

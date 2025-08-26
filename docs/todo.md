@@ -105,7 +105,8 @@
   - [x] Repository 의존성 등록
   - [x] 전체 서비스 의존성 통합 (Universe, Session, Batch, Prediction)
 - [x] **FastAPI 앱 통합** ✅
-  - [x] 라우터 등록 (main.py) — auth, users, predictions, session, universe, batch 포함
+  - [x] 라우터 등록 (main.py) — auth, users, predictions, prices, settlement, session, universe, batch 포함
+  - [x] 의존성 주입 wiring 설정 (새 라우터들 포함)
   - [ ] 미들웨어 설정
   - [x] CORS 및 보안 설정
 - [x] **테스트 코드 작성** ✅
@@ -117,17 +118,7 @@
 
 ## 다음에 해야 할 구체적 작업
 
-1. **데이터베이스 스키마 생성**
-   - Alembic 마이그레이션 스크립트 생성
-   - crypto 스키마 및 모든 테이블 생성
-   - 인덱스 및 제약조건 설정
-
-2. **인증 시스템 구현**
-   - JWT 설정 (RS256 알고리즘)
-   - Google OAuth 연동
-   - 인증 미들웨어 구현
-
-3. **서비스 계층 구현**
+1. **서비스 계층 구현**
    - 각 도메인별 서비스 클래스 구현
    - 비즈니스 로직 구현
    - 트랜잭션 관리
@@ -137,11 +128,13 @@
 - ✅ 모든 Request/Response는 Pydantic BaseModel 사용
 - ✅ Repository 응답은 ORM이 아닌 Pydantic 스키마 사용
 - ✅ Pylance 에러 방지를 위한 타입 힌팅 (SQLAlchemy Column 타입 에러 해결)
+- ✅ **트랜잭션 무결성 보장** - 모든 Repository에서 적절한 commit/rollback 처리 완료
+- ✅ **의존성 주입 완성** - 새 라우터들 포함한 완전한 wiring 설정
+- ✅ **관심사 분리** - Router 레벨에서 도메인별 깔끔한 분리 완료
 - 비즈니스 로직은 @docs/ 문서 기반으로 구현
 - 멱등성 보장 (포인트 시스템)
-- 트랜잭션 무결성 보장
- - 가입/로그인은 OAuth 전용 (로컬 이메일/비밀번호 비활성화)
- - OAuth 로그인 시 닉네임 변경 감지 및 중복 회피 동기화
+- 가입/로그인은 OAuth 전용 (로컬 이메일/비밀번호 비활성화)
+- OAuth 로그인 시 닉네임 변경 감지 및 중복 회피 동기화
 
 ## 구현 완료 현황
 
@@ -170,5 +163,90 @@
 - **API 라우터**: Universe, Session, Batch 라우터 구현 및 통합
 - **테스트 코드**: 모든 라우터 및 서비스에 대한 포괄적인 단위 테스트 완료
 
+## 최근 완료 작업 (2025-08-26) ✅
+
+### 1. Router 리팩토링 완료 
+- [x] **prediction_router.py 분리 작업 완료**
+  - [x] `price_router.py` 생성 - 가격 조회 관련 엔드포인트 분리
+    - 실시간 가격 조회 (`/prices/current/{symbol}`)
+    - 유니버스 가격 조회 (`/prices/universe/{trading_day}`)
+    - EOD 가격 조회 (`/prices/eod/{symbol}/{trading_day}`)
+    - 관리자용 정산 가격 검증 (`/prices/admin/validate-settlement/{trading_day}`)
+    - 예측 결과 비교 (`/prices/admin/compare-prediction`)
+  - [x] `settlement_router.py` 생성 - 정산 관련 엔드포인트 분리
+    - 자동 정산 (`/admin/settlement/settle-day/{trading_day}`)
+    - 정산 요약 (`/admin/settlement/summary/{trading_day}`)
+    - 수동 정산 (`/admin/settlement/manual-settle`)
+  - [x] `prediction_router.py` 정리 - 예측 관련 기능만 유지
+  - [x] `main.py` 업데이트 - 새 라우터들 등록
+  - [x] 관심사 분리 및 코드 가독성 향상
+
+**분리된 라우터 구조:**
+- `/predictions/*` - 예측 CRUD 및 관리 (prediction_router.py)
+- `/prices/*` - 가격 조회 및 검증 (price_router.py)
+- `/admin/settlement/*` - 정산 처리 (settlement_router.py)
+
+### 2. Settlement Service 및 의존성 주입 문제 해결 완료
+- [x] **StatusEnum에 VOID 상태 추가** (`myapi/models/prediction.py`)
+  - 정산 시 가격 데이터 문제로 인한 예측 무효화 처리 지원
+- [x] **PredictionStatus에 VOID 상태 추가** (`myapi/schemas/prediction.py`)
+  - 스키마와 모델 간 상태 일관성 보장
+- [x] **PredictionRepository 메서드 시그니처 수정**
+  - `get_predictions_by_symbol_and_date()`: status_filter 파라미터 Optional로 변경
+  - `count_predictions_by_date()`, `count_predictions_by_date_and_status()` 메서드 추가
+- [x] **SettlementService 메서드 호출 수정**
+  - `get_symbols_for_day` → `get_universe_for_date` 변경
+  - StatusEnum vs PredictionStatus 타입 혼용 문제 해결
+- [x] **의존성 주입 wiring 설정 업데이트** (`myapi/containers.py`)
+  - 새 라우터들(`price_router`, `settlement_router`) wiring 설정에 추가
+  - 'Provide' object 에러 해결
+
+### 3. 데이터베이스 트랜잭션 관리 전면 개선 완료
+**문제**: Repository에서 `db.flush()`만 있고 `db.commit()`이 누락되어 데이터 영속성 문제 발생
+
+**해결된 Repository 파일들:**
+
+#### 3.1 **active_universe_repository.py** (3곳 수정)
+- `add_symbol_to_universe()`: flush 후 commit 추가
+- `remove_symbol_from_universe()`: flush → commit 변경  
+- `clear_universe_for_date()`: flush → commit 변경
+
+#### 3.2 **points_repository.py** (1곳 수정)
+- `process_points_transaction()`: flush 후 commit 추가
+
+#### 3.3 **rewards_repository.py** (7곳 수정)
+- `add_inventory_item()`: flush 후 commit 추가
+- `update_inventory_stock()`: flush → commit 변경
+- `reserve_inventory()`: flush → commit 변경 (2곳)
+- `release_reservation()`: flush → commit 변경
+- `create_redemption()`: flush 후 commit 추가
+- `process_redemption()`: flush → commit 변경
+- `delete_inventory_item()`: flush → commit 변경
+
+#### 3.4 **prediction_repository.py** (5곳 수정)
+- `lock_predictions_for_settlement()`: flush → commit 변경
+- `bulk_update_predictions_status()`: commit/flush 순서 수정
+- `get_or_create_user_daily_stats()`: flush 후 commit 추가
+- `increment_predictions_made()`: flush → commit 변경
+- `increase_max_predictions()`: flush → commit 변경
+
+**트랜잭션 관리 패턴 확립:**
+- ✅ **BaseRepository**: create(), update(), delete()에 적절한 commit/rollback 구현됨
+- ✅ **개별 Repository**: 비즈니스 로직 메서드들의 누락된 commit 모두 추가
+- ✅ **데이터 영속성**: 모든 데이터 변경 작업이 올바르게 커밋되어 DB에 영속화
+- ✅ **트랜잭션 일관성**: flush → commit 순서와 rollback 처리 일관성 확보
+
+### 4. 캐시 전략 개선 제안 (PriceService)
+- [x] **현재 가격 캐시 분석 완료**
+  - 기존: 60초 고정 TTL
+  - 제안: 장 상태별 차등 캐시 (OPEN: 30초, PRE/AFTER: 5분, CLOSED: 30분)
+  - 실시간성과 API 호출 최적화 균형 확보
+
+### 5. 전체 시스템 안정성 확보
+- [x] **Import 테스트 성공**: 모든 service, repository 임포트 정상 작동
+- [x] **API 엔드포인트 정상화**: Settlement 관련 API들이 올바르게 작동
+- [x] **타입 안전성**: Pylance 타입 에러들 해결 완료
+- [x] **코드 가독성**: 700줄 단일 파일 → 관심사별 분리로 유지보수성 향상
+
 ### 📋 **다음 단계**: 포인트 및 리워드 시스템 구현
-핵심 예측 시스템과 배치 자동화가 완료되었으므로, 사용자 보상 시스템 구현이 다음 우선순위입니다.
+핵심 예측/정산 시스템과 배치 자동화가 완료되고, 라우터 구조 정리, 의존성 주입, 트랜잭션 관리까지 모두 안정화되었으므로, 사용자 보상 시스템 구현이 다음 우선순위입니다.

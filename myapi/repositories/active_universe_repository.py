@@ -101,6 +101,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
         self.db.add(model_instance)
         self.db.flush()
         self.db.refresh(model_instance)
+        self.db.commit()
 
         return self._to_universe_item(model_instance)
 
@@ -117,7 +118,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
             .delete()
         )
 
-        self.db.flush()
+        self.db.commit()
         return deleted_count > 0
 
     def symbol_exists_in_universe(self, trading_day: date, symbol: str) -> bool:
@@ -235,5 +236,5 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
             .delete()
         )
 
-        self.db.flush()
+        self.db.commit()
         return deleted_count
