@@ -9,6 +9,7 @@ from myapi.core.auth_middleware import (
 from myapi.core.exceptions import NotFoundError, ValidationError
 from myapi.schemas.user import User as UserSchema, UserProfile, UserStats, UserUpdate
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
+from myapi.schemas.points import PointsBalanceResponse, PointsLedgerResponse
 import logging
 from dependency_injector.wiring import inject, Provide
 from myapi.containers import Container
@@ -294,4 +295,134 @@ def deactivate_current_user(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="User deactivation failed",
+        )
+
+
+# 포인트 관련 엔드포인트들
+@router.get("/me/points/balance", response_model=BaseResponse)
+@inject
+def get_my_points_balance(
+    current_user: UserSchema = Depends(get_current_active_user),
+    user_service: UserService = Depends(Provide[Container.services.user_service]),
+) -> Any:
+    """내 포인트 잔액 조회"""
+    try:
+        balance = user_service.get_user_points_balance(current_user.id)
+        
+        return BaseResponse(
+            success=True,
+            data={
+                "balance": balance.balance,
+                "user_id": current_user.id
+            }
+        )
+    except Exception as e:
+        logger.error(f"Points balance fetch error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve points balance"
+        )
+
+
+@router.get("/me/points/ledger", response_model=BaseResponse)
+@inject
+def get_my_points_ledger(
+    limit: int = Query(50, ge=1, le=100, description="페이지 크기"),
+    offset: int = Query(0, ge=0, description="오프셋"),
+    current_user: UserSchema = Depends(get_current_active_user),
+    user_service: UserService = Depends(Provide[Container.services.user_service]),
+) -> Any:
+    """내 포인트 거래 내역 조회"""
+    try:
+        ledger = user_service.get_user_points_ledger(
+            current_user.id, limit=limit, offset=offset
+        )
+        
+        return BaseResponse(
+            success=True,
+            data={
+                "balance": ledger.balance,
+                "entries": [entry.model_dump() for entry in ledger.entries],
+                "total_count": ledger.total_count,
+                "has_next": ledger.has_next
+            }
+        )
+    except Exception as e:
+        logger.error(f"Points ledger fetch error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve points ledger"
+        )
+
+
+@router.get("/me/profile-with-points", response_model=BaseResponse)
+@inject
+def get_my_profile_with_points(
+    current_user: UserSchema = Depends(get_current_active_user),
+    user_service: UserService = Depends(Provide[Container.services.user_service]),
+) -> Any:
+    """포인트 정보를 포함한 내 프로필 조회"""
+    try:
+        profile_with_points = user_service.get_user_profile_with_points(current_user.id)
+        
+        return BaseResponse(
+            success=True,
+            data=profile_with_points
+        )
+    except Exception as e:
+        logger.error(f"Profile with points fetch error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve profile with points"
+        )
+
+
+@router.get("/me/financial-summary", response_model=BaseResponse)
+@inject
+def get_my_financial_summary(
+    current_user: UserSchema = Depends(get_current_active_user),
+    user_service: UserService = Depends(Provide[Container.services.user_service]),
+) -> Any:
+    """내 재정 요약 정보 조회"""
+    try:
+        summary = user_service.get_user_financial_summary(current_user.id)
+        
+        return BaseResponse(
+            success=True,
+            data=summary
+        )
+    except Exception as e:
+        logger.error(f"Financial summary fetch error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve financial summary"
+        )
+
+
+@router.get("/me/can-afford/{amount}", response_model=BaseResponse)
+@inject
+def check_if_i_can_afford(
+    amount: int = Query(..., ge=1, description="확인할 포인트 금액"),
+    current_user: UserSchema = Depends(get_current_active_user),
+    user_service: UserService = Depends(Provide[Container.services.user_service]),
+) -> Any:
+    """특정 포인트를 지불할 수 있는지 확인"""
+    try:
+        can_afford = user_service.can_user_afford(current_user.id, amount)
+        current_balance = user_service.get_user_points_balance(current_user.id)
+        
+        return BaseResponse(
+            success=True,
+            data={
+                "amount": amount,
+                "can_afford": can_afford,
+                "current_balance": current_balance.balance,
+                "shortfall": max(0, amount - current_balance.balance) if not can_afford else 0
+            }
+        )
+    except Exception as e:
+        logger.error(f"Affordability check error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check affordability"
         )

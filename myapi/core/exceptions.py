@@ -116,6 +116,16 @@ class InternalServerError(BaseAPIException):
             details=details
         )
 
+class InsufficientBalanceError(BaseAPIException):
+    """Insufficient balance errors"""
+    def __init__(self, message: str = "Insufficient balance", details: Optional[Dict] = None):
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="BALANCE_001",
+            message=message,
+            details=details
+        )
+
 class ServiceException(Exception):
     """Base exception for service layer errors"""
     pass

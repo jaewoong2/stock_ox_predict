@@ -9,6 +9,7 @@ from myapi.models.prediction import ChoiceEnum, StatusEnum
 from myapi.repositories.prediction_repository import PredictionRepository
 from myapi.repositories.active_universe_repository import ActiveUniverseRepository
 from myapi.services.price_service import PriceService
+from myapi.services.point_service import PointService
 from myapi.schemas.price import SettlementPriceData, PriceComparisonResult
 from myapi.schemas.prediction import PredictionChoice, PredictionStatus
 
@@ -21,6 +22,11 @@ class SettlementService:
         self.pred_repo = PredictionRepository(db)
         self.universe_repo = ActiveUniverseRepository(db)
         self.price_service = PriceService(db)
+        self.point_service = PointService(db)
+        
+        # 포인트 지급 설정 (비즈니스 설정)
+        self.CORRECT_PREDICTION_POINTS = 100
+        self.PREDICTION_FEE_POINTS = 10
 
     async def __aenter__(self):
         return self
@@ -170,18 +176,30 @@ class SettlementService:
         self, prediction_id: int, user_id: int, trading_day: date, symbol: str
     ) -> None:
         """정답 예측에 대한 보상 처리"""
-        # 1. 예측 상태를 CORRECT로 변경
-        self.pred_repo.update_prediction_status(prediction_id, StatusEnum.CORRECT)
+        try:
+            # 1. 예측 상태를 CORRECT로 변경
+            self.pred_repo.update_prediction_status(prediction_id, StatusEnum.CORRECT)
 
-        # 2. 포인트 지급 (실제 구현에서는 PointsService 사용)
-        # await self.points_service.award_prediction_points(
-        #     user_id, trading_day, symbol, prediction_id, points=100
-        # )
+            # 2. 포인트 지급
+            result = self.point_service.award_prediction_points(
+                user_id=user_id,
+                prediction_id=prediction_id,
+                points=self.CORRECT_PREDICTION_POINTS,
+                trading_day=trading_day,
+                symbol=symbol
+            )
 
-        # 임시로 로그만 출력
-        print(
-            f"Awarded points to user {user_id} for correct prediction {prediction_id}"
-        )
+            if result.success:
+                print(
+                    f"✅ Awarded {self.CORRECT_PREDICTION_POINTS} points to user {user_id} for correct prediction {prediction_id}"
+                )
+            else:
+                print(
+                    f"❌ Failed to award points to user {user_id}: {result.message}"
+                )
+        except Exception as e:
+            print(f"❌ Error awarding points for prediction {prediction_id}: {str(e)}")
+            # 포인트 지급 실패해도 예측 결과는 유지
 
     async def _handle_incorrect_prediction(
         self, prediction_id: int, user_id: int, trading_day: date, symbol: str
@@ -201,13 +219,43 @@ class SettlementService:
         void_reason: Optional[str],
     ) -> None:
         """예측 무효 처리"""
-        # 예측 상태를 VOID로 변경
-        self.pred_repo.update_prediction_status(prediction_id, StatusEnum.VOID)
+        try:
+            # 예측 상태를 VOID로 변경
+            self.pred_repo.update_prediction_status(prediction_id, StatusEnum.VOID)
 
-        # 포인트 반환 또는 유지 (비즈니스 규칙에 따라)
-        print(
-            f"Voided prediction {prediction_id} for user {user_id}, reason: {void_reason}"
-        )
+            # VOID 처리 시에는 예측 수수료를 환불해줌 (비즈니스 규칙)
+            try:
+                from myapi.schemas.points import PointsTransactionRequest
+                
+                refund_request = PointsTransactionRequest(
+                    amount=self.PREDICTION_FEE_POINTS,
+                    reason=f"Refund for void prediction {prediction_id} ({symbol}): {void_reason or 'Price data unavailable'}",
+                    ref_id=f"void_refund_{prediction_id}_{trading_day.strftime('%Y%m%d')}"
+                )
+                
+                result = self.point_service.add_points(
+                    user_id=user_id,
+                    request=refund_request,
+                    trading_day=trading_day,
+                    symbol=symbol
+                )
+                
+                if result.success:
+                    print(
+                        f"✅ Refunded {self.PREDICTION_FEE_POINTS} points to user {user_id} for void prediction {prediction_id}"
+                    )
+                else:
+                    print(
+                        f"❌ Failed to refund points to user {user_id}: {result.message}"
+                    )
+            except Exception as refund_error:
+                print(f"❌ Error refunding points for void prediction {prediction_id}: {str(refund_error)}")
+
+            print(
+                f"Voided prediction {prediction_id} for user {user_id}, reason: {void_reason}"
+            )
+        except Exception as e:
+            print(f"❌ Error voiding prediction {prediction_id}: {str(e)}")
 
     async def get_settlement_summary(self, trading_day: date) -> Dict[str, Any]:
         """특정 날짜의 정산 요약 정보를 조회합니다."""

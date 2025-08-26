@@ -7,6 +7,7 @@ from myapi.config import settings
 from myapi.core.security import verify_password, get_password_hash, create_access_token
 from myapi.core.exceptions import AuthenticationError, OAuthError
 from myapi.repositories.user_repository import UserRepository
+from myapi.services.point_service import PointService
 from myapi.providers.oauth.google import GoogleOAuthProvider
 from myapi.providers.oauth.kakao import KakaoOAuthProvider
 from myapi.schemas.auth import (
@@ -29,6 +30,7 @@ class AuthService:
     def __init__(self, db: Session):
         self.db = db
         self.user_repo = UserRepository(db)
+        self.point_service = PointService(db)
         self.google_oauth = GoogleOAuthProvider()
         self.kakao_oauth = KakaoOAuthProvider()
 
@@ -50,6 +52,26 @@ class AuthService:
 
         if not user:
             raise AuthenticationError("Failed to create user")
+
+        # 신규 가입 보너스 포인트 지급
+        try:
+            from myapi.schemas.points import PointsTransactionRequest
+            from datetime import datetime
+            
+            bonus_request = PointsTransactionRequest(
+                amount=1000,  # 신규 가입 보너스 1000포인트
+                reason="Welcome bonus for new user registration",
+                ref_id=f"signup_bonus_{user.id}_{datetime.now().strftime('%Y%m%d')}"
+            )
+            
+            bonus_result = self.point_service.add_points(user_id=user.id, request=bonus_request)
+            
+            if bonus_result.success:
+                logger.info(f"✅ Awarded signup bonus to new local user {user.id}: 1000 points")
+            else:
+                logger.warning(f"❌ Failed to award signup bonus to new local user {user.id}: {bonus_result.message}")
+        except Exception as e:
+            logger.error(f"❌ Error awarding signup bonus to new local user {user.id}: {str(e)}")
 
         # JWT 토큰 생성
         access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
@@ -184,6 +206,26 @@ class AuthService:
                     raise OAuthError("Failed to create OAuth user")
 
                 is_new_user = True
+
+                # 신규 가입 보너스 포인트 지급
+                try:
+                    from myapi.schemas.points import PointsTransactionRequest
+                    
+                    bonus_request = PointsTransactionRequest(
+                        amount=1000,  # 신규 가입 보너스 1000포인트
+                        reason="Welcome bonus for new OAuth user registration",
+                        ref_id=f"oauth_signup_bonus_{user.id}_{datetime.now().strftime('%Y%m%d')}"
+                    )
+                    
+                    bonus_result = self.point_service.add_points(user_id=user.id, request=bonus_request)
+                    
+                    if bonus_result.success:
+                        logger.info(f"✅ Awarded signup bonus to new OAuth user {user.id}: 1000 points")
+                    else:
+                        logger.warning(f"❌ Failed to award signup bonus to new OAuth user {user.id}: {bonus_result.message}")
+                except Exception as e:
+                    logger.error(f"❌ Error awarding signup bonus to new OAuth user {user.id}: {str(e)}")
+
 
             # 5. JWT 토큰 생성
             access_token = create_access_token(

@@ -4,12 +4,14 @@ from datetime import datetime
 
 from myapi.repositories.user_repository import UserRepository
 from myapi.core.exceptions import ValidationError, NotFoundError
+from myapi.services.point_service import PointService
 from myapi.schemas.user import (
     User as UserSchema,
     UserProfile,
     UserStats,
     UserUpdate,
 )
+from myapi.schemas.points import PointsBalanceResponse, PointsLedgerResponse
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,7 @@ class UserService:
     def __init__(self, db: Session):
         self.db = db
         self.user_repo = UserRepository(db)
+        self.point_service = PointService(db)
 
     def get_user_by_id(self, user_id: int) -> Optional[UserSchema]:
         """사용자 ID로 조회"""
@@ -141,6 +144,90 @@ class UserService:
     def get_user_by_provider(self, provider: str, provider_id: str) -> Optional[UserSchema]:
         """OAuth 프로바이더 정보로 사용자 조회"""
         return self.user_repo.get_by_provider_info(provider, provider_id)
+
+    # 포인트 관련 기능들
+    def get_user_points_balance(self, user_id: int) -> PointsBalanceResponse:
+        """사용자 포인트 잔액 조회"""
+        # 사용자 존재 확인
+        if not self.check_user_exists(user_id):
+            raise NotFoundError(f"User not found: {user_id}")
+        
+        return self.point_service.get_user_balance(user_id)
+
+    def get_user_points_ledger(
+        self, user_id: int, limit: int = 50, offset: int = 0
+    ) -> PointsLedgerResponse:
+        """사용자 포인트 거래 내역 조회"""
+        # 사용자 존재 확인
+        if not self.check_user_exists(user_id):
+            raise NotFoundError(f"User not found: {user_id}")
+        
+        if limit > 100:
+            limit = 100
+            
+        return self.point_service.get_user_ledger(user_id, limit=limit, offset=offset)
+
+    def can_user_afford(self, user_id: int, amount: int) -> bool:
+        """사용자가 특정 포인트를 지불할 수 있는지 확인"""
+        try:
+            return self.point_service.can_afford(user_id, amount)
+        except Exception:
+            return False
+
+    def get_user_profile_with_points(self, user_id: int) -> dict:
+        """포인트 정보를 포함한 사용자 프로필 조회"""
+        profile = self.get_user_profile(user_id)
+        balance = self.get_user_points_balance(user_id)
+        
+        return {
+            "user_profile": profile,
+            "points_balance": balance.balance,
+            "last_updated": datetime.now().isoformat()
+        }
+
+    def award_signup_bonus(self, user_id: int) -> bool:
+        """신규 가입 보너스 포인트 지급"""
+        try:
+            from myapi.schemas.points import PointsTransactionRequest
+            
+            bonus_request = PointsTransactionRequest(
+                amount=1000,  # 신규 가입 보너스 1000포인트
+                reason="Welcome bonus for new user registration",
+                ref_id=f"signup_bonus_{user_id}_{datetime.now().strftime('%Y%m%d')}"
+            )
+            
+            result = self.point_service.add_points(user_id=user_id, request=bonus_request)
+            
+            if result.success:
+                logger.info(f"✅ Awarded signup bonus to user {user_id}: 1000 points")
+                return True
+            else:
+                logger.warning(f"❌ Failed to award signup bonus to user {user_id}: {result.message}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error awarding signup bonus to user {user_id}: {str(e)}")
+            return False
+
+    def get_user_financial_summary(self, user_id: int) -> dict:
+        """사용자의 재정 요약 정보"""
+        if not self.check_user_exists(user_id):
+            raise NotFoundError(f"User not found: {user_id}")
+        
+        from datetime import date
+        
+        balance = self.get_user_points_balance(user_id)
+        today = date.today()
+        
+        # 오늘 획득한 포인트
+        points_earned_today = self.point_service.get_user_points_earned_today(user_id, today)
+        
+        return {
+            "user_id": user_id,
+            "current_balance": balance.balance,
+            "points_earned_today": points_earned_today,
+            "can_make_predictions": balance.balance >= 10,  # 예측 수수료 10포인트
+            "summary_date": today.isoformat()
+        }
 
     def _is_email_taken(self, email: str, exclude_user_id: Optional[int] = None) -> bool:
         """이메일 중복 확인 (특정 사용자 제외)"""
