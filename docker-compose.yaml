@@ -1,14 +1,14 @@
 version: "3.8"
 services:
-  stock_alarm:
+  ox-universe:
     platform: linux/amd64
-    image: 849441246713.dkr.ecr.ap-northeast-2.amazonaws.com/stock_alarm:latest
+    image: ox-universe-lambda:latest
     build:
       dockerfile: Dockerfile.lambda
       no_cache: true
       args:
-        PROJECT_NAME: stock_alarm
+        PROJECT_NAME: ox-universe
     environment:
       - NODE_ENV=production
-      - PROJECT_NAME=stock_alarm
+      - PROJECT_NAME=ox-universe
       - DEPLOYMENT_TYPE=lambda

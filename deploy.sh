@@ -43,11 +43,18 @@ if [ $? -ne 0 ]; then
     error "Failed to login to ECR"
 fi
 
-# Docker 이미지 빌드 (Dockerfile.lambda 사용)
-log "Building Docker image..."
-docker build -t $IMAGE_NAME -f Dockerfile.lambda .
+# Docker 이미지 빌드 (docker-compose 사용)
+log "Building Docker image using docker-compose..."
+docker-compose build ox-universe
 if [ $? -ne 0 ]; then
-    error "Failed to build Docker image"
+    error "Failed to build Docker image with docker-compose"
+fi
+
+# 이미지에 태그 추가
+log "Tagging Docker image..."
+docker tag ox-universe-lambda:latest $IMAGE_NAME
+if [ $? -ne 0 ]; then
+    error "Failed to tag Docker image"
 fi
 
 # ECR로 푸쉬

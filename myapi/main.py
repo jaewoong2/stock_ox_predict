@@ -65,6 +65,15 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
+# Lambda handler for AWS Lambda deployment
+try:
+    from mangum import Mangum
+    handler = Mangum(app)
+except ImportError:
+    # Mangum not available, skip Lambda handler
+    handler = None
+
+
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {"status": "ok"}
