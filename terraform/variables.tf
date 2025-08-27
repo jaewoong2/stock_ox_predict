@@ -25,7 +25,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Project name"
   type        = string
-  default     = "tqqq-fastapi"
+  default     = "ox-universe"
 }
 
 variable "environment" {
@@ -55,7 +55,7 @@ variable "security_group_id" {
 variable "domain_name" {
   description = "Domain name for the FastAPI application"
   type        = string
-  default     = "ai-api.bamtoly.com"
+  default     = "ox-universe.bamtoly.com"
 }
 
 variable "alert_email" {

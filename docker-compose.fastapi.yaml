@@ -1,18 +1,18 @@
 version: "3.8"
 
 services:
-  tqqq-fastapi:
+  ox-universe-fastapi:
     platform: linux/amd64
-    image: 849441246713.dkr.ecr.ap-northeast-2.amazonaws.com/tqqq-fastapi-app:latest
+    image: 849441246713.dkr.ecr.ap-northeast-2.amazonaws.com/ox-universe-app:latest
     build:
       context: .
       dockerfile: Dockerfile.fastapi
       no_cache: true
       args:
-        PROJECT_NAME: tqqq-fastapi
+        PROJECT_NAME: ox-universe
     environment:
       - ENVIRONMENT=production
-      - PROJECT_NAME=tqqq-fastapi
+      - PROJECT_NAME=ox-universe
       - PORT=8000
       - HOST=0.0.0.0
     ports:

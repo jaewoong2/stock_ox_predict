@@ -23,10 +23,10 @@ error() {
 # 필요한 변수 설정
 AWS_REGION="ap-northeast-2"
 AWS_PROFILE="lime_admin"
-PROJECT_NAME="tqqq-fastapi"
-ECR_REPOSITORY_NAME="tqqq-fastapi-app"
-ECS_CLUSTER_NAME="tqqq-fastapi-cluster"
-ECS_SERVICE_NAME="tqqq-fastapi-service"
+PROJECT_NAME="ox-universe"
+ECR_REPOSITORY_NAME="ox-universe-app"
+ECS_CLUSTER_NAME="ox-universe-cluster"
+ECS_SERVICE_NAME="ox-universe-service"
 
 # AWS 계정 ID 가져오기
 log "Getting AWS Account ID..."
@@ -96,7 +96,7 @@ else
 fi
 
 log "Docker image $ECR_REPOSITORY:latest has been pushed to ECR"
-log "FastAPI application should be available at: https://ai-api.bamtoly.com"
+log "FastAPI application should be available at: https://ox-universe.bamtoly.com"
 log "Deployment process completed!"
 
 # 서비스 상태 확인

@@ -8,7 +8,12 @@ setup_logging()
 from myapi.config import settings
 from myapi.core.logging_middleware import LoggingMiddleware
 from myapi.routers import auth_router, user_router
-from myapi.routers import prediction_router, session_router, universe_router, batch_router
+from myapi.routers import (
+    prediction_router,
+    session_router,
+    universe_router,
+    batch_router,
+)
 from myapi.routers import price_router, settlement_router
 from myapi.routers import reward_router, point_router, ad_unlock_router
 from myapi.containers import Container
@@ -54,3 +59,8 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+@app.get("/health", tags=["Health"])
+async def health_check():
+    return {"status": "ok"}

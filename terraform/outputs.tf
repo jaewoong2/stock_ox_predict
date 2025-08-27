@@ -1,7 +1,12 @@
 # 출력 값
 output "ecr_repository_url" {
-  description = "ECR repository URL"
+  description = "ECR repository URL for ECS"
   value       = aws_ecr_repository.fastapi.repository_url
+}
+
+output "ecr_lambda_repository_url" {
+  description = "ECR repository URL for Lambda"
+  value       = aws_ecr_repository.lambda.repository_url
 }
 
 output "load_balancer_dns_name" {
@@ -33,3 +38,13 @@ output "fastapi_target_group_arn" {
   description = "FastAPI target group ARN"
   value       = aws_lb_target_group.fastapi.arn
 }
+
+# output "lambda_function_name" {
+#   description = "Lambda function name"
+#   value       = aws_lambda_function.api.function_name
+# }
+
+# output "lambda_function_url" {
+#   description = "Lambda function URL"
+#   value       = aws_lambda_function_url.api.function_url
+# }

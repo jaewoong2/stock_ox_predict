@@ -1,8 +1,14 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
+from urllib.parse import quote_plus
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file="myapi/.env",
+        env_file_encoding="utf-8",
+        extra="allow",
+    )
     # Application
     APP_NAME: str = "OX Prediction API"
     PROJECT_NAME: str = "OX Predict API"
@@ -26,10 +32,6 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Construct database URL from individual components"""
-        from urllib.parse import quote_plus
-
-        if self.DATABASE_URL:
-            return self.DATABASE_URL
 
         # URL encode the password to handle special characters
         encoded_password = quote_plus(self.POSTGRES_PASSWORD)
@@ -86,11 +88,6 @@ class Settings(BaseSettings):
     # Timezone
     TIMEZONE: str = "Asia/Seoul"
     AUTH_TOKEN: str = ""
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        extra = "allow"  # Allow extra fields from .env
 
 
 settings = Settings()

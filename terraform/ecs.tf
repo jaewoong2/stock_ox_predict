@@ -17,7 +17,7 @@ resource "aws_ecs_cluster_capacity_providers" "fastapi" {
   capacity_providers = ["FARGATE_SPOT"]
 
   default_capacity_provider_strategy {
-    base              = 2    # 기본 2개 Spot 인스턴스
+    base              = 1    # 기본 1개 Spot 인스턴스
     weight            = 100
     capacity_provider = "FARGATE_SPOT"
   }
@@ -57,28 +57,28 @@ resource "aws_ecs_task_definition" "fastapi" {
 
       environment = [
         {
-          name  = "ENVIRONMENT"
+          name  = "ENVIRONMENT",
           value = "production"
         },
         {
-          name  = "PORT"
+          name  = "PORT",
           value = "8000"
         },
         {
-          name  = "HOST"
+          name  = "HOST",
           value = "0.0.0.0"
         },
         {
-          name  = "DEPLOYMENT_TYPE"
+          name  = "DEPLOYMENT_TYPE",
           value = "ecs"
-        }
+        },
       ]
 
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.fastapi.name
-          "awslogs-region"        = var.aws_region
+          "awslogs-group"         = aws_cloudwatch_log_group.fastapi.name,
+          "awslogs-region"        = var.aws_region,
           "awslogs-stream-prefix" = "ecs"
         }
       }
@@ -104,13 +104,13 @@ resource "aws_ecs_service" "fastapi" {
   name            = "${var.project_name}-service"
   cluster         = aws_ecs_cluster.fastapi.id
   task_definition = aws_ecs_task_definition.fastapi.arn
-  desired_count   = 2 # Spot 2개로 고가용성 확보
+  desired_count   = 1 # Spot 1개로 고가용성 확보
 
   # Spot 전용 전략 (비용 최적화)
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
     weight            = 100
-    base              = 2    # 2개 모두 Spot
+    base              = 1    # 1개 모두 Spot
   }
 
   # 서비스 재시작 정책

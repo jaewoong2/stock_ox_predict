@@ -12,3 +12,6 @@ security_group_id = "sg-0f45e0b0868c2ea7c"
 
 # Domain Configuration
 domain_name = "ox-universe.bamtoly.com"
+
+# Alert Configuration
+alert_email = "jwisgenius@naver.com"

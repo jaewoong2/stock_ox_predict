@@ -38,10 +38,10 @@ data "aws_lb_listener" "existing_http" {
   port              = 80
 }
 
-# 기존 HTTPS 리스너에 ai-api.bamtoly.com 규칙 추가
+# 기존 HTTPS 리스너에 ox-universe.bamtoly.com 규칙 추가
 resource "aws_lb_listener_rule" "fastapi_api" {
   listener_arn = data.aws_lb_listener.existing_https.arn
-  priority     = 100
+  priority     = 310
 
   action {
     type             = "forward"
@@ -50,17 +50,17 @@ resource "aws_lb_listener_rule" "fastapi_api" {
 
   condition {
     host_header {
-      values = ["ai-api.bamtoly.com"]
+      values = ["ox-universe.bamtoly.com"]
     }
   }
 
   tags = local.common_tags
 }
 
-# HTTP 리스너에 ai-api.bamtoly.com용 HTTPS 리다이렉션 규칙 추가
+# HTTP 리스너에 ox-universe.bamtoly.com용 HTTPS 리다이렉션 규칙 추가
 resource "aws_lb_listener_rule" "fastapi_http_redirect" {
   listener_arn = data.aws_lb_listener.existing_http.arn
-  priority     = 100
+  priority     = 311
 
   action {
     type = "redirect"
@@ -74,7 +74,7 @@ resource "aws_lb_listener_rule" "fastapi_http_redirect" {
 
   condition {
     host_header {
-      values = ["ai-api.bamtoly.com"]
+      values = ["ox-universe.bamtoly.com"]
     }
   }
 
