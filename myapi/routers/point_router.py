@@ -29,7 +29,7 @@ from typing import List
 from datetime import date
 from dependency_injector.wiring import inject, Provide
 
-from myapi.core.auth_middleware import verify_bearer_token, require_admin
+from myapi.core.auth_middleware import verify_bearer_token, require_admin, get_current_active_user
 from myapi.schemas.user import User as UserSchema
 from myapi.services.point_service import PointService
 from myapi.containers import Container
@@ -57,7 +57,7 @@ router = APIRouter(prefix="/points", tags=["points"])
 @router.get("/balance", response_model=PointsBalanceResponse)
 @inject
 async def get_my_balance(
-    current_user: UserSchema = Depends(require_admin),
+    current_user: UserSchema = Depends(get_current_active_user),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsBalanceResponse:
     """
@@ -95,7 +95,7 @@ async def get_my_balance(
 async def get_my_ledger(
     limit: int = Query(50, ge=1, le=100, description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
-    current_user: UserSchema = Depends(require_admin),
+    current_user: UserSchema = Depends(get_current_active_user),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsLedgerResponse:
     """
@@ -143,7 +143,7 @@ async def get_my_ledger(
 async def get_ledger_by_date_range(
     start_date: date = Query(..., description="시작 날짜 (YYYY-MM-DD)"),
     end_date: date = Query(..., description="종료 날짜 (YYYY-MM-DD)"),
-    current_user: UserSchema = Depends(require_admin),
+    current_user: UserSchema = Depends(get_current_active_user),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> List[PointsLedgerEntry]:
     """날짜 범위별 포인트 거래 내역 조회
@@ -170,7 +170,7 @@ async def get_ledger_by_date_range(
 @inject
 async def get_points_earned_today(
     trading_day: date = Path(..., description="거래일 (YYYY-MM-DD)"),
-    current_user: UserSchema = Depends(require_admin),
+    current_user: UserSchema = Depends(get_current_active_user),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> dict:
     """특정일 획득 포인트 조회
@@ -196,7 +196,7 @@ async def get_points_earned_today(
 @router.get("/integrity/my", response_model=PointsIntegrityCheckResponse)
 @inject
 async def verify_my_integrity(
-    current_user: UserSchema = Depends(require_admin),
+    current_user: UserSchema = Depends(get_current_active_user),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
 ) -> PointsIntegrityCheckResponse:
     """내 포인트 정합성 검증

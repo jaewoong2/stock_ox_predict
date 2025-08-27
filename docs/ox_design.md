@@ -6,7 +6,7 @@
 
 - 미국 주식 종목에 대한 O/X(상승/하락) 예측 참여
 - 정산 후 포인트 지급 및 리워드 교환 시스템
-- 매일 약 10개 종목 선정, 장 마감 후 ~ 다음 개장 전 예측 접수
+- 매일 약 100개 종목 선정, 장 마감 후 ~ 다음 개장 전 예측 접수
 
 ### 1.2 기술 스택
 
@@ -20,10 +20,9 @@
 
 ### 1.3 세션 모델 (단순화)
 
-**기본 원칙**: 하루를 단순하게 3단계로 구분
+**기본 원칙**: 하루를 단순하게 2단계로 구분
 - `OPEN`: 예측 접수 가능 (미국 장 마감 후 ~ 다음 개장 30분 전)
-- `CLOSED`: 예측 마감 (미국 장 개장 30분 전 ~ 장 마감)
-- `SETTLING`: 정산 중 (장 마감 ~ EOD 데이터 확정 및 포인트 지급 완료)
+- `CLOSED`: 예측 마감 (미국 장 개장 30분 전부터 다음 장 마감까지)
 
 **시간 기준**: 모든 시간은 UTC로 저장하고, API 응답시에만 KST 변환
 
@@ -153,7 +152,7 @@ Response 200:
     "success": true,
     "data": {
         "trading_day": "2025-08-18",
-        "phase": "PREDICT",  # PREDICT | SETTLE
+        "phase": "OPEN",  # OPEN | CLOSED
         "predict_open_at": "2025-08-18T06:05:00+09:00",
         "predict_cutoff_at": "2025-08-18T22:30:00+09:00",
         "settled_at": null
@@ -215,7 +214,7 @@ Authorization: Bearer <token>
 Idempotency-Key: <uuid>
 
 {
-    "choice": "UP"  # UP | DOWN
+    "choice": "UP"  # UP | DOWN (상승/하락 예측)
 }
 
 Response 202:
@@ -257,7 +256,7 @@ Response 200:
         {
             "trading_day": "2025-08-18",
             "symbol": "AAPL",
-            "outcome": "UP",  # UP | DOWN | VOID
+            "outcome": "정답",  # 정답 | 오답 | VOID
             "close_price": "150.25",
             "prev_close_price": "149.50",
             "computed_at": "2025-08-19T06:10:00+09:00"
@@ -436,7 +435,7 @@ CREATE TABLE IF NOT EXISTS crypto.oauth_states (
 );
 
 -- 세션 컨트롤 (2-Phase)
-CREATE TYPE crypto.phase AS ENUM ('PREDICT', 'SETTLE');
+CREATE TYPE crypto.phase AS ENUM ('OPEN', 'CLOSED');
 
 CREATE TABLE IF NOT EXISTS crypto.session_control (
     trading_day date PRIMARY KEY,
@@ -473,7 +472,7 @@ CREATE TABLE IF NOT EXISTS crypto.predictions (
 );
 
 -- 정산 결과 (단순화)
-CREATE TYPE crypto.outcome AS ENUM ('UP', 'DOWN', 'VOID');
+CREATE TYPE crypto.outcome AS ENUM ('정답', '오답', 'VOID');
 
 CREATE TABLE IF NOT EXISTS crypto.settlements (
     trading_day date NOT NULL,
@@ -867,7 +866,7 @@ BATCH_SCHEDULE = {
     },
     "eod_and_settlement": {
         "time": "06:00",  # 다음날 새벽 (EOD 데이터 안정화 대기)
-        "description": "1) EOD 데이터 수집, 2) 정산 실행, 3) 포인트 지급, 4) 세션을 SETTLING으로 전환"
+        "description": "1) EOD 데이터 수집, 2) 정산 실행, 3) 포인트 지급"
     }
 }
 ```

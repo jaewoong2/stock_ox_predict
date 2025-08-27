@@ -7,10 +7,10 @@
 ## 0) 한눈에 요약 (Executive Summary)
 
 - **서비스**: 미국 주식 종목에 대해 **O/X(상승/하락) 예측** 참여 → **정산 후 포인트 지급** → **리워드 교환**.
-- **핵심 UX**: 매일 선정된 약 **10개 종목**에 대해 **장 마감 직후\~다음 개장 직전** 예측 접수(**PREDICT**). **장 마감 후 EOD 확정** 시 **정산/포인트 지급(****SETTLE****)**.
-- **세션(2단계)**: `PREDICT`(예측접수) / `SETTLE`(정산/포인트). 컷오프=개장.
+- **핵심 UX**: 매일 선정된 약 **100개 종목**에 대해 **장 마감 직후\~다음 개장 직전** 예측 접수(**OPEN**). **장 마감 후 EOD 확정** 시 **정산/포인트 지급**.
+- **세션(2단계)**: `OPEN`(예측접수) / `CLOSED`(예측마감). 컷오프=개장.
 - **기술 스택**: FastAPI, PostgreSQL(`crypto.*`, `points.*`, `rewards.*`), **SQS**, S3(선택), **Redis 없음**.
-- **일일 흐름(KST)**: (1) 오늘의 종목 10 선정 → (2) 마감 직후 예측 오픈 → (3) 개장 시 컷오프 → (4) 마감 후 EOD 수신 → (5) 정산 → (6) 포인트 지급 → (7) 리워드 교환.
+- **일일 흐름(KST)**: (1) 오늘의 종목 100개 선정 → (2) 마감 직후 예측 오픈 → (3) 개장 시 컷오프 → (4) 마감 후 EOD 수신 → (5) 정산 → (6) 포인트 지급 → (7) 리워드 교환.
 - **사용자 성장**: 광고 시청 또는 **5/10분 쿨다운**으로 **추가 예측 슬롯** 획득.
 
 ---
@@ -20,12 +20,12 @@
 | 기존 용어                        | 쉬운 용어(서비스 표기) | 설명                            |
 | ---------------------------- | ------------- | ----------------------------- |
 | Trading Day                  | 거래일           | KST 기준 하루 단위 운영 날짜            |
-| Session (PREDICT/SETTLE)     | 예측 시간/정산 시간   | 개장 전 예측 접수 / 마감 후 정산 및 포인트 지급 |
-| Active Universe              | 오늘의 종목 10     | 오늘 참여 가능한 약 10개 종목 목록         |
+| Session (OPEN/CLOSED)        | 예측 시간/마감 시간   | 개장 전 예측 접수 / 예측 마감             |
+| Active Universe              | 오늘의 종목 100    | 오늘 참여 가능한 약 100개 종목 목록        |
 | Prediction                   | 예측            | 종목별 상승/하락 선택 기록               |
-| Settlement                   | 정산 결과         | EOD 기준 상승/하락/무효(VOID) 판정      |
+| Settlement                   | 정산 결과         | EOD 기준 정답/오답/무효(VOID) 판정       |
 | EOD Prices                   | 종가 스냅샷        | 마감가격/전일종가 및 정정 리비전 포함         |
-| Outcome                      | 예측 결과 값       | UP / DOWN / VOID              |
+| Outcome                      | 예측 결과 값       | 정답 / 오답 / VOID              |
 | Vendor EOD Webhook           | 종가 확정/정정 알림   | 외부 데이터 공급사 EOD/정정 이벤트         |
 | Points Ledger/Hold           | 포인트 내역/보류     | 지급/차감 원장, 리워드 결제 보류(Saga 상태)  |
 | Rewards Inventory/Redemption | 리워드/교환        | 포인트 교환 상품과 교환 프로세스            |
@@ -47,8 +47,8 @@
 
 ## 3) 시나리오(사용자 제공 요구 반영)
 
-- **마켓 종료 → 다음 시작 전**: 예측 서비스 **시작(PREDICT)**
-- **마켓 시작**: 예측 서비스 **종료(컷오프)**
+- **마켓 종료 → 다음 시작 전**: 예측 서비스 **시작(OPEN)**
+- **마켓 시작**: 예측 서비스 **종료(CLOSED)**
 - **마켓 종료**: 유저 예측에 대한 **정산 Batch 시작**
 - **정산 Batch 종료 후**: **성공 유저 포인트 지급**
 - **리워드**: 유저는 **포인트로 리워드 교환** 가능
@@ -142,7 +142,7 @@ sequenceDiagram
   API->>DB: eod_prices upsert (vendor_rev 포함)
   API->>SQS: q.settlement.compute {trading_day}
 
-  Worker->>DB: settlements 계산/업서트(UP/DOWN/VOID)
+  Worker->>DB: settlements 계산/업서트(정답/오답/VOID)
   Worker->>SQS: q.points.award.fifo (user:day)
   Worker->>DB: points.ledger 멱등 지급
   User->>API: GET /v1/points/balance
@@ -193,7 +193,7 @@ sequenceDiagram
 
 ```sql
 -- 2-Phase 세션 컨트롤
-CREATE TYPE crypto.phase AS ENUM ('PREDICT', 'SETTLE');
+CREATE TYPE crypto.phase AS ENUM ('OPEN', 'CLOSED');
 
 CREATE TABLE IF NOT EXISTS crypto.session_control (
   trading_day date PRIMARY KEY,
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS crypto.predictions (
 );
 
 -- 정산 결과
-CREATE TYPE crypto.outcome AS ENUM ('UP','DOWN','VOID');
+CREATE TYPE crypto.outcome AS ENUM ('정답','오답','VOID');
 
 CREATE TABLE IF NOT EXISTS crypto.settlements (
   trading_day date NOT NULL,
@@ -354,8 +354,8 @@ CREATE INDEX IF NOT EXISTS idx_outbox_published ON public.outbox(published, crea
 
 ## 7) 세션 모델(2-Phase)
 
-- `PREDICT`: **시장 종료 후 → 다음 개장 직전** (컷오프=개장)
-- `SETTLE`: **장 마감 후** EOD 확정 → 정산/포인트 지급 (정정 시 T+1 보상거래)
+- `OPEN`: **시장 종료 후 → 다음 개장 직전** (컷오프=개장)
+- `CLOSED`: **장 개장 시작부터 다음 장 마감까지** (예측 불가 상태)
 
 ---
 
@@ -373,7 +373,7 @@ CREATE INDEX IF NOT EXISTS idx_outbox_published ON public.outbox(published, crea
 ## 9) 배치/스케줄(KST)
 
 - **매일**: `active_universe` 선정/업서트
-- **개장 종료 후 \~ 다음 개장 직전**: `PREDICT` 오픈
+- **개장 종료 후 \~ 다음 개장 직전**: `OPEN` 오픈
 - **개장 시각**: 예측 서비스 컷오프
 - **장 마감 후**: EOD 확정 수신 → 정산 → 포인트 지급
 - **서머타임 고정 안내**: 개장 22:30/23:30, 마감 05:00/06:00 (운영 문구)
@@ -452,7 +452,7 @@ router = APIRouter()
 
 class SessionToday(BaseModel):
     trading_day: str
-    phase: str  # PREDICT | SETTLE
+    phase: str  # OPEN | CLOSED
     predict_open_at: str
     predict_cutoff_at: str
     settled_at: Optional[str]
@@ -461,7 +461,7 @@ class SessionToday(BaseModel):
 async def get_today_session():
     return SessionToday(
         trading_day="2025-08-18",
-        phase="PREDICT",
+        phase="OPEN",
         predict_open_at="2025-08-18T06:05:00+09:00",
         predict_cutoff_at="2025-08-18T22:30:00+09:00",
         settled_at=None,
@@ -519,7 +519,7 @@ router = APIRouter()
 class SettlementRow(BaseModel):
     trading_day: str
     symbol: str
-    outcome: str  # UP | DOWN | VOID
+    outcome: str  # 정답 | 오답 | VOID
     close_price: str
     prev_close_price: str
 
@@ -674,7 +674,7 @@ Trigger: SQS q.settlement.compute {trading_day}
 1) tx begin (read committed)
 2) rows = SELECT * FROM crypto.eod_prices WHERE asof=:day AND vendor_rev = (최신)
 3) FOR each symbol IN 오늘의 종목 10:
-   - outcome = sign(close - prev) → 'UP'|'DOWN'|'VOID'
+   - outcome = 예측과 실제 결과 비교 → '정답'|'오답'|'VOID'
    - UPSERT crypto.settlements (PK: trading_day,symbol)
 4) tx commit
 5) enqueue q.points.award.fifo for affected users (dedup=user:day)
@@ -729,7 +729,7 @@ Loop: SELECT published=false → SQS 발행 → published=true 업데이트
 
 1. 세션 전환(서머타임/경계)
 2. 예측 제출(컷오프/중복/슬롯/쿨다운/레이트리밋)
-3. 정산 정확성 및 멱등(UP/DOWN/VOID)
+3. 정산 정확성 및 멱등(정답/오답/VOID)
 4. 정정(T+1) 보상거래(+/−)
 5. 리워드 Saga(성공/실패/취소)
 6. 큐/DLQ 재처리 멱등
@@ -777,7 +777,7 @@ Loop: SELECT published=false → SQS 발행 → published=true 업데이트
 ### Predictions
 
 - `POST /v1/predictions/{symbol}` body: `{ "choice": "UP"|"DOWN" }`\
-  제약: `phase=PREDICT` && `now < predict_cutoff_at` && 슬롯/쿨다운/레이트리밋 && 중복 불가\
+  제약: `phase=OPEN` && `now < predict_cutoff_at` && 슬롯/쿨다운/레이트리밋 && 중복 불가\
   응답 `202 { status:"accepted", trading_day, symbol }`
 
 ### Settlements

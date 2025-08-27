@@ -10,8 +10,6 @@ from myapi.services.auth_service import AuthService
 from myapi.core.exceptions import AuthenticationError, OAuthError, ValidationError
 from myapi.repositories.oauth_state_repository import OAuthStateRepository
 from myapi.schemas.auth import (
-    UserCreate,
-    UserLogin,
     OAuthCallbackRequest,
     BaseResponse,
     Error,

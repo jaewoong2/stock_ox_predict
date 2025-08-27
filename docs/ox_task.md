@@ -191,7 +191,7 @@
 - [ ] **3.1.1** 단순화된 세션 서비스 구현
 
   - `myapi/services/session_service.py` 생성
-  - 3단계 세션 상태 관리 (OPEN/CLOSED/SETTLING)
+  - 2단계 세션 상태 관리 (OPEN/CLOSED)
   - UTC 기반 시간 처리, API 응답시에만 KST 변환
   - 복잡한 2-Phase 로직 제거
 

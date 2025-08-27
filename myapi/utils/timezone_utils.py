@@ -16,6 +16,16 @@ def get_kst_now() -> datetime:
     return datetime.now(KST)
 
 
+def get_current_kst_date():
+    """현재 KST 날짜를 반환합니다."""
+    return get_kst_now().date()
+
+
+def get_current_kst_time():
+    """현재 KST 시간을 반환합니다."""
+    return get_kst_now()
+
+
 def to_kst(dt: datetime) -> datetime:
     """UTC 또는 다른 타임존의 datetime을 KST로 변환합니다."""
     if dt.tzinfo is None:

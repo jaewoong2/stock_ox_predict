@@ -3,5 +3,10 @@
   "enabledMcpjsonServers": [
     "task-master-ai"
   ],
-  "outputStyle": "default"
+  "outputStyle": "default",
+  "permissions": {
+    "allow": [
+      "Bash(python:*)"
+    ]
+  }
 }

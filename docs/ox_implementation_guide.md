@@ -295,7 +295,7 @@ sequenceDiagram
     %% Morning: Universe Selection & Session Open
     BATCH->>EXT: Fetch market data
     BATCH->>DB: Update active_universe
-    BATCH->>DB: Set session to PREDICT
+    BATCH->>DB: Set session to OPEN
     
     %% Day: User Predictions
     U->>API: Submit prediction
@@ -313,7 +313,7 @@ sequenceDiagram
     SQS->>BATCH: Process settlement
     BATCH->>DB: Compute outcomes
     BATCH->>DB: Award points
-    BATCH->>DB: Set session to SETTLING
+    BATCH->>DB: Settlement complete
 ```
 
 ### 2.3 데이터베이스 ERD

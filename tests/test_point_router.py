@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import Mock, patch
 from datetime import date
+from myapi.models.user import UserRole
 from myapi.main import create_app
 
 
@@ -15,21 +16,13 @@ def client():
 @pytest.fixture
 def mock_user_token():
     """모의 사용자 토큰"""
-    return {
-        "user_id": 1,
-        "email": "test@example.com",
-        "is_admin": False
-    }
+    return {"user_id": 1, "email": "test@example.com", "role": UserRole.USER}
 
 
 @pytest.fixture
 def mock_admin_token():
     """모의 관리자 토큰"""
-    return {
-        "user_id": 99,
-        "email": "admin@example.com", 
-        "is_admin": True
-    }
+    return {"user_id": 99, "email": "admin@example.com", "role": UserRole.ADMIN}
 
 
 class TestPointRoutes:
@@ -41,16 +34,15 @@ class TestPointRoutes:
         # Given
         mock_verify_token.return_value = mock_user_token
         mock_balance = {"balance": 1000}
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
             mock_service.return_value.get_user_balance.return_value = mock_balance
-            
+
             # When
             response = client.get(
-                "/api/v1/points/balance",
-                headers={"Authorization": "Bearer test_token"}
+                "/api/v1/points/balance", headers={"Authorization": "Bearer test_token"}
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
@@ -71,22 +63,21 @@ class TestPointRoutes:
                     "balance_after": 1000,
                     "reason": "Test reward",
                     "ref_id": "test_ref_1",
-                    "created_at": "2024-01-01 12:00:00"
+                    "created_at": "2024-01-01 12:00:00",
                 }
             ],
             "total_count": 1,
-            "has_next": False
+            "has_next": False,
         }
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
             mock_service.return_value.get_user_ledger.return_value = mock_ledger
-            
+
             # When
             response = client.get(
-                "/api/v1/points/ledger",
-                headers={"Authorization": "Bearer test_token"}
+                "/api/v1/points/ledger", headers={"Authorization": "Bearer test_token"}
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
@@ -107,19 +98,21 @@ class TestPointRoutes:
                 "balance_after": 1000,
                 "reason": "Test reward",
                 "ref_id": "test_ref_1",
-                "created_at": "2024-01-01 12:00:00"
+                "created_at": "2024-01-01 12:00:00",
             }
         ]
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
-            mock_service.return_value.get_transactions_by_date_range.return_value = mock_transactions
-            
+            mock_service.return_value.get_transactions_by_date_range.return_value = (
+                mock_transactions
+            )
+
             # When
             response = client.get(
                 "/api/v1/points/ledger/date-range?start_date=2024-01-01&end_date=2024-01-31",
-                headers={"Authorization": "Bearer test_token"}
+                headers={"Authorization": "Bearer test_token"},
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
@@ -131,16 +124,16 @@ class TestPointRoutes:
         """특정일 획득 포인트 조회 테스트"""
         # Given
         mock_verify_token.return_value = mock_user_token
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
             mock_service.return_value.get_user_points_earned_today.return_value = 200
-            
+
             # When
             response = client.get(
                 "/api/v1/points/earned/2024-01-01",
-                headers={"Authorization": "Bearer test_token"}
+                headers={"Authorization": "Bearer test_token"},
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
@@ -158,18 +151,20 @@ class TestPointRoutes:
             "calculated_balance": 1000,
             "recorded_balance": 1000,
             "entry_count": 5,
-            "verified_at": "2024-01-01 12:00:00"
+            "verified_at": "2024-01-01 12:00:00",
         }
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
-            mock_service.return_value.verify_user_integrity.return_value = mock_integrity
-            
+            mock_service.return_value.verify_user_integrity.return_value = (
+                mock_integrity
+            )
+
             # When
             response = client.get(
                 "/api/v1/points/integrity/my",
-                headers={"Authorization": "Bearer test_token"}
+                headers={"Authorization": "Bearer test_token"},
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
@@ -186,23 +181,23 @@ class TestPointRoutes:
             "transaction_id": 123,
             "delta_points": 100,
             "balance_after": 1100,
-            "message": "Transaction completed successfully"
+            "message": "Transaction completed successfully",
         }
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
             mock_service.return_value.add_points.return_value = mock_result
-            
+
             # When
             response = client.post(
                 "/api/v1/points/admin/add?user_id=1",
                 json={
                     "amount": 100,
                     "reason": "Admin bonus",
-                    "ref_id": "admin_bonus_1"
+                    "ref_id": "admin_bonus_1",
                 },
-                headers={"Authorization": "Bearer admin_token"}
+                headers={"Authorization": "Bearer admin_token"},
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
@@ -219,23 +214,23 @@ class TestPointRoutes:
             "transaction_id": 124,
             "delta_points": -50,
             "balance_after": 950,
-            "message": "Transaction completed successfully"
+            "message": "Transaction completed successfully",
         }
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
             mock_service.return_value.deduct_points.return_value = mock_result
-            
+
             # When
             response = client.post(
                 "/api/v1/points/admin/deduct?user_id=1",
                 json={
                     "amount": 50,
                     "reason": "Admin penalty",
-                    "ref_id": "admin_penalty_1"
+                    "ref_id": "admin_penalty_1",
                 },
-                headers={"Authorization": "Bearer admin_token"}
+                headers={"Authorization": "Bearer admin_token"},
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
@@ -252,23 +247,19 @@ class TestPointRoutes:
             "transaction_id": 125,
             "delta_points": 75,
             "balance_after": 1075,
-            "message": "Transaction completed successfully"
+            "message": "Transaction completed successfully",
         }
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
             mock_service.return_value.admin_adjust_points.return_value = mock_result
-            
+
             # When
             response = client.post(
                 "/api/v1/points/admin/adjust",
-                json={
-                    "user_id": 1,
-                    "amount": 75,
-                    "reason": "Manual adjustment"
-                },
-                headers={"Authorization": "Bearer admin_token"}
+                json={"user_id": 1, "amount": 75, "reason": "Manual adjustment"},
+                headers={"Authorization": "Bearer admin_token"},
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
@@ -276,22 +267,20 @@ class TestPointRoutes:
             assert data["delta_points"] == 75
 
     @patch("myapi.routers.point_router.verify_bearer_token")
-    def test_non_admin_cannot_add_points(self, mock_verify_token, client, mock_user_token):
+    def test_non_admin_cannot_add_points(
+        self, mock_verify_token, client, mock_user_token
+    ):
         """일반 사용자의 포인트 추가 권한 없음 테스트"""
         # Given
         mock_verify_token.return_value = mock_user_token
-        
+
         # When
         response = client.post(
             "/api/v1/points/admin/add?user_id=1",
-            json={
-                "amount": 100,
-                "reason": "Test bonus",
-                "ref_id": "test_bonus_1"
-            },
-            headers={"Authorization": "Bearer user_token"}
+            json={"amount": 100, "reason": "Test bonus", "ref_id": "test_bonus_1"},
+            headers={"Authorization": "Bearer user_token"},
         )
-        
+
         # Then
         assert response.status_code == 403
         assert "Admin access required" in response.json()["detail"]
@@ -302,23 +291,25 @@ class TestPointRoutes:
         # Given
         mock_verify_token.return_value = mock_admin_token
         mock_balance = {"balance": 1500}
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
             mock_service.return_value.get_user_balance.return_value = mock_balance
-            
+
             # When
             response = client.get(
                 "/api/v1/points/admin/balance/1",
-                headers={"Authorization": "Bearer admin_token"}
+                headers={"Authorization": "Bearer admin_token"},
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
             assert data["balance"] == 1500
 
     @patch("myapi.routers.point_router.verify_bearer_token")
-    def test_admin_verify_global_integrity(self, mock_verify_token, client, mock_admin_token):
+    def test_admin_verify_global_integrity(
+        self, mock_verify_token, client, mock_admin_token
+    ):
         """관리자 전체 정합성 검증 테스트"""
         # Given
         mock_verify_token.return_value = mock_admin_token
@@ -328,18 +319,20 @@ class TestPointRoutes:
             "total_deltas": 50000,
             "user_count": 100,
             "total_entries": 1000,
-            "verified_at": "2024-01-01 12:00:00"
+            "verified_at": "2024-01-01 12:00:00",
         }
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
-            mock_service.return_value.verify_global_integrity.return_value = mock_global_integrity
-            
+            mock_service.return_value.verify_global_integrity.return_value = (
+                mock_global_integrity
+            )
+
             # When
             response = client.get(
                 "/api/v1/points/admin/integrity/global",
-                headers={"Authorization": "Bearer admin_token"}
+                headers={"Authorization": "Bearer admin_token"},
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()
@@ -347,22 +340,24 @@ class TestPointRoutes:
             assert data["user_count"] == 100
 
     @patch("myapi.routers.point_router.verify_bearer_token")
-    def test_check_user_affordability(self, mock_verify_token, client, mock_admin_token):
+    def test_check_user_affordability(
+        self, mock_verify_token, client, mock_admin_token
+    ):
         """사용자 지불 능력 확인 테스트"""
         # Given
         mock_verify_token.return_value = mock_admin_token
         mock_balance = {"balance": 1000}
-        
+
         with patch("myapi.containers.Container.services.point_service") as mock_service:
             mock_service.return_value.can_afford.return_value = True
             mock_service.return_value.get_user_balance.return_value = mock_balance
-            
+
             # When
             response = client.get(
                 "/api/v1/points/admin/check-affordability/1/500",
-                headers={"Authorization": "Bearer admin_token"}
+                headers={"Authorization": "Bearer admin_token"},
             )
-            
+
             # Then
             assert response.status_code == 200
             data = response.json()

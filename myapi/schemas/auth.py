@@ -38,36 +38,6 @@ class TokenData(BaseModel):
     email: Optional[EmailStr] = None
     user_id: Optional[int] = None
 
-class UserCreate(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
-    nickname: str = Field(min_length=2, max_length=50)
-    
-    @field_validator('password')
-    @classmethod
-    def validate_password_strength(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters long')
-        if not any(c.isupper() for c in v):
-            raise ValueError('Password must contain at least one uppercase letter')
-        if not any(c.islower() for c in v):
-            raise ValueError('Password must contain at least one lowercase letter')
-        if not any(c.isdigit() for c in v):
-            raise ValueError('Password must contain at least one digit')
-        return v
-    
-    @field_validator('nickname')
-    @classmethod
-    def validate_nickname(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError('Nickname cannot be empty')
-        if any(char in v for char in ['<', '>', '"', "'"]):
-            raise ValueError('Nickname contains invalid characters')
-        return v.strip()
-
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
 
 class OAuthCallbackRequest(BaseModel):
     provider: str = Field(pattern="^(google|kakao)$")

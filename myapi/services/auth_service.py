@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 
 from myapi.config import settings
-from myapi.core.security import verify_password, get_password_hash, create_access_token
+from myapi.core.security import create_access_token
 from myapi.core.exceptions import AuthenticationError, OAuthError
 from myapi.repositories.user_repository import UserRepository
 from myapi.services.point_service import PointService
@@ -13,8 +13,6 @@ from myapi.providers.oauth.kakao import KakaoOAuthProvider
 from myapi.schemas.auth import (
     Token,
     TokenData,
-    UserCreate,
-    UserLogin,
     OAuthCallbackRequest,
     OAuthLoginResponse,
 )
@@ -34,74 +32,6 @@ class AuthService:
         self.google_oauth = GoogleOAuthProvider()
         self.kakao_oauth = KakaoOAuthProvider()
 
-    def register_local_user(self, user_data: UserCreate) -> Token:
-        """로컬 사용자 회원가입"""
-        # 이메일 중복 확인
-        if self.user_repo.email_exists(user_data.email):
-            raise AuthenticationError("Email already registered")
-
-        # 비밀번호 해싱
-        password_hash = get_password_hash(user_data.password)
-
-        # 사용자 생성
-        user = self.user_repo.create_local_user(
-            email=user_data.email,
-            nickname=user_data.nickname,
-            password_hash=password_hash,
-        )
-
-        if not user:
-            raise AuthenticationError("Failed to create user")
-
-        # 신규 가입 보너스 포인트 지급
-        try:
-            from myapi.schemas.points import PointsTransactionRequest
-            from datetime import datetime
-            
-            bonus_request = PointsTransactionRequest(
-                amount=1000,  # 신규 가입 보너스 1000포인트
-                reason="Welcome bonus for new user registration",
-                ref_id=f"signup_bonus_{user.id}_{datetime.now().strftime('%Y%m%d')}"
-            )
-            
-            bonus_result = self.point_service.add_points(user_id=user.id, request=bonus_request)
-            
-            if bonus_result.success:
-                logger.info(f"✅ Awarded signup bonus to new local user {user.id}: 1000 points")
-            else:
-                logger.warning(f"❌ Failed to award signup bonus to new local user {user.id}: {bonus_result.message}")
-        except Exception as e:
-            logger.error(f"❌ Error awarding signup bonus to new local user {user.id}: {str(e)}")
-
-        # JWT 토큰 생성
-        access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
-
-        return Token(access_token=access_token, token_type="bearer")
-
-    def authenticate_local_user(self, login_data: UserLogin) -> Token:
-        """로컬 사용자 로그인"""
-        # 사용자 조회
-        user = self.user_repo.get_by_email(login_data.email)
-        if not user:
-            raise AuthenticationError("Invalid credentials")
-
-        # 비밀번호 확인 (스키마에 password_hash가 없을 수 있으므로 안전 접근)
-        password_hash: Optional[str] = getattr(user, "password_hash", None)
-
-        if not password_hash or not verify_password(login_data.password, password_hash):
-            raise AuthenticationError("Invalid credentials")
-
-        # 활성 사용자 확인
-        if not user.is_active:
-            raise AuthenticationError("Account is deactivated")
-
-        # 마지막 로그인 시간 업데이트
-        self.user_repo.update_last_login(user.id)
-
-        # JWT 토큰 생성
-        access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
-
-        return Token(access_token=access_token, token_type="bearer")
 
     def get_oauth_auth_url(self, provider: str, redirect_uri: str, state: str) -> str:
         """OAuth 인증 URL 생성"""

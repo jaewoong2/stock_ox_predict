@@ -11,6 +11,7 @@ from myapi.services.price_service import PriceService
 from myapi.services.settlement_service import SettlementService
 from myapi.services.reward_service import RewardService
 from myapi.services.point_service import PointService
+from myapi.services.ad_unlock_service import AdUnlockService
 from myapi.config import Settings
 from myapi.repositories.oauth_state_repository import OAuthStateRepository
 
@@ -44,6 +45,7 @@ class ServiceModule(containers.DeclarativeContainer):
     settlement_service = providers.Factory(SettlementService, db=repositories.get_db)
     reward_service = providers.Factory(RewardService, db=repositories.get_db)
     point_service = providers.Factory(PointService, db=repositories.get_db)
+    ad_unlock_service = providers.Factory(AdUnlockService, db=repositories.get_db)
 
 
 class Container(containers.DeclarativeContainer):
@@ -61,6 +63,7 @@ class Container(containers.DeclarativeContainer):
             "myapi.routers.batch_router",
             "myapi.routers.reward_router",
             "myapi.routers.point_router",
+            "myapi.routers.ad_unlock_router",
         ],
     )
 

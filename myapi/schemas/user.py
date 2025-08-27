@@ -1,13 +1,16 @@
-
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from datetime import datetime
 from typing import Optional
 from enum import Enum
 
+from myapi.models.user import UserRole
+
+
 class AuthProvider(str, Enum):
     LOCAL = "local"
     GOOGLE = "google"
     KAKAO = "kakao"
+
 
 class User(BaseModel):
     id: int
@@ -17,10 +20,21 @@ class User(BaseModel):
     created_at: datetime
     last_login_at: Optional[datetime] = None
     is_active: bool = True
-    is_admin: bool = False
+    role: UserRole = UserRole.USER
 
     class Config:
         from_attributes = True
+
+    @property
+    def is_admin(self) -> bool:
+        """Backward compatibility property"""
+        return UserRole.is_admin(self.role)
+
+    @property
+    def is_premium_or_above(self) -> bool:
+        """Check if user has premium or higher privileges"""
+        return UserRole.is_premium_or_above(self.role)
+
 
 class UserProfile(BaseModel):
     user_id: int
@@ -33,16 +47,18 @@ class UserProfile(BaseModel):
     class Config:
         from_attributes = True
 
+
 class UserUpdate(BaseModel):
     nickname: Optional[str] = Field(None, min_length=2, max_length=50)
     email: Optional[EmailStr] = None
-    
-    @field_validator('nickname')
+
+    @field_validator("nickname")
     @classmethod
     def nickname_must_not_be_empty(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v.strip() == '':
-            raise ValueError('Nickname cannot be empty')
+        if v is not None and v.strip() == "":
+            raise ValueError("Nickname cannot be empty")
         return v
+
 
 class UserStats(BaseModel):
     total_users: int

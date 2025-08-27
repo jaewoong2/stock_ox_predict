@@ -47,18 +47,6 @@ class UserRepository(BaseRepository[UserModel, UserSchema]):
             is_active=True,
         )
 
-    def create_local_user(
-        self, email: str, nickname: str, password_hash: str
-    ) -> Optional[UserSchema]:
-        """로컬 사용자 생성"""
-        return self.create(
-            email=email,
-            nickname=nickname,
-            auth_provider="local",
-            provider_id=None,
-            password_hash=password_hash,
-            is_active=True,
-        )
 
     def update_last_login(
         self, user_id: int, login_time: Optional[datetime] = None

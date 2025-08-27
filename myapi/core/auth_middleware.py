@@ -3,6 +3,7 @@ from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
+from myapi.models.user import UserRole
 from myapi.database.session import get_db
 from myapi.services.auth_service import AuthService
 from myapi.schemas.user import User as UserSchema
@@ -85,6 +86,46 @@ def require_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
+        )
+    return current_user
+
+
+def require_role(required_role: UserRole):
+    """특정 역할 이상의 권한이 필요한 엔드포인트용 의존성 팩토리"""
+
+    def _require_role(
+        current_user: UserSchema = Depends(get_current_active_user),
+    ) -> UserSchema:
+        if not UserRole.has_permission(current_user.role, required_role):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role '{required_role}' or higher required",
+            )
+        return current_user
+
+    return _require_role
+
+
+def require_premium(
+    current_user: UserSchema = Depends(get_current_active_user),
+) -> UserSchema:
+    """프리미엄 이상 권한이 필요한 엔드포인트용 의존성"""
+    if not current_user.is_premium_or_above:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Premium access required",
+        )
+    return current_user
+
+
+def require_super_admin(
+    current_user: UserSchema = Depends(get_current_active_user),
+) -> UserSchema:
+    """최고 관리자 권한이 필요한 엔드포인트용 의존성"""
+    if current_user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required",
         )
     return current_user
 

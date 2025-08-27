@@ -17,21 +17,6 @@ class FakeAuthService:
     def __init__(self, db):
         pass
 
-    # register
-    def register_local_user(self, user_data):
-        from myapi.schemas.auth import Token
-
-        return Token(access_token="fake_access_token", token_type="bearer")
-
-    # login
-    def authenticate_local_user(self, login_data):
-        from myapi.schemas.auth import Token
-
-        if login_data.password == "bad":
-            from myapi.core.exceptions import AuthenticationError
-
-            raise AuthenticationError("Invalid credentials")
-        return Token(access_token="login_token", token_type="bearer")
 
     # refresh
     def refresh_token(self, current_token: str):
