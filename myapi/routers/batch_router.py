@@ -1,5 +1,6 @@
 import datetime as dt
 import json
+import pytz
 from fastapi import APIRouter, Depends, HTTPException
 from dependency_injector.wiring import inject, Provide
 
@@ -132,60 +133,91 @@ def execute_all_jobs(
 ):
     """
     모든 일일 배치 작업을 실행합니다. (정산, 세션 시작, 유니버스 설정, 세션 종료)
+    각 작업은 지정된 시간대(±30분 오차 허용) 내에만 실행됩니다.
     """
     queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
     today = dt.date.today()
     yesterday = today - dt.timedelta(days=1)
 
+    # 현재 시간 (한국 시간 KST, UTC+9)
+    kst = pytz.timezone('Asia/Seoul')
+    now = dt.datetime.now(kst)
+    current_hour = now.hour
+    current_minute = now.minute
+    current_total_minutes = current_hour * 60 + current_minute
+
+    def is_within_time_range(
+        target_hour: int, target_minute: int, tolerance_minutes: int = 30
+    ) -> bool:
+        """지정된 시간 ±tolerance_minutes 범위 내에 있는지 확인"""
+        target_total_minutes = target_hour * 60 + target_minute
+        return abs(current_total_minutes - target_total_minutes) <= tolerance_minutes
+
     all_jobs = []
 
-    # 1. 정산 작업
-    all_jobs.append(
-        {
-            "path": f"admin/settlement/settle-day/{yesterday.isoformat()}",
-            "method": "POST",
-            "body": {},
-            "group_id": "settlement",
-            "description": f"Settlement for {yesterday.isoformat()}",
-            "deduplication_id": f"settlement-{yesterday.strftime('%Y%m%d')}",
-        }
-    )
+    # 1. 정산 작업 (06:00 ±30분)
+    if is_within_time_range(6, 0):
+        all_jobs.append(
+            {
+                "path": f"admin/settlement/settle-day/{yesterday.isoformat()}",
+                "method": "POST",
+                "body": {},
+                "group_id": "settlement",
+                "description": f"Settlement for {yesterday.isoformat()}",
+                "deduplication_id": f"settlement-{yesterday.strftime('%Y%m%d')}",
+            }
+        )
 
-    # 2. 세션 시작 작업
-    all_jobs.append(
-        {
-            "path": "session/flip-to-predict",
-            "method": "POST",
-            "body": {},
-            "group_id": "session",
-            "description": "Start new prediction session",
-            "deduplication_id": f"session-start-{today.strftime('%Y%m%d')}",
-        }
-    )
+    # 2. 세션 시작 작업 (06:00 ±30분)
+    if is_within_time_range(6, 0):
+        all_jobs.append(
+            {
+                "path": "session/flip-to-predict",
+                "method": "POST",
+                "body": {},
+                "group_id": "session",
+                "description": "Start new prediction session",
+                "deduplication_id": f"session-start-{today.strftime('%Y%m%d')}",
+            }
+        )
 
-    # 3. 유니버스 설정 작업
-    all_jobs.append(
-        {
-            "path": "universe/upsert",
-            "method": "POST",
-            "body": {"trading_day": today.isoformat(), "symbols": DEFAULT_TICKERS},
-            "group_id": "universe",
-            "description": f"Setup universe for {today.isoformat()} with {len(DEFAULT_TICKERS)} symbols",
-            "deduplication_id": f"universe-setup-{today.strftime('%Y%m%d')}",
-        }
-    )
+    # 3. 유니버스 설정 작업 (06:00 ±30분)
+    if is_within_time_range(6, 0):
+        all_jobs.append(
+            {
+                "path": "universe/upsert",
+                "method": "POST",
+                "body": {"trading_day": today.isoformat(), "symbols": DEFAULT_TICKERS},
+                "group_id": "universe",
+                "description": f"Setup universe for {today.isoformat()} with {len(DEFAULT_TICKERS)} symbols",
+                "deduplication_id": f"universe-setup-{today.strftime('%Y%m%d')}",
+            }
+        )
 
-    # 4. 세션 종료 작업
-    all_jobs.append(
-        {
-            "path": "session/cutoff",
-            "method": "POST",
-            "body": {},
-            "group_id": "session",
-            "description": "Close prediction session",
-            "deduplication_id": f"session-close-{today.strftime('%Y%m%d')}",
+    # 4. 세션 종료 작업 (23:59 ±30분)
+    if is_within_time_range(23, 59):
+        all_jobs.append(
+            {
+                "path": "session/cutoff",
+                "method": "POST",
+                "body": {},
+                "group_id": "session",
+                "description": "Close prediction session",
+                "deduplication_id": f"session-close-{today.strftime('%Y%m%d')}",
+            }
+        )
+
+    # 실행할 작업이 없는 경우
+    if not all_jobs:
+        return {
+            "message": f"No jobs scheduled for current time ({current_hour:02d}:{current_minute:02d} KST). Jobs are scheduled for 06:00 (±30min) and 23:59 (±30min) KST.",
+            "current_time": f"{current_hour:02d}:{current_minute:02d} KST",
+            "scheduled_times": [
+                "06:00 ±30min (settlement, session-start, universe-setup)",
+                "23:59 ±30min (session-close)",
+            ],
+            "details": [],
         }
-    )
 
     responses = []
     for job in all_jobs:
@@ -223,7 +255,8 @@ def execute_all_jobs(
         )
 
     return {
-        "message": f"All daily batch jobs have been queued. Success: {len(successful_jobs)}, Failed: {len(failed_jobs)}",
+        "message": f"Daily batch jobs queued for {current_hour:02d}:{current_minute:02d} KST. Success: {len(successful_jobs)}, Failed: {len(failed_jobs)}",
+        "current_time": f"{current_hour:02d}:{current_minute:02d} KST",
         "details": responses,
     }
 
