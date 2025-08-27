@@ -133,7 +133,7 @@ def execute_all_jobs(
     """
     모든 일일 배치 작업을 실행합니다. (정산, 세션 시작, 유니버스 설정, 세션 종료)
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/crypto.fifo"
+    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
     today = dt.date.today()
     yesterday = today - dt.timedelta(days=1)
 
@@ -238,7 +238,7 @@ def execute_prediction_settlement(
     전날 예측 결과 정산 및 포인트 지급 (06:00 실행)
     AWS EventBridge에서 매일 06:00에 호출되어 전날 예측을 정산하고 포인트를 지급합니다.
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/crypto.fifo"
+    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
     yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
     today_str = dt.date.today().strftime("%Y%m%d")
 
@@ -295,7 +295,7 @@ def execute_session_start(
     새로운 예측 세션 시작 (06:00 실행)
     AWS EventBridge에서 매일 06:00에 호출되어 새로운 예측 세션을 시작합니다.
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/crypto.fifo"
+    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
     today_str = dt.date.today().strftime("%Y%m%d")
 
     jobs = [
@@ -351,7 +351,7 @@ def execute_universe_setup(
     AWS EventBridge에서 매일 06:00에 호출되어 오늘의 종목 유니버스를 설정합니다.
     기본 50개 종목으로 설정됩니다.
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/crypto.fifo"
+    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
     today = dt.date.today().isoformat()
     today_str = dt.date.today().strftime("%Y%m%d")
 
@@ -410,7 +410,7 @@ def execute_session_close(
     예측 마감 및 세션 종료 (23:59 실행)
     AWS EventBridge에서 매일 23:59에 호출되어 예측을 마감하고 세션을 종료합니다.
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/crypto.fifo"
+    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
     today_str = dt.date.today().strftime("%Y%m%d")
 
     jobs = [

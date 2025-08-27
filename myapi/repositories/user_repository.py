@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from datetime import datetime, timezone
 
-from myapi.models.user import User as UserModel
+from myapi.models.user import User as UserModel, UserRole
 from myapi.schemas.user import User as UserSchema, UserProfile, UserStats
 from myapi.repositories.base import BaseRepository
 
@@ -45,8 +45,8 @@ class UserRepository(BaseRepository[UserModel, UserSchema]):
             provider_id=provider_id,
             password_hash=None,  # OAuth users don't have password
             is_active=True,
+            role=UserRole.USER,
         )
-
 
     def update_last_login(
         self, user_id: int, login_time: Optional[datetime] = None

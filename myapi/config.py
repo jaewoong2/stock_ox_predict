@@ -82,9 +82,6 @@ class Settings(BaseSettings):
     RATE_LIMIT_REQUESTS_PER_MINUTE: int = 60
     DEFAULT_RATE_LIMIT: int = 100
 
-    # CORS
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "https://yourapp.com"]
-
     # Timezone
     TIMEZONE: str = "Asia/Seoul"
     AUTH_TOKEN: str = ""

@@ -24,7 +24,6 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 logger = logging.getLogger(__name__)
 
 
-
 ## Local login endpoint removed (OAuth-only policy)
 
 
@@ -47,7 +46,15 @@ def oauth_authorize(
     """
     try:
         # Compute our callback URL for this provider
-        callback_url = str(request.url_for("oauth_callback_get", provider=provider))
+        domain_name = request.url._url.split(request.url.path)[0]
+
+        # http:// => https:// 변경
+        if domain_name.startswith("http://") and not domain_name.startswith(
+            "http://localhost"
+        ):
+            domain_name = domain_name.replace("http://", "https://", 1)
+
+        callback_url = f"{domain_name}/api/v1/auth/oauth/{provider}/callback"
 
         # State (CSRF & correlation)
         state = secrets.token_urlsafe(32)
@@ -61,6 +68,9 @@ def oauth_authorize(
 
         # Build provider auth URL and redirect the browser
         auth_url = auth_service.get_oauth_auth_url(provider, callback_url, state)
+
+        logger.info(f"Redirecting to {provider} auth URL: {auth_url}")
+
         return RedirectResponse(
             url=auth_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT
         )
@@ -97,8 +107,15 @@ async def oauth_callback_get(
         if not client_redirect:
             raise HTTPException(status_code=400, detail="Invalid or expired state")
 
-        # Build the exact redirect_uri (must match what was used in authorize)
-        callback_url = str(request.url_for("oauth_callback_get", provider=provider))
+        domain_name = request.url._url.split(request.url.path)[0]
+
+        # http:// => https:// 변경
+        if domain_name.startswith("http://") and not domain_name.startswith(
+            "http://localhost"
+        ):
+            domain_name = domain_name.replace("http://", "https://", 1)
+
+        callback_url = f"{domain_name}/api/v1/auth/oauth/{provider}/callback"
 
         # Process OAuth via service
         callback_data = OAuthCallbackRequest(
