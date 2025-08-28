@@ -8,111 +8,7 @@ from myapi.containers import Container
 from myapi.services.aws_service import AwsService
 from myapi.core.auth_middleware import require_admin
 from myapi.config import Settings
-
-# 전체 티커 목록
-DEFAULT_TICKERS = [
-    "CRWV",
-    "SPY",
-    "QQQ",
-    "AMAT",
-    "AMD",
-    "ANET",
-    "ASML",
-    "AVGO",
-    "COHR",
-    "GFS",
-    "KLAC",
-    "MRVL",
-    "MU",
-    "NVDA",
-    "NVMI",
-    "ONTO",
-    "SMCI",
-    "STX",
-    "TSM",
-    "VRT",
-    "WDC",
-    "AXON",
-    "LMT",
-    "NOC",
-    "RCAT",
-    "AFRM",
-    "APP",
-    "COIN",
-    "HOOD",
-    "IREN",
-    "MQ",
-    "MSTR",
-    "SOFI",
-    "TOST",
-    "CEG",
-    "FSLR",
-    "LNG",
-    "NRG",
-    "OKLO",
-    "PWR",
-    "SMR",
-    "VST",
-    "CRWD",
-    "FTNT",
-    "GTLB",
-    "NET",
-    "OKTA",
-    "PANW",
-    "S",
-    "TENB",
-    "ZS",
-    "AAPL",
-    "ADBE",
-    "ADSK",
-    "AI",
-    "AMZN",
-    "ASAN",
-    "BILL",
-    "CRM",
-    "DDOG",
-    "DOCN",
-    "GOOGL",
-    "HUBS",
-    "META",
-    "MNDY",
-    "MSFT",
-    "NOW",
-    "PCOR",
-    "PLTR",
-    "SNOW",
-    "VEEV",
-    "IONQ",
-    "QBTS",
-    "RGTI",
-    "PL",
-    "RKLB",
-    "LUNR",
-    "ACHR",
-    "ARBE",
-    "JOBY",
-    "TSLA",
-    "UBER",
-    "ORCL",
-    "CFLT",
-    "CRNC",
-    "DXCM",
-    "INTU",
-    "IOT",
-    "LRCX",
-    "NFLX",
-    "PODD",
-    "PSTG",
-    "RBLX",
-    "RDDT",
-    "SERV",
-    "SHOP",
-    "SOUN",
-    "TDOC",
-    "PATH",
-    "DXYZ",
-    "NKE",
-]
+from myapi.core.tickers import get_default_tickers
 
 router = APIRouter(
     prefix="/batch",
@@ -132,15 +28,16 @@ def execute_all_jobs(
     settings: Settings = Depends(Provide[Container.config.config]),
 ):
     """
-    모든 일일 배치 작업을 실행합니다. (정산, 세션 시작, 유니버스 설정, 세션 종료)
+    모든 일일 배치 작업을 실행합니다. (EOD 수집, 정산, 세션 시작, 유니버스 설정, 세션 종료)
     각 작업은 지정된 시간대(±30분 오차 허용) 내에만 실행됩니다.
+    06:00 KST 작업들은 의존성 순서대로 순차 실행됩니다.
     """
     queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
     today = dt.date.today()
     yesterday = today - dt.timedelta(days=1)
 
     # 현재 시간 (한국 시간 KST, UTC+9)
-    kst = pytz.timezone('Asia/Seoul')
+    kst = pytz.timezone("Asia/Seoul")
     now = dt.datetime.now(kst)
     current_hour = now.hour
     current_minute = now.minute
@@ -155,55 +52,75 @@ def execute_all_jobs(
 
     all_jobs = []
 
-    # 1. 정산 작업 (06:00 ±30분)
+    # 06:00 KST 시간대 작업들 - 순차 실행을 위해 동일한 group_id 사용
     if is_within_time_range(6, 0):
+        # 1. EOD 데이터 수집 작업 (가장 먼저 실행)
+        all_jobs.append(
+            {
+                "path": f"prices/collect-eod/{yesterday.isoformat()}",
+                "method": "POST",
+                "body": {},
+                "group_id": "daily-morning-batch",
+                "description": f"Collect EOD data for {yesterday.isoformat()}",
+                "deduplication_id": f"eod-collection-{yesterday.strftime('%Y%m%d')}",
+                "sequence": 1,
+            }
+        )
+
+        # 2. 정산 작업 (EOD 데이터 수집 후 실행)
         all_jobs.append(
             {
                 "path": f"admin/settlement/settle-day/{yesterday.isoformat()}",
                 "method": "POST",
                 "body": {},
-                "group_id": "settlement",
+                "group_id": "daily-morning-batch",
                 "description": f"Settlement for {yesterday.isoformat()}",
                 "deduplication_id": f"settlement-{yesterday.strftime('%Y%m%d')}",
+                "sequence": 2,
             }
         )
 
-    # 2. 세션 시작 작업 (06:00 ±30분)
-    if is_within_time_range(6, 0):
+        # 3. 세션 시작 작업 (정산 후 실행)
         all_jobs.append(
             {
                 "path": "session/flip-to-predict",
                 "method": "POST",
                 "body": {},
-                "group_id": "session",
+                "group_id": "daily-morning-batch",
                 "description": "Start new prediction session",
                 "deduplication_id": f"session-start-{today.strftime('%Y%m%d')}",
+                "sequence": 3,
             }
         )
 
-    # 3. 유니버스 설정 작업 (06:00 ±30분)
-    if is_within_time_range(6, 0):
+        # 4. 유니버스 설정 작업 (세션 시작 후 실행)
         all_jobs.append(
             {
                 "path": "universe/upsert",
                 "method": "POST",
-                "body": {"trading_day": today.isoformat(), "symbols": DEFAULT_TICKERS},
-                "group_id": "universe",
-                "description": f"Setup universe for {today.isoformat()} with {len(DEFAULT_TICKERS)} symbols",
+                "body": {
+                    "trading_day": today.isoformat(),
+                    "symbols": get_default_tickers(),
+                },
+                "group_id": "daily-morning-batch",
+                "description": f"Setup universe for {today.isoformat()} with {len(get_default_tickers())} symbols",
                 "deduplication_id": f"universe-setup-{today.strftime('%Y%m%d')}",
+                "sequence": 4,
             }
         )
 
-    # 4. 세션 종료 작업 (23:59 ±30분)
+    # 23:59 KST 시간대 작업들
     if is_within_time_range(23, 59):
+        # 세션 종료 작업
         all_jobs.append(
             {
                 "path": "session/cutoff",
                 "method": "POST",
                 "body": {},
-                "group_id": "session",
+                "group_id": "daily-evening-batch",
                 "description": "Close prediction session",
                 "deduplication_id": f"session-close-{today.strftime('%Y%m%d')}",
+                "sequence": 1,
             }
         )
 
@@ -213,14 +130,17 @@ def execute_all_jobs(
             "message": f"No jobs scheduled for current time ({current_hour:02d}:{current_minute:02d} KST). Jobs are scheduled for 06:00 (±30min) and 23:59 (±30min) KST.",
             "current_time": f"{current_hour:02d}:{current_minute:02d} KST",
             "scheduled_times": [
-                "06:00 ±30min (settlement, session-start, universe-setup)",
+                "06:00 ±30min (eod-collection, settlement, session-start, universe-setup)",
                 "23:59 ±30min (session-close)",
             ],
             "details": [],
         }
 
+    # 작업을 sequence 순으로 정렬하여 순차 실행 보장
+    sorted_jobs = sorted(all_jobs, key=lambda x: x.get("sequence", 999))
+
     responses = []
-    for job in all_jobs:
+    for job in sorted_jobs:
         try:
             message_body = aws_service.generate_queue_message_http(
                 path=job["path"],
@@ -235,11 +155,21 @@ def execute_all_jobs(
                 message_deduplication_id=job["deduplication_id"],
             )
             responses.append(
-                {"job": job["description"], "status": "queued", "response": response}
+                {
+                    "job": job["description"],
+                    "status": "queued",
+                    "sequence": job.get("sequence", 0),
+                    "response": response,
+                }
             )
         except Exception as e:
             responses.append(
-                {"job": job["description"], "status": "failed", "error": str(e)}
+                {
+                    "job": job["description"],
+                    "status": "failed",
+                    "sequence": job.get("sequence", 0),
+                    "error": str(e),
+                }
             )
 
     successful_jobs = [r for r in responses if r["status"] == "queued"]
@@ -382,14 +312,14 @@ def execute_universe_setup(
     """
     오늘의 유니버스 설정 (06:00 실행)
     AWS EventBridge에서 매일 06:00에 호출되어 오늘의 종목 유니버스를 설정합니다.
-    기본 50개 종목으로 설정됩니다.
+    기본 100개 종목으로 설정됩니다.
     """
     queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
     today = dt.date.today().isoformat()
     today_str = dt.date.today().strftime("%Y%m%d")
 
-    # 기본 50개 종목 설정
-    default_symbols = DEFAULT_TICKERS
+    # 기본 100개 종목 설정
+    default_symbols = get_default_tickers()
 
     jobs = [
         {

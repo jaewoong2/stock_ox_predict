@@ -14,7 +14,8 @@
       "mcp__serena__replace_symbol_body",
       "mcp__serena__think_about_whether_you_are_done",
       "mcp__serena__replace_regex",
-      "mcp__sequential-thinking__sequentialthinking"
+      "mcp__sequential-thinking__sequentialthinking",
+      "mcp__serena__find_file"
     ]
   },
   "enableAllProjectMcpServers": true,

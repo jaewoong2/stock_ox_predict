@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from dependency_injector.wiring import inject, Provide
 
 from myapi.containers import Container
-from myapi.core.auth_middleware import get_current_active_user
+from myapi.core.auth_middleware import get_current_active_user, require_admin
 from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.services.price_service import PriceService
@@ -174,4 +174,44 @@ async def compare_prediction_with_outcome(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to compare prediction: {str(e)}",
+        )
+
+
+@router.post("/collect-eod/{trading_day}", response_model=BaseResponse)
+@inject
+async def collect_eod_data(
+    trading_day: str,
+    _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
+    price_service: PriceService = Depends(Provide[Container.services.price_service]),
+) -> Any:
+    """
+    지정된 거래일의 EOD(End of Day) 가격 데이터를 수집합니다. (관리자 전용)
+    Yahoo Finance API를 통해 전일 유니버스의 모든 종목에 대한 EOD 데이터를 수집하고 DB에 저장합니다.
+    """
+    try:
+        day = date.fromisoformat(trading_day)
+        async with price_service as service:
+            collection_result = await service.collect_eod_data_for_universe(day)
+            return BaseResponse(
+                success=True,
+                data={
+                    "trading_day": trading_day,
+                    "total_symbols": collection_result.total_symbols,
+                    "successful_collections": collection_result.successful_collections,
+                    "failed_collections": collection_result.failed_collections,
+                    "collection_details": [detail.model_dump() for detail in collection_result.details]
+                }
+            )
+    except ValueError:
+        return BaseResponse(
+            success=False,
+            error=Error(
+                code=ErrorCode.INVALID_CREDENTIALS, 
+                message="Invalid date format"
+            ),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to collect EOD data for {trading_day}: {str(e)}",
         )

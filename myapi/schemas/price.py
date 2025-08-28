@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, Field
 
@@ -50,7 +50,6 @@ class UniversePriceResponse(BaseModel):
     trading_day: str = Field(..., description="거래일")
     prices: list[StockPrice] = Field(..., description="종목별 가격 정보")
     last_updated: datetime = Field(..., description="마지막 업데이트 시간")
-    market_status: str = Field(..., description="전체 시장 상태")
 
 
 class SettlementPriceData(BaseModel):
@@ -63,3 +62,20 @@ class SettlementPriceData(BaseModel):
     change_percent: Decimal = Field(..., description="변동률 (%)")
     is_valid_settlement: bool = Field(..., description="정산 가능 여부")
     void_reason: Optional[str] = Field(None, description="정산 무효 사유")
+
+
+class EODCollectionDetail(BaseModel):
+    """EOD 데이터 수집 상세 결과"""
+    symbol: str = Field(..., description="종목 심볼")
+    success: bool = Field(..., description="수집 성공 여부")
+    error_message: Optional[str] = Field(None, description="실패 시 오류 메시지")
+    eod_data: Optional[EODPrice] = Field(None, description="수집된 EOD 데이터")
+
+
+class EODCollectionResult(BaseModel):
+    """EOD 데이터 수집 전체 결과"""
+    trading_day: str = Field(..., description="거래일")
+    total_symbols: int = Field(..., description="총 종목 수")
+    successful_collections: int = Field(..., description="성공적으로 수집된 종목 수")
+    failed_collections: int = Field(..., description="실패한 종목 수")
+    details: List[EODCollectionDetail] = Field(..., description="종목별 상세 결과")

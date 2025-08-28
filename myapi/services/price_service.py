@@ -11,12 +11,15 @@ from sqlalchemy.orm import Session
 
 from myapi.core.exceptions import ValidationError, NotFoundError, ServiceException
 from myapi.repositories.active_universe_repository import ActiveUniverseRepository
+from myapi.repositories.price_repository import PriceRepository
 from myapi.schemas.price import (
     StockPrice,
     EODPrice,
     PriceComparisonResult,
     UniversePriceResponse,
     SettlementPriceData,
+    EODCollectionResult,
+    EODCollectionDetail,
 )
 
 
@@ -26,6 +29,7 @@ class PriceService:
     def __init__(self, db: Session):
         self.db = db
         self.universe_repo = ActiveUniverseRepository(db)
+        self.price_repo = PriceRepository(db)
         self.current_price_cache = {}
         self.eod_price_cache = {}
         self.cache_ttl = timedelta(seconds=60)  # 60초 TTL
@@ -85,16 +89,32 @@ class PriceService:
             trading_day=trading_day.strftime("%Y-%m-%d"),
             prices=valid_prices,
             last_updated=datetime.now(timezone.utc),
-            market_status=self._determine_market_status(),
         )
 
     async def get_eod_price(self, symbol: str, trading_day: date) -> EODPrice:
-        """특정 종목의 특정 날짜 EOD 가격을 조회합니다. 캐싱을 적용합니다."""
-        # 캐시 확인 (EOD 데이터는 날짜별로 불변)
+        """
+        특정 종목의 특정 날짜 EOD 가격을 조회합니다.
+        1. 캐시 확인
+        2. DB에서 조회 (이미 수집된 데이터 우선 사용)
+        3. 없으면 Yahoo Finance API 호출
+        """
+        # 1. 캐시 확인 (EOD 데이터는 날짜별로 불변)
         cache_key = (symbol, trading_day)
         if cache_key in self.eod_price_cache:
             return self.eod_price_cache[cache_key]
 
+        # 2. DB에서 이미 수집된 데이터 확인 (우선순위)
+        try:
+            db_price = self.price_repo.get_eod_price(symbol, trading_day)
+            if db_price:
+                # 캐시에 저장
+                self.eod_price_cache[cache_key] = db_price
+                return db_price
+        except Exception:
+            # DB 조회 실패해도 API 호출로 fallback
+            pass
+
+        # 3. DB에 없으면 Yahoo Finance API 호출
         try:
             ticker = yf.Ticker(symbol)
             price_data = await self._get_eod_price_with_yf(ticker, symbol, trading_day)
@@ -108,21 +128,47 @@ class PriceService:
             )
 
     async def get_universe_eod_prices(self, trading_day: date) -> List[EODPrice]:
-        """오늘의 유니버스 모든 종목의 EOD 가격을 조회합니다."""
+        """
+        오늘의 유니버스 모든 종목의 EOD 가격을 조회합니다.
+        DB에서 batch 조회 → 없는 것만 API 호출로 효율적 처리
+        """
         universe_symbols = self.universe_repo.get_universe_for_date(trading_day)
         if not universe_symbols:
             raise NotFoundError(f"No universe found for {trading_day}")
 
-        # 병렬로 모든 종목 EOD 가격 조회
-        tasks = [
-            self.get_eod_price(symbol.symbol, trading_day)
-            for symbol in universe_symbols
-        ]
-        prices = await asyncio.gather(*tasks, return_exceptions=True)
+        symbols = [sym.symbol for sym in universe_symbols]
 
-        # 예외 발생한 항목들 필터링
-        valid_prices = [price for price in prices if isinstance(price, EODPrice)]
-        return valid_prices
+        # DB에서 이미 저장된 EOD 데이터를 batch로 조회 (효율적)
+        try:
+            db_prices = self.price_repo.get_eod_prices_for_symbols(symbols, trading_day)
+            db_symbols = {price.symbol for price in db_prices}
+
+            # DB에 없는 종목들만 API 호출
+            missing_symbols = [sym for sym in symbols if sym not in db_symbols]
+
+            if missing_symbols:
+                # 누락된 종목만 병렬 API 호출
+                tasks = [
+                    self.get_eod_price(symbol, trading_day)
+                    for symbol in missing_symbols
+                ]
+                api_prices = await asyncio.gather(*tasks, return_exceptions=True)
+                valid_api_prices = [
+                    price for price in api_prices if isinstance(price, EODPrice)
+                ]
+
+                # DB 데이터 + API 데이터 합쳐서 반환
+                return db_prices + valid_api_prices
+            else:
+                # 모든 데이터가 DB에 있음
+                return db_prices
+
+        except Exception:
+            # DB 조회 실패 시 fallback to 기존 방식
+            tasks = [self.get_eod_price(symbol, trading_day) for symbol in symbols]
+            prices = await asyncio.gather(*tasks, return_exceptions=True)
+            valid_prices = [price for price in prices if isinstance(price, EODPrice)]
+            return valid_prices
 
     async def validate_settlement_prices(
         self, trading_day: date
@@ -236,50 +282,52 @@ class PriceService:
     async def _get_eod_price_with_yf(
         self, ticker: yf.Ticker, symbol: str, trading_day: date
     ) -> EODPrice:
-        """yfinance를 사용해 EOD 가격 조회"""
+        """yfinance를 사용해 EOD 가격 조회 (전일 종가 로직 개선)"""
         loop = asyncio.get_event_loop()
 
-        # 역사적 데이터 가져오기 (2일 범위로 조회해 전일 종가 포함)
+        # 안정적인 전일 종가 확보를 위해 5일치 데이터 조회
+        start_date = trading_day - timedelta(days=5)
         end_date = trading_day + timedelta(days=1)
-        start_date = trading_day - timedelta(days=1)
 
-        def fetch_history():
+        def fetch_history() -> pd.DataFrame:
             return ticker.history(start=start_date, end=end_date, interval="1d")
 
-        hist = await loop.run_in_executor(None, fetch_history)
+        hist: pd.DataFrame = await loop.run_in_executor(None, fetch_history)
 
-        if hist.empty or trading_day.strftime("%Y-%m-%d") not in pd.to_datetime(
-            hist.index
-        ).strftime("%Y-%m-%d"):
+        if hist.empty:
+            raise ValidationError(
+                f"No history data available for {symbol} near {trading_day}"
+            )
+
+        hist.index = pd.Index(pd.to_datetime(hist.index).date)
+
+        # 해당 거래일의 데이터 찾기
+        try:
+            row_data = hist.loc[trading_day]
+            # 중복 인덱스가 있을 경우 DataFrame이 반환되므로 첫 번째 행을 사용
+            if isinstance(row_data, pd.DataFrame):
+                row = row_data.iloc[0]
+            else:
+                row = row_data
+        except KeyError:
             raise ValidationError(
                 f"No EOD data available for {symbol} on {trading_day}"
             )
 
-        # 해당 날짜의 데이터 찾기
-        target_date_str = trading_day.strftime("%Y-%m-%d")
-        matching_rows = hist[
-            pd.to_datetime(hist.index).strftime("%Y-%m-%d") == target_date_str
-        ]
-
-        if matching_rows.empty:
-            raise ValidationError(
-                f"No EOD data available for {symbol} on {trading_day}"
-            )
-
-        row = matching_rows.iloc[0]
+        # 전일 종가 찾기
+        try:
+            # trading_day 이전의 마지막 행을 찾음
+            previous_day_row = hist.loc[: trading_day - timedelta(days=1)].iloc[-1]
+            previous_close = Decimal(str(previous_day_row["Close"]))
+        except IndexError:
+            # 이전 데이터가 없으면 시가를 전일 종가로 사용 (IPO 등의 경우)
+            previous_close = Decimal(str(row["Open"]))
 
         close_price = Decimal(str(row["Close"]))
         open_price = Decimal(str(row["Open"]))
         high_price = Decimal(str(row["High"]))
         low_price = Decimal(str(row["Low"]))
         volume = int(row["Volume"])
-
-        # 이전 역사 데이터에서 전일 종가 찾기
-        if len(hist) > 1:
-            previous_close = Decimal(str(hist.iloc[0]["Close"]))
-        else:
-            # 이전 데이터가 없으면 시가를 전일 종가로 사용
-            previous_close = open_price
 
         change = close_price - previous_close
         change_percent = (
@@ -333,18 +381,67 @@ class PriceService:
 
         return True, None
 
-    def _determine_market_status(self) -> str:
-        """현재 시장 상태 판정"""
-        # 간단한 구현 - 실제로는 시간대와 거래소 일정을 고려해야 함
-        now = datetime.now(timezone.utc)
-        hour = now.hour
+    async def collect_eod_data_for_universe(
+        self, trading_day: date
+    ) -> EODCollectionResult:
+        """
+        지정된 거래일의 유니버스에 대한 모든 EOD 데이터를 수집하고 저장합니다.
 
-        # 미국 동부 시간 기준 대략적인 장 시간 (UTC 기준)
-        if 14 <= hour < 21:  # 9:30 AM - 4:00 PM EST
-            return "OPEN"
-        elif 9 <= hour < 14:  # Pre-market
-            return "PRE_MARKET"
-        elif 21 <= hour <= 23:  # After-hours
-            return "AFTER_HOURS"
-        else:
-            return "CLOSED"
+        Args:
+            trading_day: 데이터를 수집할 거래일
+
+        Returns:
+            EODCollectionResult: 수집 결과 및 상세 정보
+        """
+        # 해당 거래일의 유니버스 조회
+        universe_symbols = self.universe_repo.get_universe_for_date(trading_day)
+        if not universe_symbols:
+            raise NotFoundError(f"No universe found for {trading_day}")
+
+        total_symbols = len(universe_symbols)
+        collection_details = []
+        successful_collections = 0
+        failed_collections = 0
+
+        # 각 종목에 대해 EOD 데이터 수집 및 저장
+        for universe_symbol in universe_symbols:
+            symbol = universe_symbol.symbol
+            detail = EODCollectionDetail(
+                symbol=symbol, success=False, error_message=None, eod_data=None
+            )
+
+            try:
+                # EOD 데이터 조회
+                eod_price = await self.get_eod_price(symbol, trading_day)
+
+                # Repository를 통해 DB에 저장
+                self.price_repo.save_eod_price(
+                    symbol=symbol,
+                    trading_date=trading_day,
+                    open_price=float(eod_price.open_price),
+                    high_price=float(eod_price.high),
+                    low_price=float(eod_price.low),
+                    close_price=float(eod_price.close_price),
+                    previous_close=float(eod_price.previous_close),
+                    volume=eod_price.volume,
+                    data_source="yfinance",
+                )
+
+                detail.success = True
+                detail.eod_data = eod_price
+                successful_collections += 1
+
+            except Exception as e:
+                detail.success = False
+                detail.error_message = str(e)
+                failed_collections += 1
+
+            collection_details.append(detail)
+
+        return EODCollectionResult(
+            trading_day=trading_day.strftime("%Y-%m-%d"),
+            total_symbols=total_symbols,
+            successful_collections=successful_collections,
+            failed_collections=failed_collections,
+            details=collection_details,
+        )
