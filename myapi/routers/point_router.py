@@ -494,3 +494,49 @@ async def check_user_affordability(
     except Exception as e:
         logger.error(f"Failed to check affordability: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to check affordability")
+
+
+@router.get("/admin/integrity/daily/{trading_day}")
+@inject
+async def verify_daily_points_integrity(
+    trading_day: date = Path(..., description="검증할 거래일 (YYYY-MM-DD)"),
+    current_user: UserSchema = Depends(require_admin),
+    point_service: PointService = Depends(Provide[Container.services.point_service]),
+) -> dict:
+    """
+    일별 포인트 정합성 검증 (관리자 전용)
+    
+    특정일의 포인트 거래 내역을 분석하여 정합성을 검증합니다.
+    
+    인증 필요: Bearer 토큰
+    권한: 관리자 (is_admin=True)
+    
+    Returns:
+        dict: 일별 포인트 정합성 검증 결과
+        - trading_day: 검증 대상 날짜
+        - total_transactions: 총 거래 건수
+        - total_points_delta: 총 포인트 변동량
+        - total_points_awarded: 총 지급 포인트  
+        - total_points_deducted: 총 차감 포인트
+        - prediction_award_count: 예측 보상 건수
+        - prediction_points_total: 예측 보상 총 포인트
+        - status: 검증 상태
+        
+    HTTP Status:
+        200: 검증 완료
+        403: 관리자 권한 없음
+        500: 검증 중 오류 발생
+        
+    사용 예시:
+        GET /points/admin/integrity/daily/2025-08-28
+    """
+    try:
+        # 관리자 권한은 require_admin에서 이미 확인됨
+        
+        integrity_result = point_service.verify_daily_integrity(trading_day)
+        return integrity_result
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to verify daily points integrity: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to verify daily points integrity")

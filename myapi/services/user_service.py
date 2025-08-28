@@ -5,6 +5,7 @@ from datetime import datetime
 from myapi.repositories.user_repository import UserRepository
 from myapi.core.exceptions import ValidationError, NotFoundError
 from myapi.services.point_service import PointService
+from myapi.config import Settings
 from myapi.schemas.user import (
     User as UserSchema,
     UserProfile,
@@ -20,10 +21,11 @@ logger = logging.getLogger(__name__)
 class UserService:
     """사용자 관련 비즈니스 로직을 담당하는 서비스"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, settings: Settings):
         self.db = db
         self.user_repo = UserRepository(db)
         self.point_service = PointService(db)
+        self.settings = settings
 
     def get_user_by_id(self, user_id: int) -> Optional[UserSchema]:
         """사용자 ID로 조회"""
@@ -191,7 +193,7 @@ class UserService:
             from myapi.schemas.points import PointsTransactionRequest
             
             bonus_request = PointsTransactionRequest(
-                amount=1000,  # 신규 가입 보너스 1000포인트
+                amount=self.settings.SIGNUP_BONUS_POINTS,
                 reason="Welcome bonus for new user registration",
                 ref_id=f"signup_bonus_{user_id}_{datetime.now().strftime('%Y%m%d')}"
             )
@@ -199,7 +201,7 @@ class UserService:
             result = self.point_service.add_points(user_id=user_id, request=bonus_request)
             
             if result.success:
-                logger.info(f"✅ Awarded signup bonus to user {user_id}: 1000 points")
+                logger.info(f"✅ Awarded signup bonus to user {user_id}: {self.settings.SIGNUP_BONUS_POINTS} points")
                 return True
             else:
                 logger.warning(f"❌ Failed to award signup bonus to user {user_id}: {result.message}")

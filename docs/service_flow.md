@@ -128,6 +128,24 @@ graph TD
     G -->|실패| I[포인트 환불]
 ```
 
+  | 플로우 단계      | API 엔드포인트                                       | 파일 위치                         | 상태    |
+  |-------------|--------------------------------------------------|---------------------------------|-------|
+  | 자동 정산       | POST /admin/settlement/settle-day/{trading_day} | settlement_router.py:18         | ✅ 완벽  |
+  | 정산 요약       | GET /admin/settlement/summary/{trading_day}     | settlement_router.py:48         | ✅ 완벽  |
+  | 수동 정산       | POST /admin/settlement/manual-settle            | settlement_router.py:78         | ✅ 완벽  |
+  | **정산 상태 조회** | GET /settlement/status/{trading_day}            | settlement_router.py:120        | ✅ **신규** |
+  | **정산 재시도**   | POST /admin/settlement/retry/{trading_day}      | settlement_router.py:152        | ✅ **신규** |
+  | EOD 가격 조회   | GET /prices/eod/{symbol}/{trading_day}          | -                               | ✅ 구현됨 |
+  | 포인트 잔액      | GET /points/balance                             | point_router.py:57              | ✅ 완벽  |
+  | 포인트 내역      | GET /points/ledger                              | point_router.py:93              | ✅ 완벽  |
+  | **포인트 정합성**  | GET /points/admin/integrity/daily/{trading_day} | point_router.py:499             | ✅ **신규** |
+  | 리워드 카탈로그    | GET /rewards/catalog                            | reward_router.py:34             | ✅ 완벽  |
+  | 리워드 교환      | POST /rewards/redeem                            | reward_router.py:72             | ✅ 완벽  |
+  | 교환 내역       | GET /rewards/my-redemptions                     | reward_router.py:97             | ✅ 완벽  |
+  | **배치 작업 상태** | GET /batch/jobs/status                          | batch_router.py:425             | ✅ **신규** |
+  | **배치 긴급중단**  | POST /batch/emergency-stop                      | batch_router.py:501             | ✅ **신규** |
+
+
 ### 5. 시스템 배치 및 자동화 플로우
 
 #### 5.1 일일 배치 스케줄 (KST 기준)

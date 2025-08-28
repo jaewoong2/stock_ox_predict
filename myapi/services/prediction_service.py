@@ -13,6 +13,7 @@ from myapi.core.exceptions import (
     RateLimitError,
     InsufficientBalanceError,
 )
+from myapi.config import Settings
 from myapi.models.prediction import (
     Prediction as PredictionModel,
     ChoiceEnum,
@@ -39,16 +40,17 @@ from myapi.schemas.prediction import (
 class PredictionService:
     """예측 관련 비즈니스 로직 서비스"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, settings: Settings):
         self.db = db
         self.pred_repo = PredictionRepository(db)
         self.stats_repo = UserDailyStatsRepository(db)
         self.universe_repo = ActiveUniverseRepository(db)
         self.session_repo = SessionRepository(db)
         self.point_service = PointService(db)
+        self.settings = settings
         
         # 포인트 설정 (비즈니스 설정)
-        self.PREDICTION_FEE_POINTS = 10
+        self.PREDICTION_FEE_POINTS = settings.PREDICTION_FEE_POINTS
         self.PREDICTION_CANCEL_REFUND = True  # 취소 시 수수료 환불 여부
 
     # 제출/수정/취소

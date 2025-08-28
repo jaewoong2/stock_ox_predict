@@ -12,21 +12,23 @@ from myapi.services.price_service import PriceService
 from myapi.services.point_service import PointService
 from myapi.schemas.price import SettlementPriceData, PriceComparisonResult
 from myapi.schemas.prediction import PredictionChoice, PredictionStatus
+from myapi.config import Settings
 
 
 class SettlementService:
     """예측 정산 및 결과 검증 서비스"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, settings: Settings):
         self.db = db
         self.pred_repo = PredictionRepository(db)
         self.universe_repo = ActiveUniverseRepository(db)
         self.price_service = PriceService(db)
         self.point_service = PointService(db)
+        self.settings = settings
         
-        # 포인트 지급 설정 (비즈니스 설정)
-        self.CORRECT_PREDICTION_POINTS = 100
-        self.PREDICTION_FEE_POINTS = 10
+        # 포인트 지급 설정 (환경변수에서 로드)
+        self.CORRECT_PREDICTION_POINTS = settings.CORRECT_PREDICTION_POINTS
+        self.PREDICTION_FEE_POINTS = settings.PREDICTION_FEE_POINTS
 
     async def __aenter__(self):
         return self
@@ -125,7 +127,14 @@ class SettlementService:
                 predicted_direction, actual_movement
             )
 
-            if is_correct:
+            if is_correct is None:
+                # VOID 처리
+                await self._void_prediction(
+                    prediction.id, prediction.user_id, trading_day, symbol, 
+                    f"FLAT price movement with VOID policy"
+                )
+                processed_count -= 1  # VOID는 처리 수에서 제외
+            elif is_correct:
                 correct_count += 1
                 # 정답 예측 처리 (포인트 지급 등)
                 await self._award_correct_prediction(
@@ -164,12 +173,24 @@ class SettlementService:
                 prediction.id, prediction.user_id, trading_day, symbol, void_reason
             )
 
-    def _is_prediction_correct(self, predicted: str, actual: str) -> bool:
-        """예측이 맞는지 확인"""
+    def _is_prediction_correct(self, predicted: str, actual: str) -> Optional[bool]:
+        """예측이 맞는지 확인
+        
+        Returns:
+            True: 정답
+            False: 오답  
+            None: VOID 처리 필요
+        """
         if actual == "FLAT":
-            # 가격 변동이 없는 경우는 모든 예측을 틀린 것으로 처리하거나
-            # 별도 규칙 적용 (여기서는 틀린 것으로 처리)
-            return False
+            # 환경변수 설정에 따른 FLAT 가격 처리 정책
+            if self.settings.FLAT_PRICE_POLICY == "ALL_CORRECT":
+                return True
+            elif self.settings.FLAT_PRICE_POLICY == "ALL_WRONG":
+                return False
+            elif self.settings.FLAT_PRICE_POLICY == "VOID":
+                return None  # VOID 처리
+            else:
+                return False  # 기본값은 틀린 것으로 처리
         return predicted == actual
 
     async def _award_correct_prediction(
@@ -361,7 +382,7 @@ class SettlementService:
                 trading_day,
                 symbol,
                 ChoiceEnum(correct_choice.value),
-                points_per_correct=100,
+                points_per_correct=self.CORRECT_PREDICTION_POINTS,
             )
 
             # 수동 정산에서도 포인트 지급 (자동 정산과 동일하게 처리)
@@ -402,3 +423,158 @@ class SettlementService:
 
         except Exception as e:
             raise ServiceException(f"Manual settlement failed for {symbol}: {str(e)}")
+
+    async def get_settlement_status(self, trading_day: date) -> Dict[str, Any]:
+        """특정 거래일의 정산 진행 상태를 조회합니다."""
+        try:
+            # 해당 날짜의 유니버스 종목 수 조회
+            universe_items = self.universe_repo.get_universe_for_date(trading_day)
+            total_symbols = len(universe_items)
+            
+            if total_symbols == 0:
+                return {
+                    "trading_day": trading_day.strftime("%Y-%m-%d"),
+                    "status": "NO_UNIVERSE",
+                    "message": "No universe defined for this trading day",
+                    "total_symbols": 0,
+                    "pending_symbols": 0,
+                    "completed_symbols": 0,
+                    "failed_symbols": 0,
+                    "progress_percentage": 0.0
+                }
+
+            # 종목별 예측 상태 집계
+            pending_symbols = 0
+            completed_symbols = 0
+            failed_symbols = 0
+            
+            for universe_item in universe_items:
+                symbol = universe_item.symbol
+                predictions = self.pred_repo.get_predictions_by_symbol_and_date(
+                    symbol, trading_day, None
+                )
+                
+                if not predictions:
+                    continue
+                    
+                # 해당 종목의 예측 상태 확인
+                has_pending = any(p.status == StatusEnum.PENDING for p in predictions)
+                
+                if has_pending:
+                    pending_symbols += 1
+                else:
+                    # 모든 예측이 처리됨 (CORRECT, INCORRECT, VOID)
+                    completed_symbols += 1
+            
+            # 전체 상태 결정
+            if pending_symbols == 0:
+                overall_status = "COMPLETED"
+            elif completed_symbols == 0:
+                overall_status = "PENDING" 
+            else:
+                overall_status = "IN_PROGRESS"
+            
+            progress_percentage = (completed_symbols / total_symbols * 100) if total_symbols > 0 else 0
+            
+            return {
+                "trading_day": trading_day.strftime("%Y-%m-%d"),
+                "status": overall_status,
+                "total_symbols": total_symbols,
+                "pending_symbols": pending_symbols,
+                "completed_symbols": completed_symbols,
+                "failed_symbols": failed_symbols,
+                "progress_percentage": round(progress_percentage, 2),
+                "last_updated": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            raise ServiceException(f"Failed to get settlement status for {trading_day}: {str(e)}")
+
+    async def retry_settlement(self, trading_day: date, symbols: List[str] = None) -> Dict[str, Any]:
+        """실패했거나 PENDING 상태인 예측들의 정산을 재시도합니다."""
+        try:
+            if symbols is None:
+                # 모든 PENDING 상태 예측들 재정산
+                universe_items = self.universe_repo.get_universe_for_date(trading_day)
+                symbols = [item.symbol for item in universe_items]
+            
+            retry_results = []
+            total_retried = 0
+            total_success = 0
+            
+            for symbol in symbols:
+                # 해당 종목의 PENDING 예측이 있는지 확인
+                pending_predictions = self.pred_repo.get_predictions_by_symbol_and_date(
+                    symbol, trading_day, status_filter=StatusEnum.PENDING
+                )
+                
+                if not pending_predictions:
+                    retry_results.append({
+                        "symbol": symbol,
+                        "status": "SKIPPED",
+                        "message": "No pending predictions found"
+                    })
+                    continue
+                
+                try:
+                    # 해당 종목만 다시 정산
+                    async with self.price_service as price_svc:
+                        settlement_data = await price_svc.validate_settlement_prices(trading_day)
+                        
+                    # 해당 symbol의 데이터 찾기
+                    symbol_price_data = None
+                    for price_data in settlement_data:
+                        if price_data.symbol == symbol:
+                            symbol_price_data = price_data
+                            break
+                    
+                    if symbol_price_data:
+                        if symbol_price_data.is_valid_settlement:
+                            result = await self._settle_predictions_for_symbol(
+                                trading_day, symbol_price_data
+                            )
+                            retry_results.append({
+                                "symbol": symbol,
+                                "status": "SUCCESS",
+                                "processed_count": result["processed_count"],
+                                "correct_count": result["correct_count"]
+                            })
+                            total_success += 1
+                        else:
+                            await self._handle_void_predictions(
+                                trading_day, symbol, symbol_price_data.void_reason
+                            )
+                            retry_results.append({
+                                "symbol": symbol,
+                                "status": "VOIDED",
+                                "reason": symbol_price_data.void_reason
+                            })
+                            total_success += 1
+                    else:
+                        retry_results.append({
+                            "symbol": symbol,
+                            "status": "FAILED",
+                            "message": "Price data not available"
+                        })
+                        
+                    total_retried += 1
+                    
+                except Exception as e:
+                    retry_results.append({
+                        "symbol": symbol,
+                        "status": "FAILED",
+                        "message": str(e)
+                    })
+                    total_retried += 1
+            
+            return {
+                "trading_day": trading_day.strftime("%Y-%m-%d"),
+                "retry_completed_at": datetime.now(timezone.utc).isoformat(),
+                "total_symbols_retried": total_retried,
+                "successful_retries": total_success,
+                "failed_retries": total_retried - total_success,
+                "results": retry_results
+            }
+            
+        except Exception as e:
+            raise ServiceException(f"Settlement retry failed for {trading_day}: {str(e)}")

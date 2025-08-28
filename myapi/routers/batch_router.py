@@ -32,7 +32,7 @@ def execute_all_jobs(
     각 작업은 지정된 시간대(±30분 오차 허용) 내에만 실행됩니다.
     06:00 KST 작업들은 의존성 순서대로 순차 실행됩니다.
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
+    queue_url = settings.SQS_MAIN_QUEUE_URL
     today = dt.date.today()
     yesterday = today - dt.timedelta(days=1)
 
@@ -201,7 +201,7 @@ def execute_prediction_settlement(
     전날 예측 결과 정산 및 포인트 지급 (06:00 실행)
     AWS EventBridge에서 매일 06:00에 호출되어 전날 예측을 정산하고 포인트를 지급합니다.
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
+    queue_url = settings.SQS_MAIN_QUEUE_URL
     yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
     today_str = dt.date.today().strftime("%Y%m%d")
 
@@ -258,7 +258,7 @@ def execute_session_start(
     새로운 예측 세션 시작 (06:00 실행)
     AWS EventBridge에서 매일 06:00에 호출되어 새로운 예측 세션을 시작합니다.
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
+    queue_url = settings.SQS_MAIN_QUEUE_URL
     today_str = dt.date.today().strftime("%Y%m%d")
 
     jobs = [
@@ -314,7 +314,7 @@ def execute_universe_setup(
     AWS EventBridge에서 매일 06:00에 호출되어 오늘의 종목 유니버스를 설정합니다.
     기본 100개 종목으로 설정됩니다.
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
+    queue_url = settings.SQS_MAIN_QUEUE_URL
     today = dt.date.today().isoformat()
     today_str = dt.date.today().strftime("%Y%m%d")
 
@@ -373,7 +373,7 @@ def execute_session_close(
     예측 마감 및 세션 종료 (23:59 실행)
     AWS EventBridge에서 매일 23:59에 호출되어 예측을 마감하고 세션을 종료합니다.
     """
-    queue_url = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
+    queue_url = settings.SQS_MAIN_QUEUE_URL
     today_str = dt.date.today().strftime("%Y%m%d")
 
     jobs = [
@@ -416,3 +416,118 @@ def execute_session_close(
         "message": "Prediction session close has been queued.",
         "details": responses,
     }
+
+
+# ====================================================================================
+# 배치 작업 상태 조회 및 모니터링 엔드포인트
+# ====================================================================================
+
+@router.get("/jobs/status", dependencies=[Depends(require_admin)])
+@inject
+def get_batch_jobs_status(
+    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
+    settings: Settings = Depends(Provide[Container.config.config]),
+):
+    """
+    현재 실행 중인 배치 작업 상태를 조회합니다. (관리자 전용)
+    
+    SQS 큐의 메시지 수, 가시성 타임아웃 등을 확인하여
+    현재 배치 작업의 상태를 파악할 수 있습니다.
+    """
+    try:
+        queue_url = settings.SQS_MAIN_QUEUE_URL
+        
+        # 현재 시간 정보
+        kst = pytz.timezone("Asia/Seoul")
+        now = dt.datetime.now(kst)
+        
+        # SQS 큐 상태 조회 (실제 SQS 정보)
+        try:
+            queue_attributes = aws_service.get_sqs_queue_attributes(queue_url)
+            
+            return {
+                "current_time": now.strftime("%Y-%m-%d %H:%M:%S KST"),
+                "queue_status": {
+                    "queue_url": queue_url,
+                    "approximate_number_of_messages": queue_attributes.get("ApproximateNumberOfMessages", "0"),
+                    "approximate_number_of_messages_not_visible": queue_attributes.get("ApproximateNumberOfMessagesNotVisible", "0"),
+                    "approximate_number_of_messages_delayed": queue_attributes.get("ApproximateNumberOfMessagesDelayed", "0"),
+                    "created_timestamp": queue_attributes.get("CreatedTimestamp", ""),
+                    "last_modified_timestamp": queue_attributes.get("LastModifiedTimestamp", "")
+                },
+                "batch_schedule_info": {
+                    "morning_batch_time": "06:00 KST (±30min tolerance)",
+                    "evening_batch_time": "23:59 KST (±30min tolerance)",
+                    "next_morning_batch": _get_next_batch_time(now, 6, 0),
+                    "next_evening_batch": _get_next_batch_time(now, 23, 59)
+                },
+                "status": "ACTIVE"
+            }
+        except Exception as sqs_error:
+            # SQS 조회 실패시 기본 정보만 반환
+            return {
+                "current_time": now.strftime("%Y-%m-%d %H:%M:%S KST"),
+                "queue_status": {
+                    "queue_url": queue_url,
+                    "error": f"Failed to fetch queue status: {str(sqs_error)}",
+                    "status": "UNAVAILABLE"
+                },
+                "batch_schedule_info": {
+                    "morning_batch_time": "06:00 KST (±30min tolerance)",
+                    "evening_batch_time": "23:59 KST (±30min tolerance)",
+                    "next_morning_batch": _get_next_batch_time(now, 6, 0),
+                    "next_evening_batch": _get_next_batch_time(now, 23, 59)
+                },
+                "status": "PARTIAL"
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get batch jobs status: {str(e)}"
+        )
+
+
+def _get_next_batch_time(current_time: dt.datetime, target_hour: int, target_minute: int) -> str:
+    """다음 배치 실행 시간 계산"""
+    target_time = current_time.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+    
+    if current_time >= target_time:
+        # 오늘 시간이 지났으면 내일
+        target_time += dt.timedelta(days=1)
+    
+    return target_time.strftime("%Y-%m-%d %H:%M KST")
+
+
+@router.post("/emergency-stop", dependencies=[Depends(require_admin)])
+@inject 
+def emergency_stop_batch(
+    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
+    settings: Settings = Depends(Provide[Container.config.config]),
+):
+    """
+    배치 작업 긴급 중단 (관리자 전용)
+    
+    SQS 큐의 모든 메시지를 삭제하여 대기 중인 배치 작업을 중단합니다.
+    주의: 이 작업은 되돌릴 수 없습니다.
+    """
+    try:
+        queue_url = settings.SQS_MAIN_QUEUE_URL
+        
+        # 큐 비우기 (purge)
+        result = aws_service.purge_sqs_queue(queue_url)
+        
+        kst = pytz.timezone("Asia/Seoul")
+        now = dt.datetime.now(kst)
+        
+        return {
+            "message": "Emergency stop executed - All pending batch jobs have been cancelled",
+            "queue_url": queue_url,
+            "purged_at": now.strftime("%Y-%m-%d %H:%M:%S KST"),
+            "result": result,
+            "warning": "This action cannot be undone. Manual execution may be required for critical tasks."
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to execute emergency stop: {str(e)}"
+        )

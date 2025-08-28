@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 
-from myapi.config import settings
+from myapi.config import settings, Settings
 from myapi.core.security import create_access_token
 from myapi.core.exceptions import AuthenticationError, OAuthError
 from myapi.repositories.user_repository import UserRepository
@@ -25,12 +25,13 @@ logger = logging.getLogger(__name__)
 class AuthService:
     """인증 관련 비즈니스 로직을 담당하는 서비스"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, settings: Settings):
         self.db = db
         self.user_repo = UserRepository(db)
         self.point_service = PointService(db)
         self.google_oauth = GoogleOAuthProvider()
         self.kakao_oauth = KakaoOAuthProvider()
+        self.settings = settings
 
 
     def get_oauth_auth_url(self, provider: str, redirect_uri: str, state: str) -> str:
@@ -142,7 +143,7 @@ class AuthService:
                     from myapi.schemas.points import PointsTransactionRequest
                     
                     bonus_request = PointsTransactionRequest(
-                        amount=1000,  # 신규 가입 보너스 1000포인트
+                        amount=self.settings.SIGNUP_BONUS_POINTS,
                         reason="Welcome bonus for new OAuth user registration",
                         ref_id=f"oauth_signup_bonus_{user.id}_{datetime.now().strftime('%Y%m%d')}"
                     )
@@ -150,7 +151,7 @@ class AuthService:
                     bonus_result = self.point_service.add_points(user_id=user.id, request=bonus_request)
                     
                     if bonus_result.success:
-                        logger.info(f"✅ Awarded signup bonus to new OAuth user {user.id}: 1000 points")
+                        logger.info(f"✅ Awarded signup bonus to new OAuth user {user.id}: {self.settings.SIGNUP_BONUS_POINTS} points")
                     else:
                         logger.warning(f"❌ Failed to award signup bonus to new OAuth user {user.id}: {bonus_result.message}")
                 except Exception as e:
