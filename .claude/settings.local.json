@@ -15,7 +15,9 @@
       "mcp__serena__think_about_whether_you_are_done",
       "mcp__serena__replace_regex",
       "mcp__sequential-thinking__sequentialthinking",
-      "mcp__serena__find_file"
+      "mcp__serena__find_file",
+      "mcp__serena__insert_after_symbol",
+      "mcp__serena__search_for_pattern"
     ]
   },
   "enableAllProjectMcpServers": true,

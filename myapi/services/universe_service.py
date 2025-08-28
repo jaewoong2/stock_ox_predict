@@ -7,7 +7,19 @@ from sqlalchemy.orm import Session
 
 from myapi.repositories.active_universe_repository import ActiveUniverseRepository
 from myapi.repositories.session_repository import SessionRepository
-from myapi.schemas.universe import UniverseItem, UniverseResponse, UniverseUpdate
+from myapi.schemas.universe import (
+    UniverseResponse,
+    UniverseUpdate,
+    UniverseWithPricesResponse,
+)
+
+from myapi.schemas.universe import (
+    UniverseWithPricesResponse,
+    UniverseItemWithPrice,
+)
+from datetime import datetime, timezone
+
+from myapi.services.price_service import PriceService
 
 
 class UniverseService:
@@ -17,6 +29,7 @@ class UniverseService:
         self.db = db
         self.repo = ActiveUniverseRepository(db)
         self.session_repo = SessionRepository(db)
+        self.price_service = PriceService(db)
 
     def get_today_universe(self) -> Optional[UniverseResponse]:
         """
@@ -45,3 +58,72 @@ class UniverseService:
         self.repo.set_universe_for_date(trg_day, update.symbols)
         # Return response
         return self.repo.get_universe_response(trg_day)
+
+    async def get_today_universe_with_prices(
+        self,
+    ) -> Optional[UniverseWithPricesResponse]:
+        """
+        오늘의 유니버스를 가격 정보와 함께 조회합니다.
+        사용자가 예측하기 전에 현재 가격과 변동률을 확인할 수 있도록 합니다.
+        """
+
+        # 현재 세션 조회
+        session = self.session_repo.get_current_session()
+
+        if not session:
+            return None
+
+        # 오늘의 유니버스 조회
+        universe_response = self.repo.get_universe_response(session.trading_day)
+
+        if not universe_response:
+            return None
+
+        # PriceService를 통해 현재 가격 정보 조회
+        price_service = self.price_service
+
+        try:
+            async with price_service as service:
+                universe_prices = await service.get_universe_current_prices(
+                    session.trading_day
+                )
+
+                # 가격 정보와 유니버스 정보 매칭
+                symbols_with_prices = []
+                price_dict = {price.symbol: price for price in universe_prices.prices}
+
+                for symbol_item in universe_response.symbols:
+                    price_info = price_dict.get(symbol_item.symbol)
+                    if price_info:
+                        # 변동 방향 계산
+                        change_direction = "FLAT"
+                        if price_info.change > 0:
+                            change_direction = "UP"
+                        elif price_info.change < 0:
+                            change_direction = "DOWN"
+
+                        # 포맷된 변동률 문자열
+                        formatted_change = f"{'+' if price_info.change_percent >= 0 else ''}{price_info.change_percent:.2f}%"
+
+                        symbols_with_prices.append(
+                            UniverseItemWithPrice(
+                                symbol=symbol_item.symbol,
+                                seq=symbol_item.seq,
+                                company_name=price_info.symbol,  # TODO: 실제 회사명으로 교체 가능
+                                current_price=float(price_info.current_price),
+                                previous_close=float(price_info.previous_close),
+                                change_percent=float(price_info.change_percent),
+                                change_direction=change_direction,
+                                formatted_change=formatted_change,
+                            )
+                        )
+
+                return UniverseWithPricesResponse(
+                    trading_day=universe_response.trading_day,
+                    symbols=symbols_with_prices,
+                    total_count=len(symbols_with_prices),
+                    last_updated=datetime.now(timezone.utc).isoformat(),
+                )
+        except Exception:
+            # 가격 조회 실패 시 None 반환 (기존 동작 유지)
+            return None

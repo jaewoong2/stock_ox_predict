@@ -90,7 +90,8 @@ graph TD
   |-------------|-------------------------------------|-------------------------|
   | 세션 상태 확인    | GET /session/today                  | session_router.py:21    |
   | 예측 가능 여부 체크 | GET /session/can-predict            | session_router.py:170   |
-  | 오늘의 종목 조회   | GET /universe/today                 | universe_router.py:20   |
+  | 가격 정보 포함 조회 | GET /universe/today/with-prices     |                        |
+ | 오늘의 종목 조회   | GET /universe/today                 | universe_router.py:20   |
   | 예측 제출       | POST /predictions/{symbol}          | prediction_router.py:29 |
   | 예측 수정       | PUT /predictions/{prediction_id}    | prediction_router.py:66 |
   | 예측 취소       | DELETE /predictions/{prediction_id} | prediction_router.py:96 |
@@ -284,6 +285,7 @@ OAuth 로그인 → JWT 토큰 발급 → 신규 가입자 1000포인트 보너�
 - `GET /session/today` - 현재 세션 상태 확인
 - `GET /session/can-predict` - 예측 가능 여부 체크
 - `GET /universe/today` - 오늘의 종목 100개 조회
+- `GET /universe/today/with-prices` - 가격 정보 포함 종목 조회 (예측 지원)
 - `POST /predictions/{symbol}` - 예측 제출 (상승/하락)
 - `PUT /predictions/{symbol}` - 예측 수정
 - `DELETE /predictions/{symbol}` - 예측 취소

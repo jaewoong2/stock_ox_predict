@@ -46,6 +46,36 @@ def get_today_universe(
         )
 
 
+@router.get("/today/with-prices", response_model=BaseResponse)
+@inject
+async def get_today_universe_with_prices(
+    _user: Optional[UserSchema] = Depends(get_current_user_optional),
+    service: UniverseService = Depends(Provide[Container.services.universe_service]),
+) -> Any:
+    """
+    오늘의 유니버스(종목 리스트)를 현재 가격 정보와 함께 조회합니다.
+    사용자가 예측하기 전에 시장 상황을 파악할 수 있도록 가격과 변동률을 제공합니다.
+
+    Args:
+        _user (Optional[UserSchema]): 현재 사용자 정보 (인증되지 않아도 접근 가능)
+        service (UniverseService): 유니버스 서비스
+
+    Returns:
+        BaseResponse: 가격 정보가 포함된 오늘의 유니버스 정보
+    """
+    try:
+        res = await service.get_today_universe_with_prices()
+        return BaseResponse(
+            success=True,
+            data={"universe": res.model_dump()} if res else {"universe": None},
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Fetch universe with prices failed",
+        )
+
+
 @router.post("/upsert", response_model=BaseResponse)
 @inject
 def upsert_universe(

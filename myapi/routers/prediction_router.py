@@ -432,5 +432,3 @@ def bulk_update_predictions_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Bulk update predictions failed",
         )
-
-

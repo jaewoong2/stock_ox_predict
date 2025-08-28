@@ -15,19 +15,16 @@
 - 완전한 감사 추적
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List
 from sqlalchemy.orm import Session
-from datetime import date, datetime, timedelta
+from datetime import date
 import logging
 
 from myapi.repositories.ad_unlock_repository import AdUnlockRepository
 from myapi.repositories.prediction_repository import UserDailyStatsRepository
 from myapi.core.exceptions import ValidationError, BusinessLogicError
 from myapi.schemas.ad_unlock import (
-    AdUnlockCreate,
-    AdUnlockResponse,
     AdUnlockHistory,
-    SlotIncreaseRequest,
     SlotIncreaseResponse,
     AvailableSlotsResponse,
     AdUnlockStatsResponse,
@@ -35,8 +32,7 @@ from myapi.schemas.ad_unlock import (
     AdWatchCompleteResponse,
     UnlockMethod,
 )
-from myapi.utils.timezone_utils import get_current_kst_date, get_current_kst_time
-from schemas.auth import ErrorCode
+from myapi.utils.timezone_utils import get_current_kst_date
 
 logger = logging.getLogger(__name__)
 
