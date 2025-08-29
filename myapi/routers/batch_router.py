@@ -28,7 +28,11 @@ router = APIRouter(
 # ====================================================================================
 
 
-@router.post("/all-jobs", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
+@router.post(
+    "/all-jobs",
+    dependencies=[Depends(require_admin)],
+    response_model=BatchQueueResponse,
+)
 @inject
 def execute_all_jobs(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -60,68 +64,67 @@ def execute_all_jobs(
     all_jobs = []
 
     # 06:00 KST 시간대 작업들 - 순차 실행을 위해 동일한 group_id 사용
-    if is_within_time_range(6, 0):
-        # 1. EOD 데이터 수집 작업 (가장 먼저 실행)
-        all_jobs.append(
-            {
-                "path": f"prices/collect-eod/{yesterday.isoformat()}",
-                "method": "POST",
-                "body": {},
-                "group_id": "daily-morning-batch",
-                "description": f"Collect EOD data for {yesterday.isoformat()}",
-                "deduplication_id": f"eod-collection-{yesterday.strftime('%Y%m%d')}",
-                "sequence": 1,
-            }
-        )
+    # 1. EOD 데이터 수집 작업 (가장 먼저 실행)
+    all_jobs.append(
+        {
+            "path": f"api/v1/prices/collect-eod/{yesterday.isoformat()}",
+            "method": "POST",
+            "body": {},
+            "group_id": "daily-morning-batch",
+            "description": f"Collect EOD data for {yesterday.isoformat()}",
+            "deduplication_id": f"eod-collection-{yesterday.strftime('%Y%m%d')}",
+            "sequence": 1,
+        }
+    )
 
-        # 2. 정산 작업 (EOD 데이터 수집 후 실행)
-        all_jobs.append(
-            {
-                "path": f"admin/settlement/settle-day/{yesterday.isoformat()}",
-                "method": "POST",
-                "body": {},
-                "group_id": "daily-morning-batch",
-                "description": f"Settlement for {yesterday.isoformat()}",
-                "deduplication_id": f"settlement-{yesterday.strftime('%Y%m%d')}",
-                "sequence": 2,
-            }
-        )
+    # 2. 정산 작업 (EOD 데이터 수집 후 실행)
+    all_jobs.append(
+        {
+            "path": f"api/v1/admin/settlement/settle-day/{yesterday.isoformat()}",
+            "method": "POST",
+            "body": {},
+            "group_id": "daily-morning-batch",
+            "description": f"Settlement for {yesterday.isoformat()}",
+            "deduplication_id": f"settlement-{yesterday.strftime('%Y%m%d')}",
+            "sequence": 2,
+        }
+    )
 
-        # 3. 세션 시작 작업 (정산 후 실행)
-        all_jobs.append(
-            {
-                "path": "session/flip-to-predict",
-                "method": "POST",
-                "body": {},
-                "group_id": "daily-morning-batch",
-                "description": "Start new prediction session",
-                "deduplication_id": f"session-start-{today.strftime('%Y%m%d')}",
-                "sequence": 3,
-            }
-        )
+    # 3. 세션 시작 작업 (정산 후 실행)
+    all_jobs.append(
+        {
+            "path": "api/v1/session/flip-to-predict",
+            "method": "POST",
+            "body": {},
+            "group_id": "daily-morning-batch",
+            "description": "Start new prediction session",
+            "deduplication_id": f"session-start-{today.strftime('%Y%m%d')}",
+            "sequence": 3,
+        }
+    )
 
-        # 4. 유니버스 설정 작업 (세션 시작 후 실행)
-        all_jobs.append(
-            {
-                "path": "universe/upsert",
-                "method": "POST",
-                "body": {
-                    "trading_day": today.isoformat(),
-                    "symbols": get_default_tickers(),
-                },
-                "group_id": "daily-morning-batch",
-                "description": f"Setup universe for {today.isoformat()} with {len(get_default_tickers())} symbols",
-                "deduplication_id": f"universe-setup-{today.strftime('%Y%m%d')}",
-                "sequence": 4,
-            }
-        )
+    # 4. 유니버스 설정 작업 (세션 시작 후 실행)
+    all_jobs.append(
+        {
+            "path": "api/v1/universe/upsert",
+            "method": "POST",
+            "body": {
+                "trading_day": today.isoformat(),
+                "symbols": get_default_tickers(),
+            },
+            "group_id": "daily-morning-batch",
+            "description": f"Setup universe for {today.isoformat()} with {len(get_default_tickers())} symbols",
+            "deduplication_id": f"universe-setup-{today.strftime('%Y%m%d')}",
+            "sequence": 4,
+        }
+    )
 
     # 23:59 KST 시간대 작업들
     if is_within_time_range(23, 59):
         # 세션 종료 작업
         all_jobs.append(
             {
-                "path": "session/cutoff",
+                "path": "api/v1/session/cutoff",
                 "method": "POST",
                 "body": {},
                 "group_id": "daily-evening-batch",
@@ -200,7 +203,11 @@ def execute_all_jobs(
     )
 
 
-@router.post("/prediction-settlement", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
+@router.post(
+    "/prediction-settlement",
+    dependencies=[Depends(require_admin)],
+    response_model=BatchQueueResponse,
+)
 @inject
 def execute_prediction_settlement(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -244,7 +251,9 @@ def execute_prediction_settlement(
                 message_deduplication_id=deduplication_id,
             )
             responses.append(
-                BatchJobResult(job=job["description"], status="queued", response=response)
+                BatchJobResult(
+                    job=job["description"], status="queued", response=response
+                )
             )
         except Exception as e:
             raise HTTPException(
@@ -257,7 +266,11 @@ def execute_prediction_settlement(
     )
 
 
-@router.post("/session-start", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
+@router.post(
+    "/session-start",
+    dependencies=[Depends(require_admin)],
+    response_model=BatchQueueResponse,
+)
 @inject
 def execute_session_start(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -299,7 +312,9 @@ def execute_session_start(
                 message_deduplication_id=deduplication_id,
             )
             responses.append(
-                BatchJobResult(job=job["description"], status="queued", response=response)
+                BatchJobResult(
+                    job=job["description"], status="queued", response=response
+                )
             )
         except Exception as e:
             raise HTTPException(
@@ -311,7 +326,11 @@ def execute_session_start(
     )
 
 
-@router.post("/universe-setup", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
+@router.post(
+    "/universe-setup",
+    dependencies=[Depends(require_admin)],
+    response_model=BatchQueueResponse,
+)
 @inject
 def execute_universe_setup(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -358,7 +377,9 @@ def execute_universe_setup(
                 message_deduplication_id=deduplication_id,
             )
             responses.append(
-                BatchJobResult(job=job["description"], status="queued", response=response)
+                BatchJobResult(
+                    job=job["description"], status="queued", response=response
+                )
             )
         except Exception as e:
             raise HTTPException(
@@ -370,7 +391,11 @@ def execute_universe_setup(
     )
 
 
-@router.post("/session-close", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
+@router.post(
+    "/session-close",
+    dependencies=[Depends(require_admin)],
+    response_model=BatchQueueResponse,
+)
 @inject
 def execute_session_close(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -412,7 +437,9 @@ def execute_session_close(
                 message_deduplication_id=deduplication_id,
             )
             responses.append(
-                BatchJobResult(job=job["description"], status="queued", response=response)
+                BatchJobResult(
+                    job=job["description"], status="queued", response=response
+                )
             )
         except Exception as e:
             raise HTTPException(
@@ -429,7 +456,11 @@ def execute_session_close(
 # ====================================================================================
 
 
-@router.get("/jobs/status", dependencies=[Depends(require_admin)], response_model=BatchJobsStatusResponse)
+@router.get(
+    "/jobs/status",
+    dependencies=[Depends(require_admin)],
+    response_model=BatchJobsStatusResponse,
+)
 @inject
 def get_batch_jobs_status(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -466,7 +497,8 @@ def get_batch_jobs_status(
                         queue_attributes.ApproximateNumberOfMessagesDelayed or "0"
                     ),
                     created_timestamp=queue_attributes.CreatedTimestamp or "",
-                    last_modified_timestamp=queue_attributes.LastModifiedTimestamp or "",
+                    last_modified_timestamp=queue_attributes.LastModifiedTimestamp
+                    or "",
                 ),
                 batch_schedule_info=BatchScheduleInfo(
                     morning_batch_time="06:00 KST (±30min tolerance)",

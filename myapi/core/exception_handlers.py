@@ -20,7 +20,7 @@ def _request_context(request: Request) -> Dict[str, Any]:
     }
 
 
-async def handle_base_api_exception(request: Request, exc: BaseAPIException):
+async def handle_base_api_exception(request, exc):
     ctx = _request_context(request)
     logger.warning(
         f"[BaseAPIException] {ctx['method']} {ctx['url']} from {ctx['client']} -> {exc.status_code}: {exc.detail}"
@@ -28,7 +28,7 @@ async def handle_base_api_exception(request: Request, exc: BaseAPIException):
     return JSONResponse(status_code=exc.status_code, content=exc.detail)  # type: ignore[arg-type]
 
 
-async def handle_http_exception(request: Request, exc: StarletteHTTPException):
+async def handle_http_exception(request, exc):
     ctx = _request_context(request)
     logger.warning(
         f"[HTTPException] {ctx['method']} {ctx['url']} from {ctx['client']} -> {exc.status_code}: {exc.detail}"
@@ -48,7 +48,7 @@ async def handle_http_exception(request: Request, exc: StarletteHTTPException):
     return JSONResponse(status_code=exc.status_code, content=content)
 
 
-async def handle_validation_error(request: Request, exc: RequestValidationError):
+async def handle_validation_error(request, exc):
     ctx = _request_context(request)
     logger.warning(
         f"[ValidationError] {ctx['method']} {ctx['url']} from {ctx['client']} -> 422: {exc.errors()}"
@@ -64,11 +64,10 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
     return JSONResponse(status_code=422, content=content)
 
 
-async def handle_unexpected_error(request: Request, exc: Exception):
+async def handle_unexpected_error(request, exc):
     ctx = _request_context(request)
     logger.exception(
         f"[Unhandled Error] {ctx['method']} {ctx['url']} from {ctx['client']}"
     )
     internal = InternalServerError()
     return JSONResponse(status_code=internal.status_code, content=internal.detail)  # type: ignore[arg-type]
-

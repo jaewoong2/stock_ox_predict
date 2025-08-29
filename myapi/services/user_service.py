@@ -239,6 +239,8 @@ class UserService:
         points_earned_today = self.point_service.get_user_points_earned_today(
             user_id, today
         )
+
+        # TODO: 예측가능 여부는 Slot 관련임, point 기준이 아님.
         return UserFinancialSummary(
             user_id=user_id,
             current_balance=balance.balance,

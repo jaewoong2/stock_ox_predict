@@ -74,9 +74,9 @@ def create_app() -> FastAPI:
     app.include_router(admin_router.router, prefix=settings.API_V1_STR)
 
     # Exception handlers (last so they apply globally)
-    # app.add_exception_handler(BaseAPIException, handle_base_api_exception)
-    # app.add_exception_handler(StarletteHTTPException, handle_http_exception)
-    # app.add_exception_handler(RequestValidationError, handle_validation_error)
+    app.add_exception_handler(BaseAPIException, handle_base_api_exception)
+    app.add_exception_handler(StarletteHTTPException, handle_http_exception)
+    app.add_exception_handler(RequestValidationError, handle_validation_error)
     app.add_exception_handler(Exception, handle_unexpected_error)
 
     return app
