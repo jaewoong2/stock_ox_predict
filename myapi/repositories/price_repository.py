@@ -5,9 +5,11 @@ EOD 가격 데이터 리포지토리
 Yahoo Finance API로 수집된 가격 데이터의 저장, 조회, 업데이트를 처리합니다.
 """
 
+from decimal import Decimal
 from typing import List, Optional
-from sqlalchemy.orm import Session
+
 from sqlalchemy import and_, desc, func
+from sqlalchemy.orm import Session
 from datetime import date, datetime
 
 from myapi.models.price import EODPrice as EODPriceModel
@@ -75,9 +77,13 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
             저장된 EOD 가격 스키마 또는 None
         """
         try:
+            # float를 Decimal로 변환하여 계산 정확도 보장
+            close_price_d = Decimal(str(close_price))
+            previous_close_d = Decimal(str(previous_close))
+
             # 변동액 및 변동률 계산
-            change_amount = close_price - previous_close
-            change_percent = (change_amount / previous_close * 100) if previous_close != 0 else 0
+            change_amount = close_price_d - previous_close_d
+            change_percent = (change_amount / previous_close_d * Decimal('100')) if previous_close_d != Decimal('0') else Decimal('0')
             
             # 기존 데이터 확인
             existing = self.db.query(self.model_class).filter(
@@ -89,11 +95,11 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
             
             if existing:
                 # 기존 데이터 업데이트
-                existing.open_price = open_price
-                existing.high_price = high_price
-                existing.low_price = low_price
-                existing.close_price = close_price
-                existing.previous_close = previous_close
+                existing.open_price = Decimal(str(open_price))
+                existing.high_price = Decimal(str(high_price))
+                existing.low_price = Decimal(str(low_price))
+                existing.close_price = close_price_d
+                existing.previous_close = previous_close_d
                 existing.change_amount = change_amount
                 existing.change_percent = change_percent
                 existing.volume = volume
@@ -108,11 +114,11 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
                 new_price = self.model_class(
                     symbol=symbol,
                     trading_date=trading_date,
-                    open_price=open_price,
-                    high_price=high_price,
-                    low_price=low_price,
-                    close_price=close_price,
-                    previous_close=previous_close,
+                    open_price=Decimal(str(open_price)),
+                    high_price=Decimal(str(high_price)),
+                    low_price=Decimal(str(low_price)),
+                    close_price=close_price_d,
+                    previous_close=previous_close_d,
                     change_amount=change_amount,
                     change_percent=change_percent,
                     volume=volume,

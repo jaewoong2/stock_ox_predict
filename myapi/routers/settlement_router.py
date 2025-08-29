@@ -22,9 +22,7 @@ public_router = APIRouter(prefix="/settlement", tags=["settlement-public"])
 @inject
 async def settle_day(
     trading_day: str,
-    _current_user: UserSchema = Depends(
-        require_admin
-    ),  # Admin authentication required
+    _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
     settlement_service: SettlementService = Depends(
         Provide[Container.services.settlement_service]
     ),
@@ -52,9 +50,7 @@ async def settle_day(
 @inject
 async def get_settlement_summary(
     trading_day: str,
-    _current_user: UserSchema = Depends(
-        require_admin
-    ),  # Admin authentication required
+    _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
     settlement_service: SettlementService = Depends(
         Provide[Container.services.settlement_service]
     ),
@@ -85,9 +81,7 @@ async def manual_settle_symbol(
     symbol: str,
     correct_choice: PredictionChoice,
     override_price_validation: bool = False,
-    _current_user: UserSchema = Depends(
-        require_admin
-    ),  # Admin authentication required
+    _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
     settlement_service: SettlementService = Depends(
         Provide[Container.services.settlement_service]
     ),
@@ -116,6 +110,7 @@ async def manual_settle_symbol(
 # ============================================================================
 # 정산 상태 조회 API - 일반 사용자도 접근 가능 (읽기 전용)
 # ============================================================================
+
 
 @public_router.get("/status/{trading_day}", response_model=BaseResponse)
 @inject
@@ -149,11 +144,14 @@ async def get_settlement_status(
 # 정산 재시도 API - 관리자 전용
 # ============================================================================
 
+
 @router.post("/retry/{trading_day}", response_model=BaseResponse)
 @inject
 async def retry_settlement(
     trading_day: str,
-    symbols: Optional[List[str]] = Query(None, description="재시도할 종목 목록 (없으면 모든 PENDING 종목)"),
+    symbols: Optional[List[str]] = Query(
+        None, description="재시도할 종목 목록 (없으면 모든 PENDING 종목)"
+    ),
     _current_user: UserSchema = Depends(require_admin),  # 관리자 권한 필요
     settlement_service: SettlementService = Depends(
         Provide[Container.services.settlement_service]
@@ -162,7 +160,7 @@ async def retry_settlement(
     """실패했거나 PENDING 상태인 예측들의 정산을 재시도합니다. (관리자 전용)"""
     try:
         day = date.fromisoformat(trading_day)
-        retry_result = await settlement_service.retry_settlement(day, symbols)
+        retry_result = await settlement_service.retry_settlement(day, symbols or [])
         return BaseResponse(success=True, data={"retry_result": retry_result})
     except ValueError:
         return BaseResponse(

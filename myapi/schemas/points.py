@@ -92,3 +92,46 @@ class PointsIntegrityCheckResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DailyPointsIntegrityResponse(BaseModel):
+    trading_day: str = Field(..., description="검증 대상 날짜")
+    verification_time: str = Field(..., description="검증 시간 ISO8601")
+    total_transactions: int = Field(..., description="총 거래 건수")
+    total_points_delta: int = Field(..., description="총 포인트 변동량")
+    total_points_awarded: int = Field(..., description="총 지급 포인트")
+    total_points_deducted: int = Field(..., description="총 차감 포인트")
+    prediction_award_count: int = Field(..., description="예측 보상 건수")
+    prediction_points_total: int = Field(..., description="예측 보상 포인트 합계")
+    status: str = Field(..., description="검증 상태")
+
+    class Config:
+        from_attributes = True
+
+
+class PointsEarnedResponse(BaseModel):
+    user_id: int
+    trading_day: str
+    points_earned: int
+
+    class Config:
+        from_attributes = True
+
+
+class DailyPointsStatsResponse(BaseModel):
+    trading_day: str
+    total_points_awarded: int
+
+    class Config:
+        from_attributes = True
+
+
+class AffordabilityResponse(BaseModel):
+    user_id: int
+    amount: int
+    can_afford: bool
+    current_balance: int
+    shortfall: int
+
+    class Config:
+        from_attributes = True

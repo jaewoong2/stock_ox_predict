@@ -1,10 +1,36 @@
 import json
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Dict
 
 import boto3
 from fastapi import HTTPException
 
 from myapi.config import Settings
+from pydantic import BaseModel
+
+
+class SecretPayload(BaseModel):
+    data: Dict[str, Any]
+
+
+class SQSQueueAttributes(BaseModel):
+    ApproximateNumberOfMessages: Optional[str] = None
+    ApproximateNumberOfMessagesNotVisible: Optional[str] = None
+    ApproximateNumberOfMessagesDelayed: Optional[str] = None
+    CreatedTimestamp: Optional[str] = None
+    LastModifiedTimestamp: Optional[str] = None
+    VisibilityTimeout: Optional[str] = None
+
+
+class LambdaProxyMessage(BaseModel):
+    body: Optional[str | Dict[str, Any]]
+    resource: str
+    path: str
+    httpMethod: Literal["GET", "POST", "PUT", "DELETE"]
+    isBase64Encoded: bool
+    pathParameters: Dict[str, Any]
+    queryStringParameters: Dict[str, Any]
+    headers: Dict[str, Any]
+    requestContext: Dict[str, Any]
 
 
 SECRET_NAME = "kakao/tokens"
@@ -26,12 +52,12 @@ class AwsService:
             )
         return boto3.client(service, region_name=self.region_name)
 
-    def get_secret(self) -> dict:
+    def get_secret(self) -> SecretPayload:
         client = self._client("secretsmanager")
         try:
             response = client.get_secret_value(SecretId=SECRET_NAME)
             secret_string = response.get("SecretString")
-            return json.loads(secret_string) if secret_string else {}
+            return SecretPayload(data=(json.loads(secret_string) if secret_string else {}))
         except client.exceptions.ResourceNotFoundException:
             raise HTTPException(status_code=404, detail="Secret not found")
         except Exception as e:
@@ -39,13 +65,13 @@ class AwsService:
                 status_code=500, detail=f"Error retrieving secret: {str(e)}"
             )
 
-    def update_secret(self, updated_data: dict) -> dict:
+    def update_secret(self, updated_data: dict) -> SecretPayload:
         client = self._client("secretsmanager")
         try:
-            response = client.put_secret_value(
+            client.put_secret_value(
                 SecretId=SECRET_NAME, SecretString=json.dumps(updated_data)
             )
-            return response
+            return SecretPayload(data=updated_data)
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Error updating secret: {str(e)}"
@@ -66,7 +92,7 @@ class AwsService:
         message_group_id: str,
         message_deduplication_id: Optional[str] = None,
         delay_seconds: int = 0,
-    ) -> dict:
+    ) -> Dict[str, Any]:
         sqs = self._client("sqs")
         params = {
             "QueueUrl": queue_url,
@@ -86,7 +112,7 @@ class AwsService:
 
     def send_sqs_message(
         self, queue_url: str, message_body: str, delay_seconds: int = 0
-    ) -> dict:
+    ) -> Dict[str, Any]:
         sqs = self._client("sqs")
         params = {"QueueUrl": queue_url, "MessageBody": message_body}
         if delay_seconds > 0:
@@ -105,16 +131,18 @@ class AwsService:
         method: Literal["GET", "POST", "PUT", "DELETE"],
         query_string_parameters: Optional[dict] = None,
         auth_token: Optional[str] = "",
-    ) -> dict:
-        result = {
-            "body": body,
-            "resource": "/{proxy+}",
-            "path": f"/{path}",
-            "httpMethod": method,
-            "isBase64Encoded": False,
-            "pathParameters": {"proxy": path},
-            "queryStringParameters": query_string_parameters,
-            "headers": {
+    ) -> LambdaProxyMessage:
+        qsp = query_string_parameters or {}
+        body_value: Optional[str | Dict[str, Any]] = None if method == "GET" else body
+        return LambdaProxyMessage(
+            body=body_value,
+            resource="/{proxy+}",
+            path=f"/{path}",
+            httpMethod=method,
+            isBase64Encoded=False,
+            pathParameters={"proxy": path},
+            queryStringParameters=qsp,
+            headers={
                 "Content-Type": "application/json; charset=utf-8",
                 "Accept": "*/*",
                 "Accept-Encoding": "gzip, deflate, sdch",
@@ -122,14 +150,38 @@ class AwsService:
                 "Accept-Charset": "utf-8",
                 "Authorization": f"Bearer {auth_token}",
             },
-            "requestContext": {
+            requestContext={
                 "path": f"/{path}",
                 "resourcePath": "/{proxy+}",
                 "httpMethod": method,
             },
-        }
-        if query_string_parameters is None:
-            result["queryStringParameters"] = {}
-        if method == "GET":
-            result["body"] = None
-        return result
+        )
+
+    def get_sqs_queue_attributes(self, queue_url: str) -> SQSQueueAttributes:
+        """Fetch selected SQS queue attributes quickly.
+
+        Requests only the attributes used by callers to minimize overhead.
+        """
+        sqs = self._client("sqs")
+        attribute_names = [
+            "ApproximateNumberOfMessages",
+            "ApproximateNumberOfMessagesNotVisible",
+            "ApproximateNumberOfMessagesDelayed",
+            "CreatedTimestamp",
+            "LastModifiedTimestamp",
+            "VisibilityTimeout",
+        ]
+        try:
+            resp = sqs.get_queue_attributes(
+                QueueUrl=queue_url, AttributeNames=attribute_names
+            )
+            attrs = resp.get("Attributes", {})
+            return SQSQueueAttributes(**attrs)
+        except getattr(sqs, "exceptions", object()).__dict__.get(
+            "QueueDoesNotExist", Exception
+        ) as _:
+            raise HTTPException(status_code=404, detail="SQS queue not found")
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Error fetching SQS queue attributes: {str(e)}"
+            )

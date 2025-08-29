@@ -13,7 +13,8 @@ def setup_logging(log_level: str = "INFO"):
             },
             "json": {
                 "class": "pythonjsonlogger.jsonlogger.JsonFormatter",
-                "format": "%(asctime)s %(name)s %(levelname)s %(message)s %(pathname)s %(lineno)d",
+                # Include exc_info to capture full traceback in error logs
+                "format": "%(asctime)s %(name)s %(levelname)s %(message)s %(pathname)s %(lineno)d %(exc_info)s",
             },
         },
         "handlers": {

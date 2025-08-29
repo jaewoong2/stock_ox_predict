@@ -10,6 +10,7 @@ from myapi.schemas.user import User as UserSchema
 from myapi.services.reward_service import RewardService
 from myapi.containers import Container
 from myapi.schemas.rewards import (
+    DeleteResultResponse,
     RewardCatalogResponse,
     RewardItem,
     RewardRedemptionRequest,
@@ -18,6 +19,7 @@ from myapi.schemas.rewards import (
     AdminRewardCreateRequest,
     AdminStockUpdateRequest,
     RewardsInventoryResponse,
+    AdminRewardsStatsResponse,
 )
 from myapi.core.exceptions import (
     ValidationError,
@@ -169,20 +171,22 @@ async def update_reward_stock(
         raise HTTPException(status_code=500, detail="Failed to update reward stock")
 
 
-@router.delete("/admin/items/{sku}")
+@router.delete("/admin/items/{sku}", response_model=DeleteResultResponse)
 @inject
 async def delete_reward_item(
     sku: str = Path(..., description="삭제할 리워드 SKU"),
     current_user: UserSchema = Depends(require_admin),
     reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
-) -> dict:
+) -> DeleteResultResponse:
     """리워드 아이템 삭제 (관리자 전용)
 
     리워드 상품을 삭제합니다. 진행 중인 교환이 있으면 삭제할 수 없습니다.
     """
     try:
         success = reward_service.delete_reward_item(sku)
-        return {"success": success, "message": f"Reward '{sku}' deleted successfully"}
+        return DeleteResultResponse(
+            success=success, message=f"Reward '{sku}' deleted successfully"
+        )
     except ValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -190,12 +194,12 @@ async def delete_reward_item(
         raise HTTPException(status_code=500, detail="Failed to delete reward item")
 
 
-@router.get("/admin/stats")
+@router.get("/admin/stats", response_model=AdminRewardsStatsResponse)
 @inject
 async def get_admin_stats(
     current_user: UserSchema = Depends(require_admin),
     reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
-) -> dict:
+) -> AdminRewardsStatsResponse:
     """관리자용 리워드 통계
 
     리워드 인벤토리 요약과 교환 통계를 조회합니다.
@@ -204,7 +208,9 @@ async def get_admin_stats(
         inventory_summary = reward_service.get_inventory_summary()
         redemption_stats = reward_service.get_redemption_stats()
 
-        return {"inventory": inventory_summary, "redemptions": redemption_stats}
+        return AdminRewardsStatsResponse(
+            inventory=inventory_summary, redemptions=redemption_stats
+        )
     except Exception as e:
         logger.error(f"Failed to get admin stats: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve statistics")
@@ -231,7 +237,18 @@ async def get_pending_redemptions(
         )
 
 
-@router.put("/admin/redemptions/{redemption_id}/status")
+from pydantic import BaseModel
+
+
+class UpdateRedemptionStatusResponse(BaseModel):
+    success: bool
+    message: str
+
+
+@router.put(
+    "/admin/redemptions/{redemption_id}/status",
+    response_model=UpdateRedemptionStatusResponse,
+)
 @inject
 async def update_redemption_status(
     redemption_id: int = Path(..., description="교환 요청 ID"),
@@ -239,7 +256,7 @@ async def update_redemption_status(
     vendor_code: Optional[str] = Query(None, description="벤더 코드 (발급 완료시)"),
     current_user: UserSchema = Depends(require_admin),
     reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
-) -> dict:
+) -> UpdateRedemptionStatusResponse:
     """교환 요청 상태 업데이트 (관리자 전용)
 
     교환 요청의 상태를 수동으로 업데이트합니다.
@@ -251,10 +268,10 @@ async def update_redemption_status(
             vendor_code=vendor_code or "",
         )
 
-        return {
-            "success": success,
-            "message": f"Redemption {redemption_id} status updated to {new_status}",
-        }
+        return UpdateRedemptionStatusResponse(
+            success=success,
+            message=f"Redemption {redemption_id} status updated to {new_status}",
+        )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValidationError as e:

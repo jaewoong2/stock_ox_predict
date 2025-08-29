@@ -21,6 +21,7 @@ from myapi.schemas.price import (
     EODCollectionResult,
     EODCollectionDetail,
 )
+from myapi.services.error_log_service import ErrorLogService
 
 
 class PriceService:
@@ -30,6 +31,7 @@ class PriceService:
         self.db = db
         self.universe_repo = ActiveUniverseRepository(db)
         self.price_repo = PriceRepository(db)
+        self.error_log_service = ErrorLogService(db)
         self.current_price_cache = {}
         self.eod_price_cache = {}
         self.cache_ttl = timedelta(seconds=60)  # 60초 TTL
@@ -59,6 +61,12 @@ class PriceService:
             self.current_price_cache[symbol] = (price_data, now)
             return price_data
         except Exception as e:
+            # 실시간 가격 조회 실패 에러 로깅
+            self.error_log_service.log_api_error(
+                api_endpoint=f"yfinance.Ticker({symbol}).info",
+                error_message=str(e),
+                trading_day=date.today()
+            )
             raise ServiceException(
                 f"Failed to fetch current price for {symbol}: {str(e)}"
             )
@@ -83,6 +91,15 @@ class PriceService:
         valid_prices = [price for price in prices if isinstance(price, StockPrice)]
 
         if not valid_prices:
+            # 유니버스 전체 가격 조회 실패 에러 로깅
+            failed_symbols = [universe_item.symbol for universe_item in universe_symbols]
+            self.error_log_service.log_eod_fetch_error(
+                trading_day=trading_day,
+                provider="yfinance",
+                failed_symbols=failed_symbols,
+                error_message="Failed to fetch any valid current prices for universe",
+                retry_count=0
+            )
             raise ServiceException("Failed to fetch any valid prices")
 
         return UniversePriceResponse(
@@ -123,6 +140,14 @@ class PriceService:
             self.eod_price_cache[cache_key] = price_data
             return price_data
         except Exception as e:
+            # EOD 가격 조회 실패 에러 로깅
+            self.error_log_service.log_eod_fetch_error(
+                trading_day=trading_day,
+                provider="yfinance",
+                failed_symbols=[symbol],
+                error_message=str(e),
+                retry_count=0
+            )
             raise ServiceException(
                 f"Failed to fetch EOD price for {symbol} on {trading_day}: {str(e)}"
             )
@@ -435,6 +460,15 @@ class PriceService:
                 detail.success = False
                 detail.error_message = str(e)
                 failed_collections += 1
+                
+                # EOD 데이터 수집 실패 에러 로깅
+                self.error_log_service.log_eod_fetch_error(
+                    trading_day=trading_day,
+                    provider="yfinance",
+                    failed_symbols=[symbol],
+                    error_message=str(e),
+                    retry_count=0
+                )
 
             collection_details.append(detail)
 

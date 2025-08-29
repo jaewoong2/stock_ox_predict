@@ -63,6 +63,49 @@ graph TD
     E --> F[신규 가입자 1000포인트 지급]
 ```
 
+```
+  실제 API 엔드포인트:
+
+  | 플로우 단계        | API 엔드포인트                                  | 파일 위치              | 상태    |
+  |----------------|-----------------------------------------------|----------------------|-------|
+  | OAuth 인증 시작   | GET /auth/oauth/{provider}/authorize         | auth_router.py:30    | ✅ 완벽 |
+  | OAuth 콜백 처리   | GET /auth/oauth/{provider}/callback          | auth_router.py:90    | ✅ 완벽 |
+  | 프로그램 콜백 API  | POST /auth/oauth/callback                    | auth_router.py:154   | ✅ 완벽 |
+  | JWT 토큰 갱신    | POST /auth/token/refresh                     | auth_router.py:191   | ✅ 완벽 |
+  | 로그아웃         | POST /auth/logout                            | auth_router.py:224   | ✅ 완벽 |
+  | **신규 가입 보너스** | **1000포인트 자동 지급** (OAuth 콜백 내부 처리)     | auth_service.py:141  | ✅ **신규** |
+  | **사용자 생성**    | **OAuth 사용자 생성** (멱등성 보장)              | user_repository.py   | ✅ **신규** |
+  | **닉네임 중복처리** | **자동 중복 해결** (name_1, name_2...)        | auth_service.py:122  | ✅ **신규** |
+
+#### 4.1.2 사용자 관리 API (User Router)
+```
+  사용자 프로필 관리 및 포인트 연동 API:
+
+  | 기능 분류           | API 엔드포인트                               | 파일 위치                | 상태    |
+  |------------------|---------------------------------------------|------------------------|-------|
+  | **내 프로필 조회**    | GET /users/me                              | user_router.py:22      | ✅ 완벽 |
+  | **내 프로필 수정**    | PUT /users/me                              | user_router.py:45      | ✅ 완벽 |
+  | **사용자 조회**      | GET /users/{user_id}                       | user_router.py:81      | ✅ 완벽 |
+  | **사용자 목록**      | GET /users/                                | user_router.py:118     | ✅ 완벽 |
+  | **닉네임 검색**      | GET /users/search/nickname?q={nickname}    | user_router.py:154     | ✅ 완벽 |
+  | **계정 비활성화**     | DELETE /users/me                           | user_router.py:269     | ✅ 완벽 |
+  | **이메일 중복확인**   | POST /users/validate/email                 | user_router.py:221     | ✅ 완벽 |
+  | **닉네임 중복확인**   | POST /users/validate/nickname              | user_router.py:244     | ✅ 완벽 |
+  | **사용자 통계**      | GET /users/stats/overview                  | user_router.py:194     | ✅ **관리자** |
+
+#### 4.1.3 포인트 연동 API (User + Points)
+```
+  사용자별 포인트 관리 API:
+
+  | 기능 분류           | API 엔드포인트                               | 파일 위치                | 상태    |
+  |------------------|---------------------------------------------|------------------------|-------|
+  | **내 포인트 잔액**    | GET /users/me/points/balance               | user_router.py:303     | ✅ 완벽 |
+  | **내 포인트 내역**    | GET /users/me/points/ledger                | user_router.py:324     | ✅ 완벽 |
+  | **프로필+포인트**     | GET /users/me/profile-with-points          | user_router.py:355     | ✅ 완벽 |
+  | **재정 요약**       | GET /users/me/financial-summary            | user_router.py:374     | ✅ 완벽 |
+  | **지불 가능 여부**    | GET /users/me/can-afford/{amount}          | user_router.py:393     | ✅ 완벽 |
+```
+
 #### 4.2 일일 예측 참여 플로우
 ```mermaid
 graph TD
@@ -120,7 +163,6 @@ graph TD
 graph TD
     A[리워드 카탈로그 조회] --> B[원하는 상품 선택]
     B --> C{포인트 잔액 확인}
-    C -->|부족| D[광고 시청 유도]
     C -->|충분| E[포인트 차감 및 교환 요청]
     E --> F[외부 벤더 발급 요청]
     F --> G{발급 성공}

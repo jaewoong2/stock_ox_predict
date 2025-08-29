@@ -2,6 +2,7 @@ import httpx
 from urllib.parse import urlencode
 from myapi.config import settings
 from myapi.core.exceptions import OAuthError
+from myapi.schemas.oauth import OAuthTokenResponse, OAuthUserInfo
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ class GoogleOAuthProvider:
         }
         return f"{self.auth_url}?{urlencode(params)}"
 
-    async def get_access_token(self, code: str, redirect_uri: str) -> dict:
+    async def get_access_token(self, code: str, redirect_uri: str) -> OAuthTokenResponse:
         """Exchange authorization code for access token"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -49,7 +50,10 @@ class GoogleOAuthProvider:
                     logger.error(f"Google token exchange failed: {response.text}")
                     raise OAuthError("Failed to exchange authorization code")
 
-                return response.json()
+                data = response.json()
+                if "access_token" not in data:
+                    raise OAuthError("Invalid token response from provider")
+                return OAuthTokenResponse(**data, raw=data)
         except httpx.TimeoutException:
             logger.error("Google OAuth token exchange timeout")
             raise OAuthError("OAuth provider timeout")
@@ -57,7 +61,7 @@ class GoogleOAuthProvider:
             logger.error(f"Google OAuth error: {str(e)}")
             raise OAuthError("OAuth provider error")
 
-    async def get_user_info(self, access_token: str) -> dict:
+    async def get_user_info(self, access_token: str) -> OAuthUserInfo:
         """Get user information from Google"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -76,7 +80,13 @@ class GoogleOAuthProvider:
                 if not user_data.get("email"):
                     raise OAuthError("Email not provided by OAuth provider")
 
-                return user_data
+                return OAuthUserInfo(
+                    id=str(user_data.get("id", "")),
+                    email=user_data.get("email"),
+                    name=user_data.get("name") or user_data.get("given_name"),
+                    picture=user_data.get("picture"),
+                    verified_email=user_data.get("verified_email"),
+                )
         except httpx.TimeoutException:
             logger.error("Google OAuth user info fetch timeout")
             raise OAuthError("OAuth provider timeout")

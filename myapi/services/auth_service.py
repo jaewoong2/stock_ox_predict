@@ -10,6 +10,7 @@ from myapi.repositories.user_repository import UserRepository
 from myapi.services.point_service import PointService
 from myapi.providers.oauth.google import GoogleOAuthProvider
 from myapi.providers.oauth.kakao import KakaoOAuthProvider
+from myapi.schemas.oauth import OAuthTokenResponse, OAuthUserInfo
 from myapi.schemas.auth import (
     Token,
     TokenData,
@@ -50,18 +51,20 @@ class AuthService:
         try:
             # 1. 액세스 토큰 교환
             if callback_data.provider == "google":
-                token_response = await self.google_oauth.get_access_token(
-                    callback_data.code, callback_data.redirect_uri
+                token_response: OAuthTokenResponse = (
+                    await self.google_oauth.get_access_token(
+                        callback_data.code, callback_data.redirect_uri
+                    )
                 )
-                user_info = await self.google_oauth.get_user_info(
-                    token_response["access_token"]
+                user_info: OAuthUserInfo = await self.google_oauth.get_user_info(
+                    token_response.access_token
                 )
             elif callback_data.provider == "kakao":
                 token_response = await self.kakao_oauth.get_access_token(
                     callback_data.code, callback_data.redirect_uri
                 )
                 user_info = await self.kakao_oauth.get_user_info(
-                    token_response["access_token"]
+                    token_response.access_token
                 )
             else:
                 raise OAuthError(
@@ -69,9 +72,9 @@ class AuthService:
                 )
 
             # 2. 사용자 정보 추출
-            email = user_info.get("email")
-            provider_id = str(user_info.get("id"))
-            name = user_info.get("name", "")
+            email = user_info.email
+            provider_id = str(user_info.id)
+            name = user_info.name or ""
 
             if not email or not provider_id:
                 raise OAuthError("Required user information not provided")

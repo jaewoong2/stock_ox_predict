@@ -93,3 +93,29 @@ class USMarketHours:
         while not cls.is_us_trading_day(next_day):
             next_day += timedelta(days=1)
         return next_day
+
+    @classmethod
+    def get_market_status(cls, check_date: date):
+        """특정 날짜의 시장 상태 정보를 반환합니다."""
+        from myapi.schemas.market import MarketStatusResponse
+        is_trading_day = cls.is_us_trading_day(check_date)
+        current_kst = cls.get_current_kst_time()
+        
+        if not is_trading_day:
+            if check_date.weekday() >= 5:
+                message = f"{check_date.strftime('%Y-%m-%d')} is weekend (No trading)"
+            else:
+                message = f"{check_date.strftime('%Y-%m-%d')} is US holiday (No trading)"
+        else:
+            # 거래일인 경우 예측 가능 시간대인지 확인
+            if cls.is_prediction_window():
+                message = f"{check_date.strftime('%Y-%m-%d')} is trading day (Predictions open)"
+            else:
+                message = f"{check_date.strftime('%Y-%m-%d')} is trading day (Predictions closed)"
+        
+        return MarketStatusResponse(
+            is_trading_day=is_trading_day,
+            message=message,
+            current_kst=current_kst.strftime("%Y-%m-%d %H:%M:%S"),
+            is_prediction_window=cls.is_prediction_window() if is_trading_day else False,
+        )

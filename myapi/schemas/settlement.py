@@ -1,7 +1,8 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from decimal import Decimal
-from typing import List, Dict, Any, Annotated
+from typing import List, Dict, Any, Annotated, Optional
 from enum import Enum
+from datetime import datetime
 
 
 class OutcomeType(str, Enum):
@@ -78,17 +79,86 @@ class SettlementResponse(BaseModel):
         from_attributes = True
 
 
+class SymbolSettlementResult(BaseModel):
+    symbol: str
+    status: str
+    reason: Optional[str] = None
+    processed_count: int
+    correct_count: int
+    price_movement: Optional[str] = None
+    settlement_price: Optional[float] = None
+    change_percent: Optional[float] = None
+    accuracy_rate: Optional[float] = 0
+
+
+class DailySettlementResult(BaseModel):
+    trading_day: str
+    settlement_completed_at: datetime
+    total_predictions_processed: int
+    total_correct_predictions: int
+    accuracy_rate: float
+    symbol_results: List[SymbolSettlementResult]
+
+
+class SymbolWiseStats(BaseModel):
+    symbol: str
+    total_predictions: int
+    correct_predictions: int
+    incorrect_predictions: int
+    void_predictions: int
+    accuracy_rate: float
+
+
 class SettlementSummary(BaseModel):
     trading_day: str
-    total_symbols: int
-    completed_settlements: int
-    pending_settlements: int
-    failed_settlements: int
     total_predictions: int
-    total_correct: int
-    total_incorrect: int
+    correct_predictions: int
+    incorrect_predictions: int
+    void_predictions: int
+    pending_predictions: int
+    overall_accuracy: float
+    settlement_status: str
+    symbol_statistics: List[SymbolWiseStats]
+
+
+class ManualSettlementResult(BaseModel):
+    symbol: str
+    trading_day: str
+    manual_settlement: bool
+    correct_choice: str
+    total_predictions: int
+    correct_predictions: int
     accuracy_rate: float
-    total_points_awarded: int
+
+
+class SettlementStatusResponse(BaseModel):
+    trading_day: str
+    status: str
+    message: Optional[str] = None
+    total_symbols: int
+    pending_symbols: int
+    completed_symbols: int
+    failed_symbols: int
+    progress_percentage: float
+    last_updated: Optional[datetime] = None
+
+
+class SettlementRetryResultItem(BaseModel):
+    symbol: str
+    status: str
+    message: Optional[str] = None
+    processed_count: Optional[int] = None
+    correct_count: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class SettlementRetryResult(BaseModel):
+    trading_day: str
+    retry_completed_at: datetime
+    total_symbols_retried: int
+    successful_retries: int
+    failed_retries: int
+    results: List[SettlementRetryResultItem]
 
 
 class SettlementStats(BaseModel):

@@ -16,6 +16,8 @@ from myapi.schemas.rewards import (
     RewardRedemptionHistoryResponse,
     RewardsInventoryResponse,
     RewardsRedemptionResponse as RedemptionDetailResponse,
+    InventorySummary,
+    RedemptionStats,
 )
 from myapi.repositories.base import BaseRepository
 
@@ -545,7 +547,7 @@ class RewardsRepository(
 
         return [self._to_redemption_response(r) for r in redemptions]
 
-    def get_inventory_summary(self) -> dict:
+    def get_inventory_summary(self) -> InventorySummary:
         """재고 요약 조회"""
         total_items = self.db.query(func.count(RewardsInventoryModel.sku)).scalar()
         total_stock = self.db.query(func.sum(RewardsInventoryModel.stock)).scalar()
@@ -554,14 +556,14 @@ class RewardsRepository(
         ).scalar()
         available_stock = (total_stock or 0) - (total_reserved or 0)
 
-        return {
-            "total_items": total_items or 0,
-            "total_stock": total_stock or 0,
-            "total_reserved": total_reserved or 0,
-            "available_stock": available_stock,
-        }
+        return InventorySummary(
+            total_items=total_items or 0,
+            total_stock=total_stock or 0,
+            total_reserved=total_reserved or 0,
+            available_stock=available_stock,
+        )
 
-    def get_redemption_stats(self) -> dict:
+    def get_redemption_stats(self) -> RedemptionStats:
         """교환 통계 조회"""
         stats = self.db.query(
             func.count(RewardsRedemptionModel.id).label("total"),
@@ -593,21 +595,21 @@ class RewardsRepository(
         ).first()
 
         if not stats:
-            return {
-                "total_redemptions": 0,
-                "issued_redemptions": 0,
-                "pending_redemptions": 0,
-                "failed_redemptions": 0,
-                "total_points_spent": 0,
-            }
+            return RedemptionStats(
+                total_redemptions=0,
+                issued_redemptions=0,
+                pending_redemptions=0,
+                failed_redemptions=0,
+                total_points_spent=0,
+            )
 
-        return {
-            "total_redemptions": getattr(stats, "total", 0) or 0,
-            "issued_redemptions": getattr(stats, "issued", 0) or 0,
-            "pending_redemptions": getattr(stats, "pending", 0) or 0,
-            "failed_redemptions": getattr(stats, "failed", 0) or 0,
-            "total_points_spent": getattr(stats, "total_points_spent", 0) or 0,
-        }
+        return RedemptionStats(
+            total_redemptions=getattr(stats, "total", 0) or 0,
+            issued_redemptions=getattr(stats, "issued", 0) or 0,
+            pending_redemptions=getattr(stats, "pending", 0) or 0,
+            failed_redemptions=getattr(stats, "failed", 0) or 0,
+            total_points_spent=getattr(stats, "total_points_spent", 0) or 0,
+        )
 
     def delete_reward_item(self, sku: str) -> bool:
         """리워드 아이템 삭제 (관리자용)"""

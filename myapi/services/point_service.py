@@ -13,6 +13,7 @@ from myapi.schemas.points import (
     PointsTransactionResponse,
     AdminPointsAdjustmentRequest,
     PointsIntegrityCheckResponse,
+    DailyPointsIntegrityResponse,
 )
 import logging
 
@@ -407,7 +408,7 @@ class PointService:
             logger.error(f"Failed to check transaction existence: {str(e)}")
             raise ValidationError(f"Failed to check transaction existence: {str(e)}")
 
-    def verify_daily_integrity(self, trading_day: date) -> dict:
+    def verify_daily_integrity(self, trading_day: date) -> DailyPointsIntegrityResponse:
         """특정일 포인트 정합성 검증
         
         해당일 지급된 포인트와 예측 정답 수가 일치하는지 확인합니다.
@@ -447,29 +448,29 @@ class PointService:
             ).fetchone()
             
             if result:
-                return {
-                    "trading_day": trading_day.strftime("%Y-%m-%d"),
-                    "verification_time": datetime.now().isoformat(),
-                    "total_transactions": result.total_transactions,
-                    "total_points_delta": int(result.total_delta or 0),
-                    "total_points_awarded": int(result.total_awarded or 0),
-                    "total_points_deducted": int(result.total_deducted or 0),
-                    "prediction_award_count": result.prediction_awards,
-                    "prediction_points_total": int(result.prediction_points or 0),
-                    "status": "VERIFIED"
-                }
+                return DailyPointsIntegrityResponse(
+                    trading_day=trading_day.strftime("%Y-%m-%d"),
+                    verification_time=datetime.now().isoformat(),
+                    total_transactions=result.total_transactions,
+                    total_points_delta=int(result.total_delta or 0),
+                    total_points_awarded=int(result.total_awarded or 0),
+                    total_points_deducted=int(result.total_deducted or 0),
+                    prediction_award_count=result.prediction_awards,
+                    prediction_points_total=int(result.prediction_points or 0),
+                    status="VERIFIED",
+                )
             else:
-                return {
-                    "trading_day": trading_day.strftime("%Y-%m-%d"),
-                    "verification_time": datetime.now().isoformat(),
-                    "total_transactions": 0,
-                    "total_points_delta": 0,
-                    "total_points_awarded": 0,
-                    "total_points_deducted": 0,
-                    "prediction_award_count": 0,
-                    "prediction_points_total": 0,
-                    "status": "NO_DATA"
-                }
+                return DailyPointsIntegrityResponse(
+                    trading_day=trading_day.strftime("%Y-%m-%d"),
+                    verification_time=datetime.now().isoformat(),
+                    total_transactions=0,
+                    total_points_delta=0,
+                    total_points_awarded=0,
+                    total_points_deducted=0,
+                    prediction_award_count=0,
+                    prediction_points_total=0,
+                    status="NO_DATA",
+                )
                 
         except Exception as e:
             logger.error(f"Failed to verify daily integrity: {str(e)}")

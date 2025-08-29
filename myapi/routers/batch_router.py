@@ -6,6 +6,13 @@ from dependency_injector.wiring import inject, Provide
 
 from myapi.containers import Container
 from myapi.services.aws_service import AwsService
+from myapi.schemas.batch import (
+    BatchJobResult,
+    BatchQueueResponse,
+    BatchJobsStatusResponse,
+    BatchScheduleInfo,
+    QueueStatus,
+)
 from myapi.core.auth_middleware import require_admin
 from myapi.config import Settings
 from myapi.core.tickers import get_default_tickers
@@ -21,7 +28,7 @@ router = APIRouter(
 # ====================================================================================
 
 
-@router.post("/all-jobs", dependencies=[Depends(require_admin)])
+@router.post("/all-jobs", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
 @inject
 def execute_all_jobs(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -126,15 +133,14 @@ def execute_all_jobs(
 
     # 실행할 작업이 없는 경우
     if not all_jobs:
-        return {
-            "message": f"No jobs scheduled for current time ({current_hour:02d}:{current_minute:02d} KST). Jobs are scheduled for 06:00 (±30min) and 23:59 (±30min) KST.",
-            "current_time": f"{current_hour:02d}:{current_minute:02d} KST",
-            "scheduled_times": [
-                "06:00 ±30min (eod-collection, settlement, session-start, universe-setup)",
-                "23:59 ±30min (session-close)",
-            ],
-            "details": [],
-        }
+        return BatchQueueResponse(
+            message=(
+                f"No jobs scheduled for current time ({current_hour:02d}:{current_minute:02d} KST). "
+                "Jobs are scheduled for 06:00 (±30min) and 23:59 (±30min) KST."
+            ),
+            current_time=f"{current_hour:02d}:{current_minute:02d} KST",
+            details=[],
+        )
 
     # 작업을 sequence 순으로 정렬하여 순차 실행 보장
     sorted_jobs = sorted(all_jobs, key=lambda x: x.get("sequence", 999))
@@ -150,30 +156,30 @@ def execute_all_jobs(
             )
             response = aws_service.send_sqs_fifo_message(
                 queue_url=queue_url,
-                message_body=json.dumps(message_body),
+                message_body=json.dumps(message_body.model_dump()),
                 message_group_id=job["group_id"],
                 message_deduplication_id=job["deduplication_id"],
             )
             responses.append(
-                {
-                    "job": job["description"],
-                    "status": "queued",
-                    "sequence": job.get("sequence", 0),
-                    "response": response,
-                }
+                BatchJobResult(
+                    job=job["description"],
+                    status="queued",
+                    sequence=job.get("sequence", 0),
+                    response=response,
+                )
             )
         except Exception as e:
             responses.append(
-                {
-                    "job": job["description"],
-                    "status": "failed",
-                    "sequence": job.get("sequence", 0),
-                    "error": str(e),
-                }
+                BatchJobResult(
+                    job=job["description"],
+                    status="failed",
+                    sequence=job.get("sequence", 0),
+                    error=str(e),
+                )
             )
 
-    successful_jobs = [r for r in responses if r["status"] == "queued"]
-    failed_jobs = [r for r in responses if r["status"] == "failed"]
+    successful_jobs = [r for r in responses if r.status == "queued"]
+    failed_jobs = [r for r in responses if r.status == "failed"]
 
     if not successful_jobs:
         raise HTTPException(
@@ -184,14 +190,17 @@ def execute_all_jobs(
             },
         )
 
-    return {
-        "message": f"Daily batch jobs queued for {current_hour:02d}:{current_minute:02d} KST. Success: {len(successful_jobs)}, Failed: {len(failed_jobs)}",
-        "current_time": f"{current_hour:02d}:{current_minute:02d} KST",
-        "details": responses,
-    }
+    return BatchQueueResponse(
+        message=(
+            f"Daily batch jobs queued for {current_hour:02d}:{current_minute:02d} KST. "
+            f"Success: {len(successful_jobs)}, Failed: {len(failed_jobs)}"
+        ),
+        current_time=f"{current_hour:02d}:{current_minute:02d} KST",
+        details=responses,
+    )
 
 
-@router.post("/prediction-settlement", dependencies=[Depends(require_admin)])
+@router.post("/prediction-settlement", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
 @inject
 def execute_prediction_settlement(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -230,25 +239,25 @@ def execute_prediction_settlement(
 
             response = aws_service.send_sqs_fifo_message(
                 queue_url=queue_url,
-                message_body=json.dumps(message_body),
+                message_body=json.dumps(message_body.model_dump()),
                 message_group_id=job["group_id"],
                 message_deduplication_id=deduplication_id,
             )
             responses.append(
-                {"job": job["description"], "status": "queued", "response": response}
+                BatchJobResult(job=job["description"], status="queued", response=response)
             )
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to queue settlement job: {str(e)}"
             )
 
-    return {
-        "message": f"Prediction settlement for {yesterday} has been queued.",
-        "details": responses,
-    }
+    return BatchQueueResponse(
+        message=f"Prediction settlement for {yesterday} has been queued.",
+        details=responses,
+    )
 
 
-@router.post("/session-start", dependencies=[Depends(require_admin)])
+@router.post("/session-start", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
 @inject
 def execute_session_start(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -285,25 +294,24 @@ def execute_session_start(
 
             response = aws_service.send_sqs_fifo_message(
                 queue_url=queue_url,
-                message_body=json.dumps(message_body),
+                message_body=json.dumps(message_body.model_dump()),
                 message_group_id=job["group_id"],
                 message_deduplication_id=deduplication_id,
             )
             responses.append(
-                {"job": job["description"], "status": "queued", "response": response}
+                BatchJobResult(job=job["description"], status="queued", response=response)
             )
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to queue session start job: {str(e)}"
             )
 
-    return {
-        "message": "New prediction session start has been queued.",
-        "details": responses,
-    }
+    return BatchQueueResponse(
+        message="New prediction session start has been queued.", details=responses
+    )
 
 
-@router.post("/universe-setup", dependencies=[Depends(require_admin)])
+@router.post("/universe-setup", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
 @inject
 def execute_universe_setup(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -345,25 +353,24 @@ def execute_universe_setup(
 
             response = aws_service.send_sqs_fifo_message(
                 queue_url=queue_url,
-                message_body=json.dumps(message_body),
+                message_body=json.dumps(message_body.model_dump()),
                 message_group_id=job["group_id"],
                 message_deduplication_id=deduplication_id,
             )
             responses.append(
-                {"job": job["description"], "status": "queued", "response": response}
+                BatchJobResult(job=job["description"], status="queued", response=response)
             )
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to queue universe setup job: {str(e)}"
             )
 
-    return {
-        "message": f"Universe setup for {today} has been queued.",
-        "details": responses,
-    }
+    return BatchQueueResponse(
+        message=f"Universe setup for {today} has been queued.", details=responses
+    )
 
 
-@router.post("/session-close", dependencies=[Depends(require_admin)])
+@router.post("/session-close", dependencies=[Depends(require_admin)], response_model=BatchQueueResponse)
 @inject
 def execute_session_close(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -400,29 +407,29 @@ def execute_session_close(
 
             response = aws_service.send_sqs_fifo_message(
                 queue_url=queue_url,
-                message_body=json.dumps(message_body),
+                message_body=json.dumps(message_body.model_dump()),
                 message_group_id=job["group_id"],
                 message_deduplication_id=deduplication_id,
             )
             responses.append(
-                {"job": job["description"], "status": "queued", "response": response}
+                BatchJobResult(job=job["description"], status="queued", response=response)
             )
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to queue session close job: {str(e)}"
             )
 
-    return {
-        "message": "Prediction session close has been queued.",
-        "details": responses,
-    }
+    return BatchQueueResponse(
+        message="Prediction session close has been queued.", details=responses
+    )
 
 
 # ====================================================================================
 # 배치 작업 상태 조회 및 모니터링 엔드포인트
 # ====================================================================================
 
-@router.get("/jobs/status", dependencies=[Depends(require_admin)])
+
+@router.get("/jobs/status", dependencies=[Depends(require_admin)], response_model=BatchJobsStatusResponse)
 @inject
 def get_batch_jobs_status(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
@@ -430,104 +437,79 @@ def get_batch_jobs_status(
 ):
     """
     현재 실행 중인 배치 작업 상태를 조회합니다. (관리자 전용)
-    
+
     SQS 큐의 메시지 수, 가시성 타임아웃 등을 확인하여
     현재 배치 작업의 상태를 파악할 수 있습니다.
     """
     try:
         queue_url = settings.SQS_MAIN_QUEUE_URL
-        
+
         # 현재 시간 정보
         kst = pytz.timezone("Asia/Seoul")
         now = dt.datetime.now(kst)
-        
+
         # SQS 큐 상태 조회 (실제 SQS 정보)
         try:
             queue_attributes = aws_service.get_sqs_queue_attributes(queue_url)
-            
-            return {
-                "current_time": now.strftime("%Y-%m-%d %H:%M:%S KST"),
-                "queue_status": {
-                    "queue_url": queue_url,
-                    "approximate_number_of_messages": queue_attributes.get("ApproximateNumberOfMessages", "0"),
-                    "approximate_number_of_messages_not_visible": queue_attributes.get("ApproximateNumberOfMessagesNotVisible", "0"),
-                    "approximate_number_of_messages_delayed": queue_attributes.get("ApproximateNumberOfMessagesDelayed", "0"),
-                    "created_timestamp": queue_attributes.get("CreatedTimestamp", ""),
-                    "last_modified_timestamp": queue_attributes.get("LastModifiedTimestamp", "")
-                },
-                "batch_schedule_info": {
-                    "morning_batch_time": "06:00 KST (±30min tolerance)",
-                    "evening_batch_time": "23:59 KST (±30min tolerance)",
-                    "next_morning_batch": _get_next_batch_time(now, 6, 0),
-                    "next_evening_batch": _get_next_batch_time(now, 23, 59)
-                },
-                "status": "ACTIVE"
-            }
+
+            return BatchJobsStatusResponse(
+                current_time=now.strftime("%Y-%m-%d %H:%M:%S KST"),
+                queue_status=QueueStatus(
+                    queue_url=queue_url,
+                    approximate_number_of_messages=(
+                        queue_attributes.ApproximateNumberOfMessages or "0"
+                    ),
+                    approximate_number_of_messages_not_visible=(
+                        queue_attributes.ApproximateNumberOfMessagesNotVisible or "0"
+                    ),
+                    approximate_number_of_messages_delayed=(
+                        queue_attributes.ApproximateNumberOfMessagesDelayed or "0"
+                    ),
+                    created_timestamp=queue_attributes.CreatedTimestamp or "",
+                    last_modified_timestamp=queue_attributes.LastModifiedTimestamp or "",
+                ),
+                batch_schedule_info=BatchScheduleInfo(
+                    morning_batch_time="06:00 KST (±30min tolerance)",
+                    evening_batch_time="23:59 KST (±30min tolerance)",
+                    next_morning_batch=_get_next_batch_time(now, 6, 0),
+                    next_evening_batch=_get_next_batch_time(now, 23, 59),
+                ),
+                status="ACTIVE",
+            )
         except Exception as sqs_error:
             # SQS 조회 실패시 기본 정보만 반환
-            return {
-                "current_time": now.strftime("%Y-%m-%d %H:%M:%S KST"),
-                "queue_status": {
-                    "queue_url": queue_url,
-                    "error": f"Failed to fetch queue status: {str(sqs_error)}",
-                    "status": "UNAVAILABLE"
-                },
-                "batch_schedule_info": {
-                    "morning_batch_time": "06:00 KST (±30min tolerance)",
-                    "evening_batch_time": "23:59 KST (±30min tolerance)",
-                    "next_morning_batch": _get_next_batch_time(now, 6, 0),
-                    "next_evening_batch": _get_next_batch_time(now, 23, 59)
-                },
-                "status": "PARTIAL"
-            }
-            
+            return BatchJobsStatusResponse(
+                current_time=now.strftime("%Y-%m-%d %H:%M:%S KST"),
+                queue_status=QueueStatus(
+                    queue_url=queue_url,
+                    error=f"Failed to fetch queue status: {str(sqs_error)}",
+                    status="UNAVAILABLE",
+                ),
+                batch_schedule_info=BatchScheduleInfo(
+                    morning_batch_time="06:00 KST (±30min tolerance)",
+                    evening_batch_time="23:59 KST (±30min tolerance)",
+                    next_morning_batch=_get_next_batch_time(now, 6, 0),
+                    next_evening_batch=_get_next_batch_time(now, 23, 59),
+                ),
+                status="PARTIAL",
+            )
+
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to get batch jobs status: {str(e)}"
         )
 
 
-def _get_next_batch_time(current_time: dt.datetime, target_hour: int, target_minute: int) -> str:
+def _get_next_batch_time(
+    current_time: dt.datetime, target_hour: int, target_minute: int
+) -> str:
     """다음 배치 실행 시간 계산"""
-    target_time = current_time.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
-    
+    target_time = current_time.replace(
+        hour=target_hour, minute=target_minute, second=0, microsecond=0
+    )
+
     if current_time >= target_time:
         # 오늘 시간이 지났으면 내일
         target_time += dt.timedelta(days=1)
-    
+
     return target_time.strftime("%Y-%m-%d %H:%M KST")
-
-
-@router.post("/emergency-stop", dependencies=[Depends(require_admin)])
-@inject 
-def emergency_stop_batch(
-    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
-    settings: Settings = Depends(Provide[Container.config.config]),
-):
-    """
-    배치 작업 긴급 중단 (관리자 전용)
-    
-    SQS 큐의 모든 메시지를 삭제하여 대기 중인 배치 작업을 중단합니다.
-    주의: 이 작업은 되돌릴 수 없습니다.
-    """
-    try:
-        queue_url = settings.SQS_MAIN_QUEUE_URL
-        
-        # 큐 비우기 (purge)
-        result = aws_service.purge_sqs_queue(queue_url)
-        
-        kst = pytz.timezone("Asia/Seoul")
-        now = dt.datetime.now(kst)
-        
-        return {
-            "message": "Emergency stop executed - All pending batch jobs have been cancelled",
-            "queue_url": queue_url,
-            "purged_at": now.strftime("%Y-%m-%d %H:%M:%S KST"),
-            "result": result,
-            "warning": "This action cannot be undone. Manual execution may be required for critical tasks."
-        }
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to execute emergency stop: {str(e)}"
-        )

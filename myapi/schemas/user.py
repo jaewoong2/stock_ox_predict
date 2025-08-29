@@ -65,3 +65,23 @@ class UserStats(BaseModel):
     active_users: int
     oauth_users: int
     local_users: int
+
+
+class UserProfileWithPoints(BaseModel):
+    user_profile: UserProfile
+    points_balance: int
+    last_updated: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserFinancialSummary(BaseModel):
+    user_id: int
+    current_balance: int
+    points_earned_today: int
+    can_make_predictions: bool
+    summary_date: str
+
+    class Config:
+        from_attributes = True

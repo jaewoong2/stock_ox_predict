@@ -3,6 +3,7 @@ from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
+from myapi.config import settings
 from myapi.models.user import UserRole
 from myapi.database.session import get_db
 from myapi.services.auth_service import AuthService
@@ -21,7 +22,7 @@ def get_current_user_optional(
     if not credentials:
         return None
 
-    auth_service = AuthService(db)
+    auth_service = AuthService(db, settings=settings)
     try:
         user = auth_service.get_current_user(credentials.credentials)
         return user
@@ -41,7 +42,7 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    auth_service = AuthService(db)
+    auth_service = AuthService(db, settings=settings)
 
     try:
         user = auth_service.get_current_user(credentials.credentials)

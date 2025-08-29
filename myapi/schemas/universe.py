@@ -49,14 +49,23 @@ class UniverseStats(BaseModel):
 
 class UniverseItemWithPrice(BaseModel):
     """가격 정보가 포함된 유니버스 아이템"""
-    symbol: str = Field(..., pattern=r"^[A-Z]{1,5}$", description="Stock symbol (e.g., AAPL)")
+
+    symbol: str = Field(
+        ..., pattern=r"^[A-Z]{1,5}$", description="Stock symbol (e.g., AAPL)"
+    )
     seq: int = Field(..., ge=1, le=20, description="Sequence number for ordering")
-    company_name: str = Field(None, description="Company name")
+    company_name: str = Field(..., description="Company name")
     current_price: float = Field(..., description="Current stock price")
     previous_close: float = Field(..., description="Previous close price")
-    change_percent: float = Field(..., description="Change percentage from previous close")
-    change_direction: str = Field(..., description="Price movement direction (UP/DOWN/FLAT)")
-    formatted_change: str = Field(..., description="Formatted change string (e.g., '+2.01%')")
+    change_percent: float = Field(
+        ..., description="Change percentage from previous close"
+    )
+    change_direction: str = Field(
+        ..., description="Price movement direction (UP/DOWN/FLAT)"
+    )
+    formatted_change: str = Field(
+        ..., description="Formatted change string (e.g., '+2.01%')"
+    )
 
     class Config:
         from_attributes = True
@@ -64,6 +73,7 @@ class UniverseItemWithPrice(BaseModel):
 
 class UniverseWithPricesResponse(BaseModel):
     """가격 정보가 포함된 유니버스 응답"""
+
     trading_day: str
     symbols: List[UniverseItemWithPrice]
     total_count: int

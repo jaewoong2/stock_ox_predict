@@ -41,6 +41,10 @@ from myapi.schemas.points import (
     PointsTransactionResponse,
     AdminPointsAdjustmentRequest,
     PointsIntegrityCheckResponse,
+    DailyPointsIntegrityResponse,
+    PointsEarnedResponse,
+    DailyPointsStatsResponse,
+    AffordabilityResponse,
 )
 from myapi.core.exceptions import (
     ValidationError,
@@ -166,13 +170,13 @@ async def get_ledger_by_date_range(
         raise HTTPException(status_code=500, detail="Failed to retrieve transactions")
 
 
-@router.get("/earned/{trading_day}")
+@router.get("/earned/{trading_day}", response_model=PointsEarnedResponse)
 @inject
 async def get_points_earned_today(
     trading_day: date = Path(..., description="거래일 (YYYY-MM-DD)"),
     current_user: UserSchema = Depends(get_current_active_user),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
-) -> dict:
+) -> PointsEarnedResponse:
     """특정일 획득 포인트 조회
 
     사용자가 특정일에 획득한 포인트 총합을 조회합니다.
@@ -183,11 +187,9 @@ async def get_points_earned_today(
             raise HTTPException(status_code=401, detail="Invalid user token")
 
         earned_points = point_service.get_user_points_earned_today(user_id, trading_day)
-        return {
-            "user_id": user_id,
-            "trading_day": trading_day.isoformat(),
-            "points_earned": earned_points,
-        }
+        return PointsEarnedResponse(
+            user_id=user_id, trading_day=trading_day.isoformat(), points_earned=earned_points
+        )
     except Exception as e:
         logger.error(f"Failed to get points earned today: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve points earned")
@@ -441,13 +443,13 @@ async def admin_verify_global_integrity(
         raise HTTPException(status_code=500, detail="Failed to verify global integrity")
 
 
-@router.get("/admin/stats/daily/{trading_day}")
+@router.get("/admin/stats/daily/{trading_day}", response_model=DailyPointsStatsResponse)
 @inject
 async def get_daily_points_stats(
     trading_day: date = Path(..., description="거래일 (YYYY-MM-DD)"),
     current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
-) -> dict:
+) -> DailyPointsStatsResponse:
     """일별 포인트 통계 (관리자 전용)
 
     특정일의 포인트 지급 통계를 조회합니다.
@@ -457,23 +459,22 @@ async def get_daily_points_stats(
 
         total_awarded = point_service.get_total_points_awarded_today(trading_day)
 
-        return {
-            "trading_day": trading_day.isoformat(),
-            "total_points_awarded": total_awarded,
-        }
+        return DailyPointsStatsResponse(
+            trading_day=trading_day.isoformat(), total_points_awarded=total_awarded
+        )
     except Exception as e:
         logger.error(f"Failed to get daily points stats: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve daily stats")
 
 
-@router.get("/admin/check-affordability/{user_id}/{amount}")
+@router.get("/admin/check-affordability/{user_id}/{amount}", response_model=AffordabilityResponse)
 @inject
 async def check_user_affordability(
     user_id: int = Path(..., description="확인할 사용자 ID"),
     amount: int = Path(..., description="확인할 포인트 금액"),
     current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
-) -> dict:
+) -> AffordabilityResponse:
     """사용자 지불 능력 확인 (관리자 전용)
 
     특정 사용자가 지정된 포인트를 지불할 수 있는지 확인합니다.
@@ -484,25 +485,28 @@ async def check_user_affordability(
         can_afford = point_service.can_afford(user_id, amount)
         current_balance = point_service.get_user_balance(user_id).balance
 
-        return {
-            "user_id": user_id,
-            "amount": amount,
-            "can_afford": can_afford,
-            "current_balance": current_balance,
-            "shortfall": max(0, amount - current_balance) if not can_afford else 0,
-        }
+        return AffordabilityResponse(
+            user_id=user_id,
+            amount=amount,
+            can_afford=can_afford,
+            current_balance=current_balance,
+            shortfall=max(0, amount - current_balance) if not can_afford else 0,
+        )
     except Exception as e:
         logger.error(f"Failed to check affordability: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to check affordability")
 
 
-@router.get("/admin/integrity/daily/{trading_day}")
+@router.get(
+    "/admin/integrity/daily/{trading_day}",
+    response_model=DailyPointsIntegrityResponse,
+)
 @inject
 async def verify_daily_points_integrity(
     trading_day: date = Path(..., description="검증할 거래일 (YYYY-MM-DD)"),
     current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
-) -> dict:
+) -> DailyPointsIntegrityResponse:
     """
     일별 포인트 정합성 검증 (관리자 전용)
     

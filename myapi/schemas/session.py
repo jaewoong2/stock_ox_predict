@@ -47,3 +47,16 @@ class SessionStatus(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PredictionTimeStatus(BaseModel):
+    can_predict: bool
+    is_trading_day: bool
+    is_in_time_range: bool
+    session_phase: Optional[str] = None
+    time_until_start: int
+    time_until_end: int
+    message: str
+
+    class Config:
+        from_attributes = True

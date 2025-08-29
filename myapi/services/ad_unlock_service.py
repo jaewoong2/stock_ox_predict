@@ -340,14 +340,8 @@ class AdUnlockService:
             AdUnlockStatsResponse: 광고 해제 통계
         """
         try:
-            stats_dict = self.ad_unlock_repo.get_daily_unlock_stats(trading_day)
-
-            return AdUnlockStatsResponse(
-                trading_day=trading_day,
-                total_unlocks=stats_dict["total_unlocks"],
-                unique_users=stats_dict["unique_users"],
-                method_breakdown=stats_dict["method_breakdown"],
-            )
+            # Repository already returns AdUnlockStatsResponse (Pydantic)
+            return self.ad_unlock_repo.get_daily_unlock_stats(trading_day)
 
         except Exception as e:
             logger.error(f"Failed to get daily stats for {trading_day}: {str(e)}")

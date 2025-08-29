@@ -3,7 +3,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from myapi.models.internal import OAuthState as OAuthStateModel
+from myapi.models.oauth import OAuthState as OAuthStateModel
 
 
 class OAuthStateRepository:

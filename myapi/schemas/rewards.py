@@ -103,6 +103,11 @@ class AdminStockUpdateRequest(BaseModel):
         from_attributes = True
 
 
+class DeleteResultResponse(BaseModel):
+    success: bool
+    message: str
+
+
 class RewardsInventoryResponse(BaseModel):
     """리워드 인벤토리 응답 스키마"""
 
@@ -131,6 +136,35 @@ class RewardsRedemptionResponse(BaseModel):
     vendor_code: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class InventorySummary(BaseModel):
+    total_items: int
+    total_stock: int
+    total_reserved: int
+    available_stock: int
+
+    class Config:
+        from_attributes = True
+
+
+class RedemptionStats(BaseModel):
+    total_redemptions: int
+    issued_redemptions: int
+    pending_redemptions: int
+    failed_redemptions: int
+    total_points_spent: int
+
+    class Config:
+        from_attributes = True
+
+
+class AdminRewardsStatsResponse(BaseModel):
+    inventory: InventorySummary
+    redemptions: RedemptionStats
 
     class Config:
         from_attributes = True

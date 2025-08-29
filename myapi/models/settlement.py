@@ -1,6 +1,6 @@
 
-from sqlalchemy import Column, String, BigInteger, DateTime, Text, Date, Enum, SmallInteger, Numeric, Integer
-from sqlalchemy.schema import PrimaryKeyConstraint, UniqueConstraint
+from sqlalchemy import Column, DateTime, Text, Date, Enum, Numeric, Integer
+from sqlalchemy.schema import PrimaryKeyConstraint
 from myapi.models.base import BaseModel
 import enum
 
@@ -15,6 +15,11 @@ class SettlementStatusEnum(enum.Enum):
     FAILED = "FAILED"
 
 class Settlement(BaseModel):
+    """
+    정산 결과 저장 모델
+    
+    각 거래일/종목별 예측 결과 정산 정보를 저장합니다.
+    """
     __tablename__ = 'settlements'
     __table_args__ = (PrimaryKeyConstraint('trading_day', 'symbol'), { 'schema': 'crypto' })
 
@@ -30,39 +35,4 @@ class Settlement(BaseModel):
     incorrect_predictions = Column(Integer, default=0, nullable=False)
     points_awarded = Column(Integer, default=0, nullable=False)
     computed_at = Column(DateTime(timezone=True), nullable=False)
-    error_message = Column(Text)
-
-class EODPrice(BaseModel):
-    __tablename__ = 'eod_prices'
-    __table_args__ = (
-        UniqueConstraint('asof', 'symbol', 'vendor_rev', name='uq_eod_prices_asof_symbol_vendor'),
-        { 'schema': 'crypto' }
-    )
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    asof = Column(Date, nullable=False)
-    symbol = Column(Text, nullable=False)
-    open_price = Column(Numeric(18, 6), nullable=False)
-    high_price = Column(Numeric(18, 6), nullable=False)
-    low_price = Column(Numeric(18, 6), nullable=False)
-    close_price = Column(Numeric(18, 6), nullable=False)
-    prev_close_price = Column(Numeric(18, 6), nullable=False)
-    volume = Column(BigInteger, default=0, nullable=False)
-    vendor_rev = Column(Integer, default=0, nullable=False)
-    fetched_at = Column(DateTime(timezone=True), nullable=False)
-    
-class SettlementJob(BaseModel):
-    __tablename__ = 'settlement_jobs'
-    __table_args__ = ({'schema': 'crypto', 'extend_existing': True})
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    trading_day = Column(Date, nullable=False)
-    status = Column(Enum(SettlementStatusEnum), default=SettlementStatusEnum.PENDING, nullable=False)
-    total_symbols = Column(Integer, default=0, nullable=False)
-    processed_symbols = Column(Integer, default=0, nullable=False)
-    failed_symbols = Column(Integer, default=0, nullable=False)
-    total_predictions = Column(Integer, default=0, nullable=False)
-    total_points_awarded = Column(Integer, default=0, nullable=False)
-    started_at = Column(DateTime(timezone=True))
-    completed_at = Column(DateTime(timezone=True))
     error_message = Column(Text)

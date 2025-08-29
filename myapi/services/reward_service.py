@@ -19,6 +19,9 @@ from myapi.schemas.rewards import (
     AdminRewardCreateRequest,
     AdminStockUpdateRequest,
     RewardsInventoryResponse,
+    InventorySummary,
+    RedemptionStats,
+    AdminRewardsStatsResponse,
 )
 import logging
 
@@ -296,7 +299,7 @@ class RewardService:
             logger.error(f"Failed to delete reward item: {str(e)}")
             raise ValidationError(f"Failed to delete reward item: {str(e)}")
 
-    def get_inventory_summary(self) -> dict:
+    def get_inventory_summary(self) -> InventorySummary:
         """재고 요약 조회 (관리자용)
 
         Returns:
@@ -310,7 +313,7 @@ class RewardService:
             logger.error(f"Failed to get inventory summary: {str(e)}")
             raise ValidationError(f"Failed to retrieve inventory summary: {str(e)}")
 
-    def get_redemption_stats(self) -> dict:
+    def get_redemption_stats(self) -> RedemptionStats:
         """교환 통계 조회 (관리자용)
 
         Returns:

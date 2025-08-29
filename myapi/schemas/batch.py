@@ -1,69 +1,42 @@
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
-from typing import List, Optional
-from datetime import date
 
 
-class UniverseBatchCreate(BaseModel):
-    trading_day: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
-    symbols: Optional[List[str]] = Field(
-        None, 
-        max_length=20, 
-        description="List of stock symbols. If not provided, uses default tickers"
-    )
-    use_default: bool = Field(
-        True, 
-        description="Whether to use default ticker list from docs/tickers.md"
-    )
-
-
-class SessionPhaseTransition(BaseModel):
-    trading_day: Optional[str] = Field(
-        None, 
-        pattern=r"^\d{4}-\d{2}-\d{2}$",
-        description="Trading day (YYYY-MM-DD). If not provided, uses current session"
-    )
-    target_phase: str = Field(
-        ..., 
-        pattern=r"^(OPEN|CLOSED|SETTLE_READY|SETTLED)$",
-        description="Target phase: OPEN, CLOSED, SETTLE_READY, SETTLED"
-    )
-
-
-class BatchSummaryResponse(BaseModel):
-    trading_day: str
-    session: Optional[dict]
-    universe: Optional[dict]
-
-
-class BatchOperationResponse(BaseModel):
-    success: bool
-    operation: str
-    trading_day: str
-    details: dict
-
-
-class BatchScheduleRequest(BaseModel):
-    queue_url: str = Field(..., description="SQS FIFO queue URL")
-    workflow_type: str = Field(
-        default="daily",
-        pattern=r"^(daily|custom)$",
-        description="Type of batch workflow to schedule"
-    )
-
-
-class BatchJobStatus(BaseModel):
-    operation: str
-    description: str
-    status: str  # queued, failed, completed
-    message_id: Optional[str] = None
-    delay_seconds: int = 0
+class BatchJobResult(BaseModel):
+    job: str
+    status: Literal["queued", "failed"]
+    sequence: Optional[int] = None
+    response: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 
-class BatchWorkflowResponse(BaseModel):
-    workflow: str
-    trading_day: str
-    total_jobs: int
-    successful_jobs: int
-    failed_jobs: int
-    jobs: List[BatchJobStatus]
+class BatchQueueResponse(BaseModel):
+    message: str
+    current_time: Optional[str] = None
+    details: List[BatchJobResult] = Field(default_factory=list)
+
+
+class QueueStatus(BaseModel):
+    queue_url: str
+    approximate_number_of_messages: Optional[str] = None
+    approximate_number_of_messages_not_visible: Optional[str] = None
+    approximate_number_of_messages_delayed: Optional[str] = None
+    created_timestamp: Optional[str] = None
+    last_modified_timestamp: Optional[str] = None
+    status: Optional[str] = None
+    error: Optional[str] = None
+
+
+class BatchScheduleInfo(BaseModel):
+    morning_batch_time: str
+    evening_batch_time: str
+    next_morning_batch: str
+    next_evening_batch: str
+
+
+class BatchJobsStatusResponse(BaseModel):
+    current_time: str
+    queue_status: QueueStatus
+    batch_schedule_info: BatchScheduleInfo
+    status: str
+

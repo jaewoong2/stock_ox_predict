@@ -2,6 +2,7 @@ import httpx
 from urllib.parse import urlencode
 from myapi.config import settings
 from myapi.core.exceptions import OAuthError
+from myapi.schemas.oauth import OAuthTokenResponse, OAuthUserInfo
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ class KakaoOAuthProvider:
         }
         return f"{self.auth_url}?{urlencode(params)}"
 
-    async def get_access_token(self, code: str, redirect_uri: str) -> dict:
+    async def get_access_token(self, code: str, redirect_uri: str) -> OAuthTokenResponse:
         """Exchange authorization code for access token"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -45,7 +46,10 @@ class KakaoOAuthProvider:
                     logger.error(f"Kakao token exchange failed: {response.text}")
                     raise OAuthError("Failed to exchange authorization code")
 
-                return response.json()
+                data = response.json()
+                if "access_token" not in data:
+                    raise OAuthError("Invalid token response from provider")
+                return OAuthTokenResponse(**data, raw=data)
         except httpx.TimeoutException:
             logger.error("Kakao OAuth token exchange timeout")
             raise OAuthError("OAuth provider timeout")
@@ -53,7 +57,7 @@ class KakaoOAuthProvider:
             logger.error(f"Kakao OAuth error: {str(e)}")
             raise OAuthError("OAuth provider error")
 
-    async def get_user_info(self, access_token: str) -> dict:
+    async def get_user_info(self, access_token: str) -> OAuthUserInfo:
         """Get user information from Kakao"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -76,13 +80,13 @@ class KakaoOAuthProvider:
                 if not kakao_account.get("email"):
                     raise OAuthError("Email not provided by OAuth provider")
 
-                return {
-                    "id": str(user_data.get("id")),
-                    "email": kakao_account.get("email"),
-                    "name": profile.get("nickname", ""),
-                    "picture": profile.get("profile_image_url", ""),
-                    "verified_email": kakao_account.get("is_email_verified", False)
-                }
+                return OAuthUserInfo(
+                    id=str(user_data.get("id")),
+                    email=kakao_account.get("email"),
+                    name=profile.get("nickname", ""),
+                    picture=profile.get("profile_image_url", ""),
+                    verified_email=kakao_account.get("is_email_verified", False),
+                )
         except httpx.TimeoutException:
             logger.error("Kakao OAuth user info fetch timeout")
             raise OAuthError("OAuth provider timeout")

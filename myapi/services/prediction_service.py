@@ -35,6 +35,7 @@ from myapi.schemas.prediction import (
     PredictionSummary,
     PredictionChoice,
 )
+from myapi.services.error_log_service import ErrorLogService
 
 
 class PredictionService:
@@ -47,6 +48,7 @@ class PredictionService:
         self.universe_repo = ActiveUniverseRepository(db)
         self.session_repo = SessionRepository(db)
         self.point_service = PointService(db)
+        self.error_log_service = ErrorLogService(db)
         self.settings = settings
         
         # 포인트 설정 (비즈니스 설정)
@@ -132,6 +134,17 @@ class PredictionService:
             except Exception:
                 pass  # 환불 실패해도 원래 오류를 우선
             
+            # 예측 생성 실패 에러 로깅
+            self.error_log_service.log_prediction_error(
+                user_id=user_id,
+                trading_day=trading_day,
+                symbol=symbol,
+                error_message="Failed to create prediction in database",
+                prediction_details={
+                    "choice": payload.choice.value,
+                    "fee_charged": self.PREDICTION_FEE_POINTS
+                }
+            )
             raise ValidationError("Failed to create prediction")
 
         # 실제 prediction_id로 수수료 기록 업데이트 (ref_id 수정)
@@ -240,8 +253,26 @@ class PredictionService:
                 if refund_result.success:
                     print(f"✅ Refunded {self.PREDICTION_FEE_POINTS} points for canceled prediction {prediction_id}")
                 else:
+                    # 취소 환불 실패 에러 로깅
+                    self.error_log_service.log_point_transaction_error(
+                        user_id=user_id,
+                        transaction_type="PREDICTION_CANCEL_REFUND",
+                        amount=self.PREDICTION_FEE_POINTS,
+                        error_message=refund_result.message,
+                        ref_id=f"cancel_refund_{prediction_id}",
+                        trading_day=getattr(model, 'trading_day', date.today())
+                    )
                     print(f"❌ Failed to refund points for canceled prediction {prediction_id}: {refund_result.message}")
             except Exception as e:
+                # 취소 환불 시스템 에러 로깅
+                self.error_log_service.log_point_transaction_error(
+                    user_id=user_id,
+                    transaction_type="PREDICTION_CANCEL_REFUND",
+                    amount=self.PREDICTION_FEE_POINTS,
+                    error_message=str(e),
+                    ref_id=f"cancel_refund_{prediction_id}",
+                    trading_day=getattr(model, 'trading_day', date.today())
+                )
                 print(f"❌ Error refunding points for canceled prediction {prediction_id}: {str(e)}")
 
         return canceled

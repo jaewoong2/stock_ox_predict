@@ -357,12 +357,15 @@ def get_my_points_ledger(
 def get_my_profile_with_points(
     current_user: UserSchema = Depends(get_current_active_user),
     user_service: UserService = Depends(Provide[Container.services.user_service]),
-) -> Any:
+):
     """포인트 정보를 포함한 내 프로필 조회"""
     try:
         profile_with_points = user_service.get_user_profile_with_points(current_user.id)
 
-        return BaseResponse(success=True, data=profile_with_points)
+        if not profile_with_points:
+            raise NotFoundError("User not found")
+
+        return BaseResponse(success=True, data=profile_with_points.model_dump())
     except Exception as e:
         logger.error(f"Profile with points fetch error: {str(e)}")
         raise HTTPException(
@@ -381,7 +384,7 @@ def get_my_financial_summary(
     try:
         summary = user_service.get_user_financial_summary(current_user.id)
 
-        return BaseResponse(success=True, data=summary)
+        return BaseResponse(success=True, data=summary.model_dump())
     except Exception as e:
         logger.error(f"Financial summary fetch error: {str(e)}")
         raise HTTPException(
