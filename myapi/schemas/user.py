@@ -1,9 +1,10 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from enum import Enum
 
 from myapi.models.user import UserRole
+from myapi.schemas.pagination import PaginatedResponse
 
 
 class AuthProvider(str, Enum):
@@ -85,3 +86,44 @@ class UserFinancialSummary(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UserListItem(BaseModel):
+    """사용자 목록용 간소한 정보"""
+    id: int
+    nickname: str
+    auth_provider: AuthProvider
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserListResult(BaseModel):
+    """사용자 목록 결과"""
+    users: List[UserListItem]
+    count: int
+
+
+class UserSearchItem(BaseModel):
+    """사용자 검색용 간소한 정보"""
+    id: int
+    nickname: str
+    auth_provider: AuthProvider
+
+    class Config:
+        from_attributes = True
+
+
+class UserSearchResult(BaseModel):
+    """사용자 검색 결과"""
+    users: List[UserSearchItem]
+    count: int
+
+
+class AffordabilityCheck(BaseModel):
+    """지불 가능 여부 확인"""
+    amount: int
+    can_afford: bool
+    current_balance: int
+    shortfall: int = 0  # 부족한 포인트

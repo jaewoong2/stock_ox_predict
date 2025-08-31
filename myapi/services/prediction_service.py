@@ -307,6 +307,26 @@ class PredictionService:
             user_id, limit=limit, offset=offset
         )
 
+    def get_user_prediction_history_paginated(
+        self, user_id: int, limit: int = 50, offset: int = 0
+    ) -> Tuple[List[PredictionResponse], int, bool]:
+        """사용자 예측 이력 조회 (페이지네이션 정보 포함)"""
+        if limit > 100:  # 최대 제한
+            limit = 100
+        
+        predictions = self.pred_repo.get_user_prediction_history(
+            user_id, limit=limit + 1, offset=offset
+        )  # +1로 다음 페이지 존재 여부 확인
+        
+        has_next = len(predictions) > limit
+        if has_next:
+            predictions = predictions[:limit]  # 실제 요청한 limit 만큼만 반환
+        
+        # 전체 카운트는 별도 쿼리로 조회
+        total_count = self.pred_repo.count_user_predictions(user_id)
+        
+        return predictions, total_count, has_next
+
     # 정산 관련
     def lock_predictions_for_settlement(self, trading_day: date) -> int:
         return self.pred_repo.lock_predictions_for_settlement(trading_day)

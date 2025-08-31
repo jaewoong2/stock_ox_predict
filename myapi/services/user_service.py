@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -104,6 +104,22 @@ class UserService:
         if limit > 100:  # 최대 제한
             limit = 100
         return self.user_repo.get_active_users(limit=limit, offset=offset)
+
+    def get_active_users_paginated(self, limit: int = 20, offset: int = 0) -> Tuple[List[UserSchema], int, bool]:
+        """활성 사용자 목록 조회 (페이지네이션 정보 포함)"""
+        if limit > 100:  # 최대 제한
+            limit = 100
+        
+        users = self.user_repo.get_active_users(limit=limit + 1, offset=offset)  # +1로 다음 페이지 존재 여부 확인
+        
+        has_next = len(users) > limit
+        if has_next:
+            users = users[:limit]  # 실제 요청한 limit 만큼만 반환
+        
+        # 전체 카운트는 별도 쿼리로 조회
+        total_count = self.user_repo.count_active_users()
+        
+        return users, total_count, has_next
 
     def get_oauth_users(self, provider: str = "") -> List[UserSchema]:
         """OAuth 사용자 목록 조회"""

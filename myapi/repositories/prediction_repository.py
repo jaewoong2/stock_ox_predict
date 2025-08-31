@@ -420,6 +420,14 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             .count()
         )
 
+    def count_user_predictions(self, user_id: int) -> int:
+        """사용자의 전체 예측 개수"""
+        return (
+            self.db.query(self.model_class)
+            .filter(self.model_class.user_id == user_id)
+            .count()
+        )
+
 
 class UserDailyStatsRepository(
     BaseRepository[UserDailyStatsModel, UserDailyStatsResponse]

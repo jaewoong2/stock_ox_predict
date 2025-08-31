@@ -8,9 +8,18 @@ from myapi.core.auth_middleware import (
     require_admin,
 )
 from myapi.core.exceptions import NotFoundError, ValidationError
-from myapi.schemas.user import User as UserSchema, UserProfile, UserStats, UserUpdate
+from myapi.schemas.user import (
+    User as UserSchema, 
+    UserProfile, 
+    UserStats, 
+    UserUpdate, 
+    UserListResult, 
+    UserSearchResult,
+    AffordabilityCheck
+)
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.schemas.points import PointsBalanceResponse, PointsLedgerResponse
+from myapi.schemas.pagination import PaginationLimits, PaginationMeta
 import logging
 from dependency_injector.wiring import inject, Provide
 from myapi.containers import Container
@@ -118,14 +127,14 @@ def get_user_by_id(
 @router.get("/", response_model=BaseResponse)
 @inject
 def get_users_list(
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(PaginationLimits.USER_LIST["default"], ge=PaginationLimits.USER_LIST["min"], le=PaginationLimits.USER_LIST["max"]),
     offset: int = Query(0, ge=0),
     current_user: UserSchema = Depends(get_current_active_user),
     user_service: UserService = Depends(Provide[Container.services.user_service]),
 ) -> Any:
-    """활성 사용자 목록 조회 (인증 필요)"""
+    """활성 사용자 목록 조회 (페이지네이션)"""
     try:
-        users = user_service.get_active_users(limit=limit, offset=offset)
+        users, total_count, has_next = user_service.get_active_users_paginated(limit=limit, offset=offset)
 
         users_data = []
         for user in users:
@@ -141,7 +150,12 @@ def get_users_list(
         return BaseResponse(
             success=True,
             data={"users": users_data, "count": len(users_data)},
-            meta={"limit": limit, "offset": offset},
+            meta={
+                "limit": limit, 
+                "offset": offset,
+                "total_count": total_count,
+                "has_next": has_next
+            },
         )
     except Exception as e:
         logger.error(f"Users list fetch error: {str(e)}")
@@ -155,11 +169,11 @@ def get_users_list(
 @inject
 def search_users_by_nickname(
     q: str = Query(..., min_length=2, max_length=50),
-    limit: int = Query(20, ge=1, le=50),
+    limit: int = Query(PaginationLimits.USER_SEARCH["default"], ge=PaginationLimits.USER_SEARCH["min"], le=PaginationLimits.USER_SEARCH["max"]),
     current_user: UserSchema = Depends(get_current_active_user),
     user_service: UserService = Depends(Provide[Container.services.user_service]),
 ) -> Any:
-    """닉네임으로 사용자 검색"""
+    """닉네임으로 사용자 검색 (제한된 페이지네이션 - offset 없음)"""
     try:
         users = user_service.search_users_by_nickname(q, limit=limit)
 
@@ -176,7 +190,6 @@ def search_users_by_nickname(
         return BaseResponse(
             success=True,
             data={"users": users_data, "count": len(users_data)},
-            meta={"query": q, "limit": limit},
         )
     except ValidationError as e:
         return BaseResponse(
@@ -324,12 +337,12 @@ def get_my_points_balance(
 @router.get("/me/points/ledger", response_model=BaseResponse)
 @inject
 def get_my_points_ledger(
-    limit: int = Query(50, ge=1, le=100, description="페이지 크기"),
+    limit: int = Query(PaginationLimits.POINTS_LEDGER["default"], ge=PaginationLimits.POINTS_LEDGER["min"], le=PaginationLimits.POINTS_LEDGER["max"], description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(get_current_active_user),
     user_service: UserService = Depends(Provide[Container.services.user_service]),
 ) -> Any:
-    """내 포인트 거래 내역 조회"""
+    """내 포인트 거래 내역 조회 (페이지네이션)"""
     try:
         ledger = user_service.get_user_points_ledger(
             current_user.id, limit=limit, offset=offset
@@ -343,6 +356,12 @@ def get_my_points_ledger(
                 "total_count": ledger.total_count,
                 "has_next": ledger.has_next,
             },
+            meta={
+                "limit": limit,
+                "offset": offset,
+                "total_count": ledger.total_count,
+                "has_next": ledger.has_next,
+            }
         )
     except Exception as e:
         logger.error(f"Points ledger fetch error: {str(e)}")

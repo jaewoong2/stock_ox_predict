@@ -168,3 +168,7 @@ class UserRepository(BaseRepository[UserModel, UserSchema]):
             .first()
             is not None
         )
+
+    def count_active_users(self) -> int:
+        """활성 사용자 수 조회"""
+        return self.count(filters={"is_active": True})

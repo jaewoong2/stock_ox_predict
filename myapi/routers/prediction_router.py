@@ -1,7 +1,7 @@
 from typing import Any
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from dependency_injector.wiring import inject, Provide
 
 from myapi.containers import Container
@@ -13,6 +13,7 @@ from myapi.schemas.prediction import (
     PredictionUpdate,
     PredictionChoice,
 )
+from myapi.schemas.pagination import PaginationLimits
 from myapi.services.prediction_service import PredictionService
 from myapi.core.exceptions import (
     ValidationError,
@@ -206,20 +207,27 @@ def get_user_prediction_summary(
 @router.get("/history", response_model=BaseResponse)
 @inject
 def get_user_prediction_history(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(PaginationLimits.PREDICTIONS_HISTORY["default"], ge=PaginationLimits.PREDICTIONS_HISTORY["min"], le=PaginationLimits.PREDICTIONS_HISTORY["max"]),
+    offset: int = Query(0, ge=0),
     current_user: UserSchema = Depends(get_current_active_user),
     service: PredictionService = Depends(
         Provide[Container.services.prediction_service]
     ),
 ) -> Any:
-    """사용자의 예측 이력을 조회합니다."""
+    """사용자의 예측 이력을 조회합니다 (페이지네이션)."""
     try:
-        history = service.get_user_prediction_history(
+        history, total_count, has_next = service.get_user_prediction_history_paginated(
             current_user.id, limit=limit, offset=offset
         )
         return BaseResponse(
-            success=True, data={"history": [pred.model_dump() for pred in history]}
+            success=True, 
+            data={"history": [pred.model_dump() for pred in history]},
+            meta={
+                "limit": limit,
+                "offset": offset,
+                "total_count": total_count,
+                "has_next": has_next
+            }
         )
     except Exception:
         raise HTTPException(

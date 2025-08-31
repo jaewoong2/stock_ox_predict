@@ -21,6 +21,7 @@ from myapi.schemas.rewards import (
     RewardsInventoryResponse,
     AdminRewardsStatsResponse,
 )
+from myapi.schemas.pagination import PaginationLimits
 from myapi.core.exceptions import (
     ValidationError,
     NotFoundError,
@@ -99,7 +100,7 @@ async def redeem_reward(
 @router.get("/my-redemptions", response_model=RewardRedemptionHistoryResponse)
 @inject
 async def get_my_redemption_history(
-    limit: int = Query(50, ge=1, le=100, description="페이지 크기"),
+    limit: int = Query(PaginationLimits.REWARDS_HISTORY["default"], ge=PaginationLimits.REWARDS_HISTORY["min"], le=PaginationLimits.REWARDS_HISTORY["max"], description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(verify_bearer_token),
     reward_service: RewardService = Depends(Provide[Container.services.reward_service]),

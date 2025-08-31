@@ -46,6 +46,7 @@ from myapi.schemas.points import (
     DailyPointsStatsResponse,
     AffordabilityResponse,
 )
+from myapi.schemas.pagination import PaginationLimits
 from myapi.core.exceptions import (
     ValidationError,
     InsufficientBalanceError,
@@ -97,7 +98,7 @@ async def get_my_balance(
 @router.get("/ledger", response_model=PointsLedgerResponse)
 @inject
 async def get_my_ledger(
-    limit: int = Query(50, ge=1, le=100, description="페이지 크기"),
+    limit: int = Query(PaginationLimits.POINTS_LEDGER["default"], ge=PaginationLimits.POINTS_LEDGER["min"], le=PaginationLimits.POINTS_LEDGER["max"], description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(get_current_active_user),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
@@ -356,7 +357,7 @@ async def admin_get_user_balance(
 @inject
 async def admin_get_user_ledger(
     user_id: int = Path(..., description="조회할 사용자 ID"),
-    limit: int = Query(50, ge=1, le=100, description="페이지 크기"),
+    limit: int = Query(PaginationLimits.POINTS_LEDGER["default"], ge=PaginationLimits.POINTS_LEDGER["min"], le=PaginationLimits.POINTS_LEDGER["max"], description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(require_admin),
     point_service: PointService = Depends(Provide[Container.services.point_service]),
