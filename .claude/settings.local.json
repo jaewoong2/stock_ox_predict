@@ -18,7 +18,8 @@
       "mcp__serena__find_file",
       "mcp__serena__insert_after_symbol",
       "mcp__serena__search_for_pattern",
-      "mcp__serena__create_text_file"
+      "mcp__serena__create_text_file",
+      "Bash(cd:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

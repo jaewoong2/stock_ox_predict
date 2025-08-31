@@ -48,7 +48,21 @@ class ErrorLogRepository(BaseRepository[ErrorLog, ErrorLogResponse]):
         
         except Exception as e:
             self.db.rollback()
-            raise Exception(f"Failed to create error log: {str(e)}")
+            # error_logs 테이블이 없거나 다른 DB 에러가 발생해도 시스템이 중단되지 않도록 처리
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to create error log (check_type={check_type}): {str(e)}")
+            
+            # 에러 로그 생성 실패시에도 기본 응답을 반환하여 시스템 중단을 방지
+            from datetime import datetime, timezone
+            return ErrorLogResponse(
+                id=0,  # 임시 ID
+                check_type=check_type,
+                trading_day=trading_day,
+                status="FAILED",
+                details=details,
+                created_at=datetime.now(timezone.utc)
+            )
 
     def get_recent_errors(
         self, 

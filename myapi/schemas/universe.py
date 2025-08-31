@@ -15,22 +15,23 @@ class UniverseItem(BaseModel):
 
 class UniverseUpdate(BaseModel):
     trading_day: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
-    symbols: List[UniverseItem] = Field(..., min_length=1, max_length=20)
+    symbols: List[str] = Field(..., min_length=1, max_length=200, description="List of stock symbols")
 
     @field_validator("symbols")
     @classmethod
-    def validate_unique_symbols(cls, v: List[UniverseItem]) -> List[UniverseItem]:
-        symbols = [item.symbol for item in v]
-        if len(symbols) != len(set(symbols)):
+    def validate_unique_symbols(cls, v: List[str]) -> List[str]:
+        if len(v) != len(set(v)):
             raise ValueError("Duplicate symbols are not allowed")
         return v
-
+    
     @field_validator("symbols")
     @classmethod
-    def validate_unique_sequences(cls, v: List[UniverseItem]) -> List[UniverseItem]:
-        sequences = [item.seq for item in v]
-        if len(sequences) != len(set(sequences)):
-            raise ValueError("Duplicate sequence numbers are not allowed")
+    def validate_symbol_format(cls, v: List[str]) -> List[str]:
+        import re
+        symbol_pattern = re.compile(r"^[A-Z]{1,5}$")
+        for symbol in v:
+            if not symbol_pattern.match(symbol):
+                raise ValueError(f"Invalid symbol format: {symbol}")
         return v
 
 
