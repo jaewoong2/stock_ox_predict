@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from myapi.repositories.active_universe_repository import ActiveUniverseRepository
 from myapi.repositories.session_repository import SessionRepository
 from myapi.schemas.universe import (
+    UniverseItem,
     UniverseResponse,
     UniverseUpdate,
     UniverseWithPricesResponse,
@@ -55,7 +56,13 @@ class UniverseService:
         # Parse date
         trg_day = date.fromisoformat(update.trading_day)
         # Set new list
-        self.repo.set_universe_for_date(trg_day, update.symbols)
+        self.repo.set_universe_for_date(
+            trg_day,
+            [
+                UniverseItem(symbol=symbol, seq=index + 1)
+                for index, symbol in enumerate(update.symbols)
+            ],
+        )
         # Return response
         return self.repo.get_universe_response(trg_day)
 

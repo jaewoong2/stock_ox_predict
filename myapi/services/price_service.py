@@ -65,7 +65,7 @@ class PriceService:
             self.error_log_service.log_api_error(
                 api_endpoint=f"yfinance.Ticker({symbol}).info",
                 error_message=str(e),
-                trading_day=date.today()
+                trading_day=date.today(),
             )
             raise ServiceException(
                 f"Failed to fetch current price for {symbol}: {str(e)}"
@@ -92,13 +92,15 @@ class PriceService:
 
         if not valid_prices:
             # 유니버스 전체 가격 조회 실패 에러 로깅
-            failed_symbols = [universe_item.symbol for universe_item in universe_symbols]
+            failed_symbols = [
+                universe_item.symbol for universe_item in universe_symbols
+            ]
             self.error_log_service.log_eod_fetch_error(
                 trading_day=trading_day,
                 provider="yfinance",
                 failed_symbols=failed_symbols,
                 error_message="Failed to fetch any valid current prices for universe",
-                retry_count=0
+                retry_count=0,
             )
             raise ServiceException("Failed to fetch any valid prices")
 
@@ -146,7 +148,7 @@ class PriceService:
                 provider="yfinance",
                 failed_symbols=[symbol],
                 error_message=str(e),
-                retry_count=0
+                retry_count=0,
             )
             raise ServiceException(
                 f"Failed to fetch EOD price for {symbol} on {trading_day}: {str(e)}"
@@ -324,7 +326,7 @@ class PriceService:
                 f"No history data available for {symbol} near {trading_day}"
             )
 
-        hist.index = pd.Index(pd.to_datetime(hist.index).date)
+        hist.index = pd.Index([d.date() for d in pd.to_datetime(hist.index)])
 
         # 해당 거래일의 데이터 찾기
         try:
@@ -460,14 +462,14 @@ class PriceService:
                 detail.success = False
                 detail.error_message = str(e)
                 failed_collections += 1
-                
+
                 # EOD 데이터 수집 실패 에러 로깅
                 self.error_log_service.log_eod_fetch_error(
                     trading_day=trading_day,
                     provider="yfinance",
                     failed_symbols=[symbol],
                     error_message=str(e),
-                    retry_count=0
+                    retry_count=0,
                 )
 
             collection_details.append(detail)

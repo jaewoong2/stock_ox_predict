@@ -31,6 +31,7 @@ def get_error_log_service(db: Session = Depends(get_db)) -> ErrorLogService:
     """ErrorLogService 의존성 주입"""
     return ErrorLogService(db)
 
+
 def get_schema_service() -> SchemaService:
     """SchemaService 의존성 주입"""
     return SchemaService()
@@ -169,7 +170,7 @@ async def check_error_trending(
 
 
 class SchemaCheckResponse(BaseModel):
-    schema: str
+    schema_name: str
     ok: bool
     missing_tables: list[str]
     extra_tables: list[str]
@@ -184,7 +185,13 @@ async def admin_schema_check(
     """DB 스키마와 SQLAlchemy 모델 일치 여부 점검"""
     try:
         report = schema_service.check_schema()
-        return report
+        return SchemaCheckResponse(
+            schema_name=str(report["schema"]),
+            ok=bool(report["ok"]),
+            missing_tables=list(report["missing_tables"]),
+            extra_tables=list(report["extra_tables"]),
+            column_issues=list(report["column_issues"]),
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Schema check failed: {str(e)}")
 
@@ -219,7 +226,13 @@ async def admin_schema_create(
             return SchemaCreateResponse(
                 executed=False,
                 message="Set confirm=true to execute create_all (no changes applied)",
-                report=SchemaCheckResponse(**report),
+                report=SchemaCheckResponse(
+                    schema_name=str(report["schema"]),
+                    ok=bool(report["ok"]),
+                    missing_tables=list(report["missing_tables"]),
+                    extra_tables=list(report["extra_tables"]),
+                    column_issues=list(report["column_issues"]),
+                ),
             )
 
         if settings.ENVIRONMENT == "production" and not body.force:
@@ -233,7 +246,13 @@ async def admin_schema_create(
         return SchemaCreateResponse(
             executed=True,
             message="create_all executed; see report for current status",
-            report=SchemaCheckResponse(**report),
+            report=SchemaCheckResponse(
+                schema_name=str(report["schema"]),
+                ok=bool(report["ok"]),
+                missing_tables=list(report["missing_tables"]),
+                extra_tables=list(report["extra_tables"]),
+                column_issues=list(report["column_issues"]),
+            ),
         )
     except HTTPException:
         raise

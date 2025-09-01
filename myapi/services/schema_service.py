@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 
 from sqlalchemy import inspect
 
@@ -45,7 +45,7 @@ class SchemaService:
         self._inspector = inspect(engine)
         self._schema = settings.POSTGRES_SCHEMA or None
 
-    def check_schema(self) -> Dict[str, object]:
+    def check_schema(self) -> Dict[str, Any]:
         expected = {}
         for tbl in Base.metadata.sorted_tables:
             schema = tbl.schema or self._schema
@@ -98,12 +98,14 @@ class SchemaService:
         return {
             "schema": self._schema or "public",
             "ok": ok,
-            "missing_tables": [f"{s or 'public'}.{t}" for s, t in sorted(missing_tables)],
+            "missing_tables": [
+                f"{s or 'public'}.{t}" for s, t in sorted(missing_tables)
+            ],
             "extra_tables": [f"{s or 'public'}.{t}" for s, t in sorted(extra_tables)],
             "column_issues": column_issues,
         }
 
-    def create_all(self) -> Dict[str, object]:
+    def create_all(self) -> Dict[str, Any]:
         # Attempt to create all tables defined in metadata (idempotent)
         Base.metadata.create_all(engine)
         return self.check_schema()

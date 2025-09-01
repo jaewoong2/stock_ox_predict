@@ -3,6 +3,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from dependency_injector.wiring import inject, Provide
 
+from myapi.core.tickers import get_default_tickers
 from myapi.containers import Container
 from myapi.core.auth_middleware import (
     get_current_user_optional,
@@ -95,7 +96,17 @@ def upsert_universe(
         BaseResponse: 생성/업데이트된 유니버스 정보
     """
     try:
-        res = service.upsert_universe(payload)
+        symbols = payload.symbols
+
+        if not symbols and symbols == []:
+            symbols = get_default_tickers()
+
+        res = service.upsert_universe(
+            UniverseUpdate(
+                symbols=symbols,
+                trading_day=payload.trading_day,
+            )
+        )
         return BaseResponse(success=True, data={"universe": res.model_dump()})
     except Exception:
         raise HTTPException(

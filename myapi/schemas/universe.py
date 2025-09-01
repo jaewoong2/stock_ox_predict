@@ -4,10 +4,8 @@ from datetime import date
 
 
 class UniverseItem(BaseModel):
-    symbol: str = Field(
-        ..., pattern=r"^[A-Z]{1,5}$", description="Stock symbol (e.g., AAPL)"
-    )
-    seq: int = Field(..., ge=1, le=20, description="Sequence number for ordering")
+    symbol: str = Field(..., description="Stock symbol (e.g., AAPL)")
+    seq: int = Field(..., ge=0, description="Sequence number for ordering")
 
     class Config:
         from_attributes = True
@@ -15,7 +13,9 @@ class UniverseItem(BaseModel):
 
 class UniverseUpdate(BaseModel):
     trading_day: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
-    symbols: List[str] = Field(..., min_length=1, max_length=200, description="List of stock symbols")
+    symbols: List[str] = Field(
+        ..., min_length=0, max_length=200, description="List of stock symbols"
+    )
 
     @field_validator("symbols")
     @classmethod
@@ -23,11 +23,12 @@ class UniverseUpdate(BaseModel):
         if len(v) != len(set(v)):
             raise ValueError("Duplicate symbols are not allowed")
         return v
-    
+
     @field_validator("symbols")
     @classmethod
     def validate_symbol_format(cls, v: List[str]) -> List[str]:
         import re
+
         symbol_pattern = re.compile(r"^[A-Z]{1,5}$")
         for symbol in v:
             if not symbol_pattern.match(symbol):
