@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from myapi.database.session import get_db
 from myapi.core.security import admin_required
 from myapi.services.error_log_service import ErrorLogService
+from myapi.services.schema_service import SchemaService
 from myapi.schemas.error_log import (
     ErrorLogResponse,
     ErrorLogFilter,
@@ -29,6 +30,10 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 def get_error_log_service(db: Session = Depends(get_db)) -> ErrorLogService:
     """ErrorLogService 의존성 주입"""
     return ErrorLogService(db)
+
+def get_schema_service() -> SchemaService:
+    """SchemaService 의존성 주입"""
+    return SchemaService()
 
 
 @router.get("/errors/recent", response_model=List[ErrorLogResponse])
@@ -161,6 +166,79 @@ async def check_error_trending(
         raise HTTPException(
             status_code=500, detail=f"Failed to check trending: {str(e)}"
         )
+
+
+class SchemaCheckResponse(BaseModel):
+    schema: str
+    ok: bool
+    missing_tables: list[str]
+    extra_tables: list[str]
+    column_issues: list[str]
+
+
+@router.get("/db/schema/check", response_model=SchemaCheckResponse)
+async def admin_schema_check(
+    current_user=Depends(admin_required),
+    schema_service: SchemaService = Depends(get_schema_service),
+):
+    """DB 스키마와 SQLAlchemy 모델 일치 여부 점검"""
+    try:
+        report = schema_service.check_schema()
+        return report
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Schema check failed: {str(e)}")
+
+
+class SchemaCreateRequest(BaseModel):
+    confirm: bool = False
+    force: bool = False
+
+
+class SchemaCreateResponse(BaseModel):
+    executed: bool
+    message: str
+    report: SchemaCheckResponse
+
+
+@router.post("/db/schema/create", response_model=SchemaCreateResponse)
+async def admin_schema_create(
+    body: SchemaCreateRequest,
+    current_user=Depends(admin_required),
+    schema_service: SchemaService = Depends(get_schema_service),
+):
+    """누락된 테이블을 생성 (개발/비운영용)
+
+    - 안전장치: `confirm=true` 필요
+    - 운영환경(ENVIRONMENT=production)에서는 `force=true`가 없으면 거부
+    """
+    from myapi.config import settings
+
+    try:
+        if not body.confirm:
+            report = schema_service.check_schema()
+            return SchemaCreateResponse(
+                executed=False,
+                message="Set confirm=true to execute create_all (no changes applied)",
+                report=SchemaCheckResponse(**report),
+            )
+
+        if settings.ENVIRONMENT == "production" and not body.force:
+            report = schema_service.check_schema()
+            raise HTTPException(
+                status_code=403,
+                detail="Refusing to create tables in production without force=true",
+            )
+
+        report = schema_service.create_all()
+        return SchemaCreateResponse(
+            executed=True,
+            message="create_all executed; see report for current status",
+            report=SchemaCheckResponse(**report),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Schema create failed: {str(e)}")
 
 
 @router.get("/system/health")

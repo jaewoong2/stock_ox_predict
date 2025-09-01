@@ -88,7 +88,8 @@ resource "aws_iam_role_policy" "ecs_task_role_policy" {
         Sid    = "AllowSecretsManagerAccess"
         Effect = "Allow"
         Action = [
-          "secretsmanager:GetSecretValue"
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:PutSecretValue"
         ]
         Resource = "*"
       },
@@ -99,6 +100,18 @@ resource "aws_iam_role_policy" "ecs_task_role_policy" {
           "ssm:GetParameter",
           "ssm:GetParameters",
           "ssm:GetParametersByPath"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowSQSAccess"
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage",
+          "sqs:SendMessageBatch",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+          "sqs:ListQueues"
         ]
         Resource = "*"
       }
@@ -154,7 +167,8 @@ resource "aws_iam_role_policy" "lambda_app_policy" {
         Sid    = "AllowSecretsManagerAccess"
         Effect = "Allow"
         Action = [
-          "secretsmanager:GetSecretValue"
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:PutSecretValue"
         ]
         Resource = "*"
       },
@@ -165,6 +179,18 @@ resource "aws_iam_role_policy" "lambda_app_policy" {
           "ssm:GetParameter",
           "ssm:GetParameters",
           "ssm:GetParametersByPath"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowSQSAccess"
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage",
+          "sqs:SendMessageBatch",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+          "sqs:ListQueues"
         ]
         Resource = "*"
       }

@@ -36,13 +36,21 @@ class ServiceModule(containers.DeclarativeContainer):
     repositories = providers.DependenciesContainer()
 
     aws_service = providers.Factory(AwsService, settings=config.config)
-    auth_service = providers.Factory(AuthService, db=repositories.get_db, settings=config.config)
-    user_service = providers.Factory(UserService, db=repositories.get_db, settings=config.config)
-    prediction_service = providers.Factory(PredictionService, db=repositories.get_db, settings=config.config)
+    auth_service = providers.Factory(
+        AuthService, db=repositories.get_db, settings=config.config
+    )
+    user_service = providers.Factory(
+        UserService, db=repositories.get_db, settings=config.config
+    )
+    prediction_service = providers.Factory(
+        PredictionService, db=repositories.get_db, settings=config.config
+    )
     session_service = providers.Factory(SessionService, db=repositories.get_db)
     universe_service = providers.Factory(UniverseService, db=repositories.get_db)
     price_service = providers.Factory(PriceService, db=repositories.get_db)
-    settlement_service = providers.Factory(SettlementService, db=repositories.get_db, settings=config.config)
+    settlement_service = providers.Factory(
+        SettlementService, db=repositories.get_db, settings=config.config
+    )
     reward_service = providers.Factory(RewardService, db=repositories.get_db)
     point_service = providers.Factory(PointService, db=repositories.get_db)
     ad_unlock_service = providers.Factory(AdUnlockService, db=repositories.get_db)

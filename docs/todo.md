@@ -1297,3 +1297,63 @@ ErrorLog를 활용한 통합 에러 추적 시스템 구현으로 운영 안정�
 - `aws_service.generate_queue_message_http()` → `LambdaProxyMessage`(가칭) 모델로 감싸기.
 
 모든 변경 사항은 라우터의 `response_model`과 서비스/레포지토리 반환 타입이 일관되도록 반영되었습니다.
+
+
+
+
+# TODO
+  "message": "[ValidationError] POST https://mangum:80/api/v1/universe/upsert from None -> 422: [{'type': 'too_long', 'loc': ('body', 'symbols'), 'msg': 'List should have at most 20 items after validation, not 101', 'input': ['CRWV', 'SPY', 'QQQ', 'AMAT', 'AMD', 'ANET', 'ASML', 'AVGO', 'COHR', 'GFS', 'KLAC', 'MRVL', 'MU', 'NVDA', 'NVMI', 'ONTO', 'SMCI', 'STX', 'TSM', 'VRT', 'WDC', 'AXON', 'LMT', 'NOC', 'RCAT', 'AFRM', 'APP', 'COIN', 'HOOD', 'IREN', 'MQ', 'MSTR', 'SOFI', 'TOST', 'CEG', 'FSLR', 'LNG', 'NRG', 'OKLO', 'PWR', 'SMR', 'VST', 'CRWD', 'FTNT', 'GTLB', 'NET', 'OKTA', 'PANW', 'S', 'TENB', 'ZS', 'AAPL', 'ADBE', 'ADSK', 'AI', 'AMZN', 'ASAN', 'BILL', 'CRM', 'DDOG', 'DOCN', 'GOOGL', 'HUBS', 'META', 'MNDY', 'MSFT', 'NOW', 'PCOR', 'PLTR', 'SNOW', 'VEEV', 'IONQ', 'QBTS', 'RGTI', 'PL', 'RKLB', 'LUNR', 'ACHR', 'ARBE', 'JOBY', 'TSLA', 'UBER', 'ORCL', 'CFLT', 'CRNC', 'DXCM', 'INTU', 'IOT', 'LRCX', 'NFLX', 'PODD', 'PSTG', 'RBLX', 'RDDT', 'SERV', 'SHOP', 'SOUN', 'TDOC', 'PATH', 'DXYZ', 'NKE'], 'ctx': {'field_type': 'List', 'max_length': 20, 'actual_length': 101}}]",
+  "pathname": "/var/task/myapi/core/exception_handlers.py",
+
+
+
+  {
+    "asctime": "2025-08-29 07:18:45,438",
+    "name": "myapi",
+    "levelname": "WARNING",
+    "message": "[HTTPException] POST https://mangum:80/api/v1/prices/collect-eod/2025-08-28 from None -> 500: Failed to collect EOD data for 2025-08-28: 404: {'success': False, 'error': {'code': 'NOT_FOUND_001', 'message': 'No universe found for 2025-08-28', 'details': {}}}",
+    "pathname": "/var/task/myapi/core/exception_handlers.py",
+    "lineno": 33,
+    "exc_info": null,
+    "taskName": "starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro"
+    }
+
+
+
+  "asctime": "2025-08-29 07:18:45,438",
+  "name": "myapi",
+  "levelname": "WARNING",
+  "message": "[Response] POST https://mangum:80/api/v1/prices/collect-eod/2025-08-28 from None -> 500 in 127.3ms",
+  "pathname": "/var/task/myapi/core/logging_middleware.py",
+  "lineno": 36,
+  "exc_info": null,
+  "taskName": "Task-8"
+
+
+  
+    "asctime": "2025-08-29 07:18:50,464",
+    "name": "myapi",
+    "levelname": "WARNING",
+    "message": "[HTTPException] POST https://mangum:80/api/v1/admin/settlement/settle-day/2025-08-28 from None -> 500: Failed to settle day: Failed to create error log: (psycopg2.errors.UndefinedTable) relation \"crypto.error_logs\" does not exist\nLINE 1: INSERT INTO crypto.error_logs (check_type, trading_day, stat...\n                    ^\n\n[SQL: INSERT INTO crypto.error_logs (check_type, trading_day, status, details) VALUES (%(check_type)s, %(trading_day)s, %(status)s, %(details)s) RETURNING crypto.error_logs.id, crypto.error_logs.created_at, crypto.error_logs.updated_at]\n[parameters: {'check_type': 'SETTLEMENT_FAILED', 'trading_day': datetime.date(2025, 8, 28), 'status': 'FAILED', 'details': '{\"failed_symbols\": [], \"total_symbols\": 0, \"context\": \"Daily settlement validation\", \"error_message\": \"404: {\\'success\\': False, \\'error\\': {\\'code\\': \\'NOT_FOUND_001\\', \\'message\\': \\'No universe found for 2025-08-28\\', \\'details\\': {}}}\"}'}]\n(Background on this error at: https://sqlalche.me/e/20/f405)",
+    "pathname": "/var/task/myapi/core/exception_handlers.py",
+    "lineno": 33,
+    "exc_info": null,
+    "taskName": "starlette.middleware.base.BaseHTTPMiddleware.__call__.<locals>.call_next.<locals>.coro"
+}
+
+
+
+{
+    "asctime": "2025-08-29 07:18:55,530",
+    "name": "myapi",
+    "levelname": "INFO",
+    "message": "[Response] POST https://mangum:80/api/v1/session/flip-to-predict from None -> 200 in 56.9ms",
+    "pathname": "/var/task/myapi/core/logging_middleware.py",
+    "lineno": 40,
+    "exc_info": null,
+    "taskName": "Task-18"
+}
+\
+
+
+[HTTPException] POST https://mangum:80/api/v1/batch/all-jobs from None -> 500: {'message': 'All batch jobs failed to queue.', 'details': [BatchJobResult(job='Collect EOD data for 2025-08-30', status='failed', sequence=1, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.'), BatchJobResult(job='Close prediction session', status='failed', sequence=1, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.'), BatchJobResult(job='Settlement for 2025-08-30', status='failed', sequence=2, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.'), BatchJobResult(job='Start new prediction session', status='failed', sequence=3, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.'), BatchJobResult(job='Setup universe for 2025-08-31 with 101 symbols', status='failed', sequence=4, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.')]}",

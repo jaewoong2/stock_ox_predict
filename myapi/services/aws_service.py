@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any, Literal, Optional, Dict
 
 import boto3
@@ -35,11 +36,16 @@ class LambdaProxyMessage(BaseModel):
 
 SECRET_NAME = "kakao/tokens"
 
+logger = logging.getLogger(__name__)
+
 
 class AwsService:
     def __init__(self, settings: Settings):
-        self.aws_access_key_id = settings.AWS_ACCESS_KEY_ID
-        self.aws_secret_access_key = settings.AWS_SECRET_ACCESS_KEY
+
+        self.aws_access_key_id = settings.AWS_SQS_ACCESS_KEY_ID
+        self.aws_secret_access_key = settings.AWS_SQS_SECRET_ACCESS_KEY
+        self.region_name = settings.AWS_SQS_REGION
+
         self.region_name = settings.AWS_REGION
 
     def _client(self, service: str):
@@ -50,6 +56,7 @@ class AwsService:
                 aws_access_key_id=self.aws_access_key_id,
                 aws_secret_access_key=self.aws_secret_access_key,
             )
+
         return boto3.client(service, region_name=self.region_name)
 
     def get_secret(self) -> SecretPayload:
@@ -57,7 +64,9 @@ class AwsService:
         try:
             response = client.get_secret_value(SecretId=SECRET_NAME)
             secret_string = response.get("SecretString")
-            return SecretPayload(data=(json.loads(secret_string) if secret_string else {}))
+            return SecretPayload(
+                data=(json.loads(secret_string) if secret_string else {})
+            )
         except client.exceptions.ResourceNotFoundException:
             raise HTTPException(status_code=404, detail="Secret not found")
         except Exception as e:
@@ -105,6 +114,17 @@ class AwsService:
             params["DelaySeconds"] = str(delay_seconds)
         try:
             return sqs.send_message(**params)
+        except sqs.exceptions.InvalidClientTokenId as e:
+            # AWS 자격 증명 문제
+            raise HTTPException(
+                status_code=500,
+                detail=f"AWS credentials error: {str(e)}. Please check IAM role permissions.",
+            )
+        except sqs.exceptions.QueueDoesNotExist as e:
+            # SQS 큐가 존재하지 않음
+            raise HTTPException(
+                status_code=404, detail=f"SQS queue not found: {queue_url}"
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Error sending FIFO message to SQS: {str(e)}"
@@ -119,6 +139,17 @@ class AwsService:
             params["DelaySeconds"] = str(delay_seconds)
         try:
             return sqs.send_message(**params)
+        except sqs.exceptions.InvalidClientTokenId as e:
+            # AWS 자격 증명 문제
+            raise HTTPException(
+                status_code=500,
+                detail=f"AWS credentials error: {str(e)}. Please check IAM role permissions.",
+            )
+        except sqs.exceptions.QueueDoesNotExist as e:
+            # SQS 큐가 존재하지 않음
+            raise HTTPException(
+                status_code=404, detail=f"SQS queue not found: {queue_url}"
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Error sending message to SQS: {str(e)}"

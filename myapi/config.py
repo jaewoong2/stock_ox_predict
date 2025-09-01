@@ -69,9 +69,11 @@ class Settings(BaseSettings):
     SQS_EOD_FETCH_QUEUE_URL: Optional[str] = None
     SQS_SETTLEMENT_COMPUTE_QUEUE_URL: Optional[str] = None
     SQS_POINTS_AWARD_QUEUE_URL: Optional[str] = None
-    
+
     # Main SQS FIFO Queue URL
-    SQS_MAIN_QUEUE_URL: str = "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
+    SQS_MAIN_QUEUE_URL: str = (
+        "https://sqs.ap-northeast-2.amazonaws.com/849441246713/ox.fifo"
+    )
 
     # Business Rules
     POINTS_VOID_REWARD: int = 0
@@ -80,12 +82,14 @@ class Settings(BaseSettings):
     COOLDOWN_MINUTES: int = 5
 
     # Point Management
-    CORRECT_PREDICTION_POINTS: int = 100      # 정답 예측 시 지급 포인트
-    PREDICTION_FEE_POINTS: int = 10           # 예측 수수료
-    SIGNUP_BONUS_POINTS: int = 1000           # 신규 가입 보너스 포인트
-    VOID_REFUND_ENABLED: bool = True          # VOID 처리 시 수수료 환불 여부
-    FLAT_PRICE_POLICY: str = "ALL_WRONG"      # FLAT 가격일 때 처리 정책: ALL_WRONG | ALL_CORRECT | VOID
-    SETTLEMENT_TIMEOUT_MINUTES: int = 30      # 정산 작업 타임아웃 (분)
+    CORRECT_PREDICTION_POINTS: int = 100  # 정답 예측 시 지급 포인트
+    PREDICTION_FEE_POINTS: int = 10  # 예측 수수료
+    SIGNUP_BONUS_POINTS: int = 1000  # 신규 가입 보너스 포인트
+    VOID_REFUND_ENABLED: bool = True  # VOID 처리 시 수수료 환불 여부
+    FLAT_PRICE_POLICY: str = (
+        "ALL_WRONG"  # FLAT 가격일 때 처리 정책: ALL_WRONG | ALL_CORRECT | VOID
+    )
+    SETTLEMENT_TIMEOUT_MINUTES: int = 30  # 정산 작업 타임아웃 (분)
 
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = True
@@ -95,6 +99,10 @@ class Settings(BaseSettings):
     # Timezone
     TIMEZONE: str = "Asia/Seoul"
     AUTH_TOKEN: str = ""
+
+    AWS_SQS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SQS_SECRET_ACCESS_KEY: Optional[str] = None
+    AWS_SQS_REGION: str = "ap-northeast-2"
 
 
 settings = Settings()
