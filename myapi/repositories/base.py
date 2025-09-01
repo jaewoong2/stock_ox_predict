@@ -34,22 +34,36 @@ class BaseRepository(Generic[T, SchemaType], ABC):
                     for column in mapper.columns:
                         column_name = getattr(column, "name", None)
                         if column_name:
-                            model_dict[column_name] = getattr(model_instance, column_name, None)
-            
+                            model_dict[column_name] = getattr(
+                                model_instance, column_name, None
+                            )
+
             if not model_dict and hasattr(model_instance, "__dict__"):
                 model_dict = getattr(model_instance, "__dict__", {})
-            
+
             return self.schema_class(**model_dict)
+
+    def _ensure_clean_session(self) -> None:
+        """보류중/실패한 트랜잭션이 있으면 롤백하여 세션을 정상화"""
+        try:
+            if hasattr(self.db, "is_active") and not self.db.is_active:  # type: ignore[attr-defined]
+                self.db.rollback()
+        except Exception:
+            pass
 
     def get_by_id(self, id: Any) -> Optional[SchemaType]:
         """ID로 조회 - Pydantic 스키마 반환"""
+        self._ensure_clean_session()
         model_instance = (
-            self.db.query(self.model_class).filter(getattr(self.model_class, 'id') == id).first()
+            self.db.query(self.model_class)
+            .filter(getattr(self.model_class, "id") == id)
+            .first()
         )
         return self._to_schema(model_instance)
 
     def get_by_field(self, field_name: str, value: Any) -> Optional[SchemaType]:
         """특정 필드로 조회 - Pydantic 스키마 반환"""
+        self._ensure_clean_session()
         model_instance = (
             self.db.query(self.model_class)
             .filter(getattr(self.model_class, field_name) == value)
@@ -65,6 +79,7 @@ class BaseRepository(Generic[T, SchemaType], ABC):
         offset: Optional[int] = None,
     ) -> List[SchemaType]:
         """조건에 맞는 모든 레코드 조회 - Pydantic 스키마 리스트 반환"""
+        self._ensure_clean_session()
         query = self.db.query(self.model_class)
 
         if filters:
@@ -91,6 +106,7 @@ class BaseRepository(Generic[T, SchemaType], ABC):
 
     def create(self, **kwargs) -> Optional[SchemaType]:
         """새 레코드 생성 - Pydantic 스키마 반환"""
+        self._ensure_clean_session()
         instance = self.model_class(**kwargs)
         self.db.add(instance)
         try:
@@ -104,9 +120,10 @@ class BaseRepository(Generic[T, SchemaType], ABC):
 
     def update(self, instance_id: Any, **kwargs) -> Optional[SchemaType]:
         """레코드 업데이트 - Pydantic 스키마 반환"""
+        self._ensure_clean_session()
         instance = (
             self.db.query(self.model_class)
-            .filter(getattr(self.model_class, 'id') == instance_id)
+            .filter(getattr(self.model_class, "id") == instance_id)
             .first()
         )
 
@@ -129,9 +146,10 @@ class BaseRepository(Generic[T, SchemaType], ABC):
 
     def delete(self, instance_id: Any) -> bool:
         """레코드 삭제"""
+        self._ensure_clean_session()
         instance = (
             self.db.query(self.model_class)
-            .filter(getattr(self.model_class, 'id') == instance_id)
+            .filter(getattr(self.model_class, "id") == instance_id)
             .first()
         )
 
@@ -149,6 +167,7 @@ class BaseRepository(Generic[T, SchemaType], ABC):
 
     def count(self, filters: Optional[Dict[str, Any]] = None) -> int:
         """레코드 수 조회"""
+        self._ensure_clean_session()
         query = self.db.query(self.model_class)
 
         if filters:
@@ -160,6 +179,7 @@ class BaseRepository(Generic[T, SchemaType], ABC):
 
     def exists(self, filters: Dict[str, Any]) -> bool:
         """레코드 존재 여부 확인"""
+        self._ensure_clean_session()
         query = self.db.query(self.model_class)
 
         for key, value in filters.items():

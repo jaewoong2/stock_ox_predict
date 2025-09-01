@@ -9,13 +9,13 @@ from myapi.core.auth_middleware import (
 )
 from myapi.core.exceptions import NotFoundError, ValidationError
 from myapi.schemas.user import (
-    User as UserSchema, 
-    UserProfile, 
-    UserStats, 
-    UserUpdate, 
-    UserListResult, 
+    User as UserSchema,
+    UserProfile,
+    UserStats,
+    UserUpdate,
+    UserListResult,
     UserSearchResult,
-    AffordabilityCheck
+    AffordabilityCheck,
 )
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.schemas.points import PointsBalanceResponse, PointsLedgerResponse
@@ -127,14 +127,20 @@ def get_user_by_id(
 @router.get("/", response_model=BaseResponse)
 @inject
 def get_users_list(
-    limit: int = Query(PaginationLimits.USER_LIST["default"], ge=PaginationLimits.USER_LIST["min"], le=PaginationLimits.USER_LIST["max"]),
+    limit: int = Query(
+        PaginationLimits.USER_LIST["default"],
+        ge=PaginationLimits.USER_LIST["min"],
+        le=PaginationLimits.USER_LIST["max"],
+    ),
     offset: int = Query(0, ge=0),
     current_user: UserSchema = Depends(get_current_active_user),
     user_service: UserService = Depends(Provide[Container.services.user_service]),
 ) -> Any:
     """활성 사용자 목록 조회 (페이지네이션)"""
     try:
-        users, total_count, has_next = user_service.get_active_users_paginated(limit=limit, offset=offset)
+        users, total_count, has_next = user_service.get_active_users_paginated(
+            limit=limit, offset=offset
+        )
 
         users_data = []
         for user in users:
@@ -151,10 +157,10 @@ def get_users_list(
             success=True,
             data={"users": users_data, "count": len(users_data)},
             meta={
-                "limit": limit, 
+                "limit": limit,
                 "offset": offset,
                 "total_count": total_count,
-                "has_next": has_next
+                "has_next": has_next,
             },
         )
     except Exception as e:
@@ -169,7 +175,11 @@ def get_users_list(
 @inject
 def search_users_by_nickname(
     q: str = Query(..., min_length=2, max_length=50),
-    limit: int = Query(PaginationLimits.USER_SEARCH["default"], ge=PaginationLimits.USER_SEARCH["min"], le=PaginationLimits.USER_SEARCH["max"]),
+    limit: int = Query(
+        PaginationLimits.USER_SEARCH["default"],
+        ge=PaginationLimits.USER_SEARCH["min"],
+        le=PaginationLimits.USER_SEARCH["max"],
+    ),
     current_user: UserSchema = Depends(get_current_active_user),
     user_service: UserService = Depends(Provide[Container.services.user_service]),
 ) -> Any:
@@ -327,6 +337,11 @@ def get_my_points_balance(
             success=True, data={"balance": balance.balance, "user_id": current_user.id}
         )
     except Exception as e:
+        try:
+            # Ensure any failed transaction is rolled back before next use
+            user_service.db.rollback()
+        except Exception:
+            pass
         logger.error(f"Points balance fetch error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -337,7 +352,12 @@ def get_my_points_balance(
 @router.get("/me/points/ledger", response_model=BaseResponse)
 @inject
 def get_my_points_ledger(
-    limit: int = Query(PaginationLimits.POINTS_LEDGER["default"], ge=PaginationLimits.POINTS_LEDGER["min"], le=PaginationLimits.POINTS_LEDGER["max"], description="페이지 크기"),
+    limit: int = Query(
+        PaginationLimits.POINTS_LEDGER["default"],
+        ge=PaginationLimits.POINTS_LEDGER["min"],
+        le=PaginationLimits.POINTS_LEDGER["max"],
+        description="페이지 크기",
+    ),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(get_current_active_user),
     user_service: UserService = Depends(Provide[Container.services.user_service]),
@@ -361,9 +381,13 @@ def get_my_points_ledger(
                 "offset": offset,
                 "total_count": ledger.total_count,
                 "has_next": ledger.has_next,
-            }
+            },
         )
     except Exception as e:
+        try:
+            user_service.db.rollback()
+        except Exception:
+            pass
         logger.error(f"Points ledger fetch error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -386,6 +410,10 @@ def get_my_profile_with_points(
 
         return BaseResponse(success=True, data=profile_with_points.model_dump())
     except Exception as e:
+        try:
+            user_service.db.rollback()
+        except Exception:
+            pass
         logger.error(f"Profile with points fetch error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -405,6 +433,10 @@ def get_my_financial_summary(
 
         return BaseResponse(success=True, data=summary.model_dump())
     except Exception as e:
+        try:
+            user_service.db.rollback()
+        except Exception:
+            pass
         logger.error(f"Financial summary fetch error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -436,6 +468,10 @@ def check_if_i_can_afford(
             },
         )
     except Exception as e:
+        try:
+            user_service.db.rollback()
+        except Exception:
+            pass
         logger.error(f"Affordability check error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -34,7 +34,7 @@ from myapi.repositories.base import BaseRepository
 class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
     """
     포인트 리포지토리 - 포인트 관련 모든 데이터베이스 작업 처리
-    
+
     주요 기능:
     1. 멱등성 보장 - ref_id를 통한 중복 거래 방지
     2. 원자성 - 트랜잭션을 통한 데이터 일관성 보장
@@ -48,13 +48,13 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
     def _to_ledger_entry(self, model_instance: PointsLedgerModel) -> PointsLedgerEntry:
         """
         SQLAlchemy 모델을 Pydantic 스키마로 변환
-        
+
         Args:
             model_instance: 데이터베이스에서 조회한 PointsLedger 모델 인스턴스
-            
+
         Returns:
             PointsLedgerEntry: API 응답용 Pydantic 스키마 객체
-            
+
         Note:
             - delta_points의 부호에 따라 거래 유형(CREDIT/DEBIT) 자동 결정
             - getattr를 사용하여 안전한 속성 접근
@@ -84,17 +84,18 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
     def get_user_balance(self, user_id: int) -> int:
         """
         사용자의 현재 포인트 잔액 조회 (O(1) 성능)
-        
+
         Args:
             user_id: 사용자 ID
-            
+
         Returns:
             int: 현재 포인트 잔액 (거래 내역이 없으면 0)
-            
+
         Performance:
             - balance_after 필드를 사용하여 최신 거래만 조회
             - SUM 연산 없이 단일 레코드 조회로 O(1) 성능
         """
+        self._ensure_clean_session()
         latest_entry = (
             self.db.query(self.model_class)
             .filter(self.model_class.user_id == user_id)
@@ -143,7 +144,7 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
     ) -> PointsTransactionResponse:
         """
         포인트 거래 처리의 핵심 로직 - 멱등성과 원자성 보장
-        
+
         Args:
             user_id: 대상 사용자 ID
             delta_points: 포인트 변동량 (양수=증가, 음수=감소)
@@ -151,10 +152,10 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
             ref_id: 중복 방지용 고유 참조 ID
             trading_day: 거래일
             symbol: 관련 심볼 (선택사항)
-            
+
         Returns:
             PointsTransactionResponse: 거래 결과 (성공/실패, 잔액 정보)
-            
+
         핵심 로직:
         1. ref_id 중복 체크 (멱등성 보장)
         2. 현재 잔액 조회
@@ -162,11 +163,11 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
         4. 새 잔액 계산
         5. 원장에 거래 기록
         6. IntegrityError 처리 (동시성 문제 해결)
-        
+
         멱등성:
         - 동일한 ref_id로 여러 번 호출해도 한 번만 처리됨
         - 기존 거래가 있으면 해당 결과를 반환
-        
+
         원자성:
         - 트랜잭션 내에서 처리되어 부분 실패 방지
         - 에러 발생 시 롤백으로 데이터 일관성 보장
@@ -260,6 +261,7 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
     ) -> PointsLedgerResponse:
         """사용자 포인트 원장 조회 (페이징)"""
         # 총 항목 수 조회
+        self._ensure_clean_session()
         total_count = (
             self.db.query(self.model_class)
             .filter(self.model_class.user_id == user_id)
@@ -380,18 +382,18 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
     def verify_integrity_for_user(self, user_id: int) -> PointsIntegrityCheckResponse:
         """
         특정 사용자의 포인트 정합성 검증
-        
+
         검증 방식:
         1. 모든 거래의 delta_points 합계 계산
         2. 최신 거래의 balance_after와 비교
         3. 일치하지 않으면 데이터 무결성 문제 감지
-        
+
         Args:
             user_id: 검증할 사용자 ID
-            
+
         Returns:
             PointsIntegrityCheckResponse: 검증 결과 (OK/MISMATCH)
-            
+
         용도:
         - 데이터 무결성 모니터링
         - 버그 또는 동시성 문제 감지
@@ -447,20 +449,20 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
     def verify_global_integrity(self) -> PointsIntegrityCheckResponse:
         """
         전체 시스템의 포인트 정합성 검증
-        
+
         검증 방식:
         1. 모든 사용자의 최신 잔액 합계
         2. 모든 거래의 delta_points 총합
         3. 두 값이 일치해야 함 (제로섬 원칙)
-        
+
         Returns:
             PointsIntegrityCheckResponse: 전체 시스템 검증 결과
-            
+
         중요성:
         - 시스템 전체의 포인트 발행량 검증
         - 포인트가 허공에서 생성되거나 소멸되지 않음을 보장
         - 대규모 데이터 손상 감지
-        
+
         성능:
         - 대량 데이터에서는 시간이 걸릴 수 있음
         - 정기적인 배치 작업으로 실행 권장
