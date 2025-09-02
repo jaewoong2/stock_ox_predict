@@ -20,6 +20,7 @@ from myapi.schemas.prediction import (
 from myapi.repositories.base import BaseRepository
 
 from myapi.schemas.prediction import UserDailyStatsResponse
+from myapi.config import settings
 
 
 class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
@@ -510,15 +511,120 @@ class UserDailyStatsRepository(
 
         return stats
 
-    def can_make_prediction(self, user_id: int, trading_day: date) -> bool:
-        """예측 가능 여부 확인"""
+    def decrement_predictions_made(
+        self, user_id: int, trading_day: date
+    ) -> Optional[UserDailyStatsResponse]:
+        """예측 수 감소"""
+        updated_count = (
+            self.db.query(self.model_class)
+            .filter(
+                and_(
+                    self.model_class.user_id == user_id,
+                    self.model_class.trading_day == trading_day,
+                )
+            )
+            .update({"predictions_made": self.model_class.predictions_made - 1})
+        )
+
+        if updated_count > 0:
+            self.db.commit()
+
         stats = self.get_or_create_user_daily_stats(user_id, trading_day)
-        return stats.predictions_made < stats.max_predictions
+
+        return stats
+
+    def can_make_prediction(self, user_id: int, trading_day: date) -> bool:
+        """예측 가능 여부 확인 (가용 슬롯 기반)"""
+        stats = self.get_or_create_user_daily_stats(user_id, trading_day)
+        return getattr(stats, "max_predictions", 0) > 0
 
     def get_remaining_predictions(self, user_id: int, trading_day: date) -> int:
-        """남은 예측 가능 수"""
+        """남은 예측 가능 수 (가용 슬롯)"""
         stats = self.get_or_create_user_daily_stats(user_id, trading_day)
-        return max(0, stats.max_predictions - stats.predictions_made)
+        return max(0, getattr(stats, "max_predictions", 0))
+
+    def consume_available_prediction(
+        self, user_id: int, trading_day: date, amount: int = 1
+    ) -> UserDailyStatsResponse:
+        """가용 슬롯 차감 및 사용량 증가 (원자적 업데이트)"""
+        updated_count = (
+            self.db.query(self.model_class)
+            .filter(
+                and_(
+                    self.model_class.user_id == user_id,
+                    self.model_class.trading_day == trading_day,
+                    self.model_class.max_predictions > 0,
+                )
+            )
+            .update(
+                {
+                    "max_predictions": self.model_class.max_predictions - amount,
+                    "predictions_made": self.model_class.predictions_made + amount,
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated_count > 0:
+            self.db.commit()
+        # 최신 상태 반환
+        return self.get_or_create_user_daily_stats(user_id, trading_day)
+
+    def refill_by_cooldown(
+        self, user_id: int, trading_day: date, amount: int = 1
+    ) -> UserDailyStatsResponse:
+        """쿨다운으로 가용 슬롯 회복 (최대 3까지)"""
+        # 현재 상태 조회
+        stats = self.get_or_create_user_daily_stats(user_id, trading_day)
+        current_available = getattr(stats, "max_predictions", 0)
+        if current_available >= 3:
+            return stats
+
+        new_available = min(3, current_available + amount)
+        updated_count = (
+            self.db.query(self.model_class)
+            .filter(
+                and_(
+                    self.model_class.user_id == user_id,
+                    self.model_class.trading_day == trading_day,
+                )
+            )
+            .update({"max_predictions": new_available}, synchronize_session=False)
+        )
+        if updated_count > 0:
+            self.db.commit()
+        return self.get_or_create_user_daily_stats(user_id, trading_day)
+
+    def refund_prediction(
+        self, user_id: int, trading_day: date, amount: int = 1
+    ) -> UserDailyStatsResponse:
+        """예측 취소 등으로 가용 슬롯 환불 (가용 +1, 사용량 -1, cap 준수)"""
+        stats = self.get_or_create_user_daily_stats(user_id, trading_day)
+        cap = settings.BASE_PREDICTION_SLOTS + settings.MAX_AD_SLOTS
+        current_available = getattr(stats, "max_predictions", 0)
+        current_used = getattr(stats, "predictions_made", 0)
+
+        new_available = min(cap, current_available + amount)
+        new_used = max(0, current_used - amount)
+
+        updated_count = (
+            self.db.query(self.model_class)
+            .filter(
+                and_(
+                    self.model_class.user_id == user_id,
+                    self.model_class.trading_day == trading_day,
+                )
+            )
+            .update(
+                {
+                    "max_predictions": new_available,
+                    "predictions_made": new_used,
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated_count > 0:
+            self.db.commit()
+        return self.get_or_create_user_daily_stats(user_id, trading_day)
 
     def increase_max_predictions(
         self, user_id: int, trading_day: date, additional_slots: int = 1
@@ -535,28 +641,30 @@ class UserDailyStatsRepository(
             .first()
         )
 
+        max_cap = settings.BASE_PREDICTION_SLOTS + settings.MAX_AD_SLOTS
+
         if not model_instance:
             model_instance = self.model_class(
                 user_id=user_id,
                 trading_day=trading_day,
                 predictions_made=0,
-                max_predictions=3 + additional_slots,
+                max_predictions=min(settings.BASE_PREDICTION_SLOTS + additional_slots, max_cap),
             )
             self.db.add(model_instance)
         else:
-            # SQL UPDATE 사용
-            self.db.query(self.model_class).filter(
-                and_(
-                    self.model_class.user_id == user_id,
-                    self.model_class.trading_day == trading_day,
+            # SQL UPDATE 사용 (상한 캡 적용)
+            current_max = getattr(model_instance, "max_predictions", settings.BASE_PREDICTION_SLOTS)
+            new_max = min(current_max + additional_slots, max_cap)
+            if new_max != current_max:
+                self.db.query(self.model_class).filter(
+                    and_(
+                        self.model_class.user_id == user_id,
+                        self.model_class.trading_day == trading_day,
+                    )
+                ).update(
+                    {"max_predictions": new_max},
+                    synchronize_session=False,
                 )
-            ).update(
-                {
-                    "max_predictions": self.model_class.max_predictions
-                    + additional_slots
-                },
-                synchronize_session=False,
-            )
 
         self.db.commit()
 

@@ -1421,3 +1421,28 @@ ErrorLog를 활용한 통합 에러 추적 시스템 구현으로 운영 안정�
 
 
 [HTTPException] POST https://mangum:80/api/v1/batch/all-jobs from None -> 500: {'message': 'All batch jobs failed to queue.', 'details': [BatchJobResult(job='Collect EOD data for 2025-08-30', status='failed', sequence=1, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.'), BatchJobResult(job='Close prediction session', status='failed', sequence=1, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.'), BatchJobResult(job='Settlement for 2025-08-30', status='failed', sequence=2, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.'), BatchJobResult(job='Start new prediction session', status='failed', sequence=3, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.'), BatchJobResult(job='Setup universe for 2025-08-31 with 101 symbols', status='failed', sequence=4, response=None, error='500: Error sending FIFO message to SQS: An error occurred (InvalidClientTokenId) when calling the SendMessage operation: The security token included in the request is invalid.')]}",
+\n---
+\n## 최신 업데이트 (2025-09-02) ✅
+\n### 8. 쿨다운/광고 슬롯 정책 및 리포지토리 정리
+\n- [x] CooldownRepository 구조 통일 및 타입 안전화
+  - [x] `BaseRepository[T, Schema]` 패턴으로 리팩토링 (스키마 반환 보장)
+  - [x] SQLAlchemy `update(..., synchronize_session=False)` 사용으로 직접 속성 할당 제거
+  - [x] BasedPyright 경고 해결: Column[str]에 대한 직접 할당/조건 평가 이슈 제거
+  - [x] `get_timers_by_status()` Optional 제거하여 `List[Schema]` 보장
+\n- [x] CooldownService 정책 확정 및 구현
+  - [x] 임계값: `available_slots <= 3`일 때 자동 쿨다운 시작
+  - [x] 간격: 5분마다 1칸 회복 (`COOLDOWN_MINUTES = 5`)
+  - [x] 동적 임계값: `threshold = min(COOLDOWN_TRIGGER_THRESHOLD, stats.max_predictions)`
+  - [x] 일일 타이머 생성 제한 제거 (무제한 동작)
+  - [x] 회복 후에도 `available_slots <= threshold`면 다음 타이머 연속 스케줄
+\n- [x] 광고 시청 슬롯 증가 상한(cap) 적용
+  - [x] 상한: `BASE_PREDICTION_SLOTS + MAX_AD_SLOTS` (= 3 + 7 = 10)
+  - [x] `UserDailyStatsRepository.increase_max_predictions()`에 cap 적용 (신규/기존 모두)
+  - [x] AdUnlockService에서 일일 횟수 제한 로직 제거, cap 기반으로 `can_unlock_by_ad` 판단
+\n- [x] 서비스 타입 일치화
+  - [x] Cooldown 관련 서비스에서 모델 → 스키마 타입힌트로 통일
+\n참고 파일
+- `myapi/repositories/cooldown_repository.py`
+- `myapi/services/cooldown_service.py`
+- `myapi/repositories/prediction_repository.py` (UserDailyStatsRepository cap 적용)
+- `myapi/services/ad_unlock_service.py` (일일 제한 제거, cap 기반 판단)

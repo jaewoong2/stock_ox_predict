@@ -216,3 +216,126 @@ class AwsService:
             raise HTTPException(
                 status_code=500, detail=f"Error fetching SQS queue attributes: {str(e)}"
             )
+
+    def schedule_one_time_event(
+        self,
+        delay_minutes: int,
+        target_queue_url: str,
+        message_body: dict,
+        message_group_id: str,
+        rule_name_prefix: str = "cooldown-slot-refill"
+    ) -> str:
+        """
+        EventBridge를 사용하여 일회성 이벤트를 스케줄링합니다.
+        
+        Args:
+            delay_minutes: 지연 시간 (분)
+            target_queue_url: 대상 SQS 큐 URL
+            message_body: 전송할 메시지 내용
+            message_group_id: FIFO 큐 그룹 ID
+            rule_name_prefix: EventBridge 규칙 이름 접두사
+            
+        Returns:
+            str: 생성된 EventBridge 규칙 ARN
+            
+        Raises:
+            HTTPException: EventBridge 스케줄링 실패
+        """
+        import boto3
+        from datetime import datetime, timedelta
+        import json
+        import uuid
+        
+        eventbridge = self._client("events")
+        
+        # 스케줄 시간 계산 (UTC)
+        scheduled_time = datetime.utcnow() + timedelta(minutes=delay_minutes)
+        schedule_expression = f"at({scheduled_time.strftime('%Y-%m-%dT%H:%M:%S')})"
+        
+        # 고유한 규칙 이름 생성
+        rule_name = f"{rule_name_prefix}-{uuid.uuid4().hex[:8]}"
+        
+        try:
+            # EventBridge 규칙 생성
+            rule_response = eventbridge.put_rule(
+                Name=rule_name,
+                ScheduleExpression=schedule_expression,
+                State="ENABLED",
+                Description=f"One-time slot refill timer (delay: {delay_minutes}min)"
+            )
+            
+            rule_arn = rule_response["RuleArn"]
+            
+            # SQS 대상 추가
+            eventbridge.put_targets(
+                Rule=rule_name,
+                Targets=[
+                    {
+                        "Id": "1",
+                        "Arn": self._get_queue_arn_from_url(target_queue_url),
+                        "SqsParameters": {
+                            "MessageGroupId": message_group_id
+                        },
+                        "InputTransformer": {
+                            "InputTemplate": json.dumps(message_body)
+                        }
+                    }
+                ]
+            )
+            
+            logger.info(f"Scheduled one-time event: {rule_name}, ARN: {rule_arn}")
+            return rule_arn
+            
+        except Exception as e:
+            logger.error(f"Failed to schedule one-time event: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"EventBridge 스케줄링 실패: {str(e)}"
+            )
+    
+    def cancel_scheduled_event(self, rule_arn: str) -> bool:
+        """
+        예약된 EventBridge 규칙을 취소합니다.
+        
+        Args:
+            rule_arn: 취소할 EventBridge 규칙 ARN
+            
+        Returns:
+            bool: 취소 성공 여부
+        """
+        try:
+            eventbridge = self._client("events")
+            
+            # ARN에서 규칙 이름 추출
+            rule_name = rule_arn.split("/")[-1]
+            
+            # 대상 제거
+            eventbridge.remove_targets(Rule=rule_name, Ids=["1"])
+            
+            # 규칙 삭제
+            eventbridge.delete_rule(Name=rule_name)
+            
+            logger.info(f"Successfully cancelled scheduled event: {rule_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to cancel scheduled event {rule_arn}: {str(e)}")
+            return False
+    
+    def _get_queue_arn_from_url(self, queue_url: str) -> str:
+        """
+        SQS 큐 URL에서 ARN을 생성합니다.
+        
+        Args:
+            queue_url: SQS 큐 URL
+            
+        Returns:
+            str: SQS 큐 ARN
+        """
+        # URL 형식: https://sqs.{region}.amazonaws.com/{account_id}/{queue_name}
+        parts = queue_url.split("/")
+        queue_name = parts[-1]
+        account_id = parts[-2]
+        region = queue_url.split(".")[1]
+        
+        return f"arn:aws:sqs:{region}:{account_id}:{queue_name}"

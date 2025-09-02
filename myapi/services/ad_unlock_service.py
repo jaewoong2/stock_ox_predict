@@ -33,6 +33,7 @@ from myapi.schemas.ad_unlock import (
     UnlockMethod,
 )
 from myapi.utils.timezone_utils import get_current_kst_date
+from myapi.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,8 @@ class AdUnlockService:
     """광고 해제 관련 비즈니스 로직을 담당하는 서비스"""
 
     # 비즈니스 규칙 상수
-    MAX_AD_UNLOCKS_PER_DAY = 10  # 일일 광고 시청 제한
-    MAX_COOLDOWN_UNLOCKS_PER_DAY = 10  # 일일 쿨다운 제한
+    MAX_AD_UNLOCKS_PER_DAY = 10  # 일일 광고 시청 제한 (비활성화: cap으로 대체)
+    MAX_COOLDOWN_UNLOCKS_PER_DAY = 10  # 일일 쿨다운 제한 (비활성화)
     COOLDOWN_MINUTES = 60  # 쿨다운 대기 시간 (분)
     SLOTS_PER_UNLOCK = 1  # 한 번에 해제되는 슬롯 수
 
@@ -71,21 +72,6 @@ class AdUnlockService:
         current_date = get_current_kst_date()
 
         try:
-            # 일일 광고 시청 제한 확인
-            today_ad_unlocks = self.ad_unlock_repo.count_daily_unlocks_by_method(
-                user_id, current_date, UnlockMethod.AD.value
-            )
-
-            if today_ad_unlocks >= self.MAX_AD_UNLOCKS_PER_DAY:
-                return AdWatchCompleteResponse(
-                    success=False,
-                    message=f"일일 광고 시청 제한({self.MAX_AD_UNLOCKS_PER_DAY}회)에 도달했습니다.",
-                    slots_unlocked=0,
-                    current_max_predictions=self._get_current_max_predictions(
-                        user_id, current_date
-                    ),
-                )
-
             # 광고 시청 기록 생성
             unlock_record = self.ad_unlock_repo.create_ad_unlock_record(
                 user_id=user_id,
@@ -143,22 +129,6 @@ class AdUnlockService:
         current_date = get_current_kst_date()
 
         try:
-            # 일일 쿨다운 제한 확인
-            today_cooldown_unlocks = self.ad_unlock_repo.count_daily_unlocks_by_method(
-                user_id, current_date, UnlockMethod.COOLDOWN.value
-            )
-
-            if today_cooldown_unlocks >= self.MAX_COOLDOWN_UNLOCKS_PER_DAY:
-                return SlotIncreaseResponse(
-                    success=False,
-                    message=f"일일 쿨다운 해제 제한({self.MAX_COOLDOWN_UNLOCKS_PER_DAY}회)에 도달했습니다.",
-                    current_max_predictions=self._get_current_max_predictions(
-                        user_id, current_date
-                    ),
-                    unlocked_slots=0,
-                    method_used=UnlockMethod.COOLDOWN.value,
-                )
-
             # 쿨다운 시간 확인
             if not self._can_use_cooldown(user_id, current_date):
                 last_unlock = self.ad_unlock_repo.get_latest_unlock_by_method(
@@ -234,7 +204,7 @@ class AdUnlockService:
                 user_id, current_date
             )
 
-            # 오늘의 해제 현황 조회
+            # 오늘의 해제 현황 조회 (표시용)
             today_ad_unlocks = self.ad_unlock_repo.count_daily_unlocks_by_method(
                 user_id, current_date, UnlockMethod.AD.value
             )
@@ -242,12 +212,10 @@ class AdUnlockService:
                 user_id, current_date, UnlockMethod.COOLDOWN.value
             )
 
-            # 해제 가능 여부 판단
-            can_unlock_by_ad = today_ad_unlocks < self.MAX_AD_UNLOCKS_PER_DAY
-            can_unlock_by_cooldown = (
-                today_cooldown_unlocks < self.MAX_COOLDOWN_UNLOCKS_PER_DAY
-                and self._can_use_cooldown(user_id, current_date)
-            )
+            # 해제 가능 여부 판단 (일일 제한 없음, cap만 적용)
+            cap = settings.BASE_PREDICTION_SLOTS + settings.MAX_AD_SLOTS
+            can_unlock_by_ad = stats.max_predictions < cap
+            can_unlock_by_cooldown = self._can_use_cooldown(user_id, current_date)
 
             return AvailableSlotsResponse(
                 current_max_predictions=stats.max_predictions,

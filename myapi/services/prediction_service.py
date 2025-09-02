@@ -83,7 +83,7 @@ class PredictionService:
         if self.pred_repo.prediction_exists(user_id, trading_day, symbol):
             raise ConflictError("Prediction already submitted for this symbol")
 
-        # 일일 한도 확인
+        # 가용 슬롯 확인 (남은 슬롯 > 0)
         if not self.stats_repo.can_make_prediction(user_id, trading_day):
             remaining = self.stats_repo.get_remaining_predictions(user_id, trading_day)
             raise RateLimitError(
@@ -102,20 +102,13 @@ class PredictionService:
             submitted_at=now,
         )
 
+        # 예측 소모: 가용 슬롯 1 차감 + 사용량 1 증가
+        self.stats_repo.consume_available_prediction(user_id, trading_day, 1)
+
         if not created:
-            # 예측 생성 실패 시 차감된 수수료 환불
             try:
-                from myapi.schemas.points import PointsTransactionRequest
-
-                refund_request = PointsTransactionRequest(
-                    amount=self.PREDICTION_FEE_POINTS,
-                    reason=f"Refund for failed prediction creation ({symbol})",
-                    ref_id=f"failed_prediction_refund_{user_id}_{trading_day.strftime('%Y%m%d')}_{symbol}",
-                )
-
-                self.point_service.add_points(
-                    user_id=user_id, request=refund_request, trading_day=trading_day
-                )
+                # 예측 환불: 가용 +1, 사용량 -1
+                self.stats_repo.refund_prediction(user_id, trading_day, 1)
             except Exception:
                 pass  # 환불 실패해도 원래 오류를 우선
 
@@ -132,23 +125,52 @@ class PredictionService:
             )
             raise ValidationError("Failed to create prediction")
 
-        # 실제 prediction_id로 수수료 기록 업데이트 (ref_id 수정)
+        # 자동 쿨다운 트리거 (비동기, 실패해도 예측 성공)
         try:
-            # 새로운 ref_id로 수수료 기록 생성하고 기존 임시 기록은 유지
-            actual_fee_result = self.point_service.charge_prediction_fee(
+            import asyncio
+
+            asyncio.create_task(self._trigger_cooldown_if_needed(user_id, trading_day))
+        except Exception as e:
+            self.error_log_service.log_prediction_error(
                 user_id=user_id,
-                prediction_id=created.id,
-                fee=0,  # 이미 차감했으므로 0으로 기록만 업데이트
                 trading_day=trading_day,
                 symbol=symbol,
+                error_message=f"Cooldown trigger failed: {str(e)}",
             )
-        except Exception:
-            pass  # 기록 업데이트 실패해도 예측 생성은 유지
-
-        # 일일 통계 증가
-        self.stats_repo.increment_predictions_made(user_id, trading_day)
 
         return created
+
+    async def _trigger_cooldown_if_needed(
+        self, user_id: int, trading_day: date
+    ) -> None:
+        """
+        예측 제출 후 슬롯 수를 확인하여 필요시 자동 쿨다운 시작
+
+        Args:
+            user_id: 사용자 ID
+            trading_day: 거래일
+        """
+        try:
+            # 현재 사용 가능한 슬롯 수 확인 (가용=현재 max_predictions)
+            stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
+            available_slots = max(0, stats.max_predictions)
+
+            # 임계값 이하일 때만 쿨다운 시작
+            if available_slots <= self.settings.COOLDOWN_TRIGGER_THRESHOLD:
+                from myapi.services.cooldown_service import CooldownService
+
+                cooldown_service = CooldownService(self.db, self.settings)
+                await cooldown_service.start_auto_cooldown(user_id, trading_day)
+
+                print(
+                    f"Triggered auto cooldown for user {user_id}, "
+                    f"available_slots: {available_slots}, "
+                    f"threshold: {self.settings.COOLDOWN_TRIGGER_THRESHOLD}"
+                )
+
+        except Exception as e:
+            # 쿨다운 시작 실패해도 예측 제출은 성공으로 처리
+            print(f"Failed to trigger cooldown for user {user_id}: {str(e)}")
 
     def update_prediction(
         self, user_id: int, prediction_id: int, payload: PredictionUpdate
@@ -217,6 +239,12 @@ class PredictionService:
         canceled = self.pred_repo.cancel_prediction(prediction_id)
         if not canceled:
             raise ValidationError("Failed to cancel prediction")
+
+        # 취소 성공 시 예측 환불 처리 (가용 +1, 사용량 -1)
+        try:
+            self.stats_repo.refund_prediction(user_id, model.trading_day, 1)
+        except Exception:
+            pass
 
         # 취소 시 수수료 환불 (비즈니스 규칙에 따라)
         if self.PREDICTION_CANCEL_REFUND:

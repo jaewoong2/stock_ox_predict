@@ -14,6 +14,7 @@ from myapi.services.point_service import PointService
 from myapi.services.ad_unlock_service import AdUnlockService
 from myapi.config import Settings
 from myapi.repositories.oauth_state_repository import OAuthStateRepository
+from myapi.services.cooldown_service import CooldownService
 
 
 class ConfigModule(containers.DeclarativeContainer):
@@ -54,6 +55,7 @@ class ServiceModule(containers.DeclarativeContainer):
     reward_service = providers.Factory(RewardService, db=repositories.get_db)
     point_service = providers.Factory(PointService, db=repositories.get_db)
     ad_unlock_service = providers.Factory(AdUnlockService, db=repositories.get_db)
+    cooldown_service = providers.Factory(CooldownService, db=repositories.get_db)
 
 
 class Container(containers.DeclarativeContainer):
