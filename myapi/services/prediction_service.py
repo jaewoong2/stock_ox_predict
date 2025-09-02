@@ -11,7 +11,6 @@ from myapi.core.exceptions import (
     ConflictError,
     BusinessLogicError,
     RateLimitError,
-    InsufficientBalanceError,
 )
 from myapi.config import Settings
 from myapi.models.prediction import (
@@ -36,6 +35,7 @@ from myapi.schemas.prediction import (
     PredictionChoice,
 )
 from myapi.services.error_log_service import ErrorLogService
+from myapi.utils.date_utils import to_date
 
 
 class PredictionService:
@@ -54,6 +54,7 @@ class PredictionService:
         # 포인트 설정 (비즈니스 설정)
         self.PREDICTION_FEE_POINTS = settings.PREDICTION_FEE_POINTS
         self.PREDICTION_CANCEL_REFUND = True  # 취소 시 수수료 환불 여부
+        self.CANCEL_WINDOW_MINUTES = 5  # 취소 허용 시간(분)
 
     # 제출/수정/취소
     def submit_prediction(
@@ -91,39 +92,76 @@ class PredictionService:
                 details={"remaining": remaining},
             )
 
-        # 생성
+        # 생성 + 슬롯 소모를 하나의 트랜잭션으로 처리
         choice = ChoiceEnum(payload.choice.value)
         now = datetime.now(timezone.utc)
-        created = self.pred_repo.create_prediction(
-            user_id=user_id,
-            trading_day=trading_day,
-            symbol=symbol,
-            choice=choice,
-            submitted_at=now,
+        from myapi.models.prediction import (
+            Prediction as PredictionModel,
+            UserDailyStats as UserDailyStatsModel,
         )
+        from sqlalchemy import and_
 
-        # 예측 소모: 가용 슬롯 1 차감 + 사용량 1 증가
-        self.stats_repo.consume_available_prediction(user_id, trading_day, 1)
+        try:
+            with self.db.begin():
+                # 1) 가용 슬롯 차감 + 사용량 증가 (가용>0 보장)
+                updated = (
+                    self.db.query(UserDailyStatsModel)
+                    .filter(
+                        and_(
+                            UserDailyStatsModel.user_id == user_id,
+                            UserDailyStatsModel.trading_day == trading_day,
+                            UserDailyStatsModel.available_predictions > 0,
+                        )
+                    )
+                    .update(
+                        {
+                            UserDailyStatsModel.available_predictions: UserDailyStatsModel.available_predictions
+                            - 1,
+                            UserDailyStatsModel.predictions_made: UserDailyStatsModel.predictions_made
+                            + 1,
+                        },
+                        synchronize_session=False,
+                    )
+                )
+                if updated == 0:
+                    raise RateLimitError(
+                        message="Daily prediction limit reached",
+                        details={
+                            "remaining": self.stats_repo.get_remaining_predictions(
+                                user_id, trading_day
+                            )
+                        },
+                    )
 
-        if not created:
-            try:
-                # 예측 환불: 가용 +1, 사용량 -1
-                self.stats_repo.refund_prediction(user_id, trading_day, 1)
-            except Exception:
-                pass  # 환불 실패해도 원래 오류를 우선
+                # 2) 예측 생성
+                model = PredictionModel(
+                    user_id=user_id,
+                    trading_day=trading_day,
+                    symbol=symbol,
+                    choice=choice,
+                    status=StatusEnum.PENDING,
+                    submitted_at=now,
+                    points_earned=0,
+                )
+                self.db.add(model)
+                self.db.flush()
+                self.db.refresh(model)
 
-            # 예측 생성 실패 에러 로깅
+            # 트랜잭션 성공 시 Pydantic 스키마로 변환
+            created = self.pred_repo._to_schema(model)
+        except Exception as e:
+            # 에러 로깅 후 전파
             self.error_log_service.log_prediction_error(
                 user_id=user_id,
                 trading_day=trading_day,
                 symbol=symbol,
-                error_message="Failed to create prediction in database",
+                error_message=f"Failed to create prediction atomically: {str(e)}",
                 prediction_details={
                     "choice": payload.choice.value,
                     "fee_charged": self.PREDICTION_FEE_POINTS,
                 },
             )
-            raise ValidationError("Failed to create prediction")
+            raise
 
         # 자동 쿨다운 트리거 (비동기, 실패해도 예측 성공)
         try:
@@ -138,6 +176,9 @@ class PredictionService:
                 error_message=f"Cooldown trigger failed: {str(e)}",
             )
 
+        if not created:
+            raise ValidationError("Failed to create prediction")
+
         return created
 
     async def _trigger_cooldown_if_needed(
@@ -151,12 +192,12 @@ class PredictionService:
             trading_day: 거래일
         """
         try:
-            # 현재 사용 가능한 슬롯 수 확인 (가용=현재 max_predictions)
+            # 현재 사용 가능한 슬롯 수 확인 (가용=현재 available_predictions)
             stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
-            available_slots = max(0, stats.max_predictions)
+            available_slots = max(0, stats.available_predictions)
 
-            # 임계값 이하일 때만 쿨다운 시작
-            if available_slots <= self.settings.COOLDOWN_TRIGGER_THRESHOLD:
+            # 임계값 이하일 때만 쿨다운 시작 (정책: 3 이하)
+            if available_slots <= 3:
                 from myapi.services.cooldown_service import CooldownService
 
                 cooldown_service = CooldownService(self.db, self.settings)
@@ -230,6 +271,26 @@ class PredictionService:
                 message="Only pending predictions can be canceled",
             )
 
+        # 제출 후 취소 허용 시간 경과 여부 체크
+        try:
+            now = datetime.now(timezone.utc)
+            submitted_at = getattr(model, "submitted_at", None)
+            if (
+                submitted_at
+                and (now - submitted_at).total_seconds()
+                > self.CANCEL_WINDOW_MINUTES * 60
+            ):
+                raise BusinessLogicError(
+                    error_code="PREDICTION_CANCEL_TIME_EXCEEDED",
+                    message=f"Predictions can be canceled within {self.CANCEL_WINDOW_MINUTES} minutes of submission",
+                )
+        except Exception:
+            # 시간 계산 실패 시 보수적으로 취소 불가 처리
+            raise BusinessLogicError(
+                error_code="PREDICTION_CANCEL_TIME_EXCEEDED",
+                message=f"Predictions can be canceled within {self.CANCEL_WINDOW_MINUTES} minutes of submission",
+            )
+
         if getattr(model, "locked_at", None) is not None:
             raise BusinessLogicError(
                 error_code="PREDICTION_LOCKED",
@@ -242,7 +303,9 @@ class PredictionService:
 
         # 취소 성공 시 예측 환불 처리 (가용 +1, 사용량 -1)
         try:
-            self.stats_repo.refund_prediction(user_id, model.trading_day, 1)
+            trading_day = to_date(model.trading_day)
+            if trading_day:
+                self.stats_repo.refund_prediction(user_id, trading_day, 1)
         except Exception:
             pass
 

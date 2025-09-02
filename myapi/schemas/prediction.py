@@ -81,7 +81,7 @@ class UserDailyStatsResponse(BaseModel):
     user_id: int
     trading_day: date
     predictions_made: int
-    max_predictions: int
+    available_predictions: int
     created_at: datetime
     updated_at: datetime
 

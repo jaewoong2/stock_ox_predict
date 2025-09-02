@@ -51,7 +51,7 @@ class CooldownService:
             # 2. 현재 슬롯 수 및 임계값 확인 (동적 임계값: 현재 최대 허용치보다 클 수 없음)
             current_slots = self._get_available_slots(user_id, trading_day)
             stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
-            threshold = min(settings.COOLDOWN_TRIGGER_THRESHOLD, stats.max_predictions)
+            threshold = 3  # 정책: 쿨다운 트리거/회복 임계값은 3
             if current_slots > threshold:
                 logger.info(
                     f"User {user_id} has enough slots ({current_slots} > {threshold}), no cooldown needed"
@@ -132,10 +132,7 @@ class CooldownService:
             current_slots = self._get_available_slots(timer.user_id, timer.trading_day)
 
             # 3. 슬롯 충전 (임계값 이하일 때만, 쿨다운은 최대 3까지만 회복)
-            stats = self.stats_repo.get_or_create_user_daily_stats(
-                timer.user_id, timer.trading_day
-            )
-            threshold = min(settings.COOLDOWN_TRIGGER_THRESHOLD, 3)
+            threshold = 3  # 정책: 쿨다운 트리거/회복 임계값은 3
             if current_slots <= threshold:
                 # 쿨다운 회복: 3 미만일 때만 +1 (최대 3)
                 self.stats_repo.refill_by_cooldown(
@@ -149,10 +146,8 @@ class CooldownService:
             self.cooldown_repo.complete_timer(timer_id)
 
             # 5. 아직 슬롯이 부족하면 다음 쿨다운 시작
-            updated_slots = self._get_available_slots(
-                timer.user_id, timer.trading_day
-            )
-            threshold = min(settings.COOLDOWN_TRIGGER_THRESHOLD, 3)
+            updated_slots = self._get_available_slots(timer.user_id, timer.trading_day)
+            threshold = 3  # 정책: 쿨다운 트리거/회복 임계값은 3
             if updated_slots <= threshold:
                 await self.start_auto_cooldown(timer.user_id, timer.trading_day)
 
@@ -245,7 +240,7 @@ class CooldownService:
         """
         try:
             stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
-            # 가용 슬롯은 현재 max_predictions (소모/회복 직결)
-            return max(0, stats.max_predictions)
+            # 가용 슬롯은 현재 available_predictions (소모/회복 직결)
+            return max(0, stats.available_predictions)
         except Exception:
             return 0  # 오류 시 0 반환

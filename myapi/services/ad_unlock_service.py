@@ -1,18 +1,10 @@
 """
-광고 해제 서비스 - 광고 시청을 통한 예측 슬롯 해제 비즈니스 로직
+광고 해제 서비스 - 광고 시청/쿨다운을 통한 예측 슬롯 증가
 
-이 서비스는 광고 시청을 통한 예측 슬롯 해제의 핵심 비즈니스 로직을 담당합니다:
-1. 광고 시청 완료 처리
-2. 슬롯 증가 및 검증
-3. 일일/전체 제한 확인
-4. 쿨다운 관리
-5. 통계 및 히스토리 조회
-
-핵심 특징:
-- 비즈니스 규칙 적용 (일일 제한, 쿨다운 등)
-- 예측 서비스와의 연동을 통한 슬롯 증가
-- 트랜잭션 기반 데이터 일관성 보장
-- 완전한 감사 추적
+핵심 기능:
+1. 광고 시청 완료 처리 (가용 슬롯 cap=10까지 증가)
+2. 쿨다운 회복 (가용 슬롯을 최대 3까지 리필)
+3. 통계/히스토리 조회
 """
 
 from typing import List
@@ -42,9 +34,7 @@ class AdUnlockService:
     """광고 해제 관련 비즈니스 로직을 담당하는 서비스"""
 
     # 비즈니스 규칙 상수
-    MAX_AD_UNLOCKS_PER_DAY = 10  # 일일 광고 시청 제한 (비활성화: cap으로 대체)
-    MAX_COOLDOWN_UNLOCKS_PER_DAY = 10  # 일일 쿨다운 제한 (비활성화)
-    COOLDOWN_MINUTES = 60  # 쿨다운 대기 시간 (분)
+    COOLDOWN_MINUTES = 60  # 쿨다운 대기 시간 (분) - 현재는 안내 메시지 용도로만 사용
     SLOTS_PER_UNLOCK = 1  # 한 번에 해제되는 슬롯 수
 
     def __init__(self, db: Session):
@@ -84,7 +74,7 @@ class AdUnlockService:
 
                 raise BusinessLogicError("FAIL", "광고 시청 기록 생성에 실패했습니다.")
 
-            # 예측 슬롯 증가
+            # 예측 슬롯 증가 (광고 시청은 cap=10까지 가용 슬롯 증가)
             self.stats_repo.increase_max_predictions(
                 user_id, current_date, self.SLOTS_PER_UNLOCK
             )
@@ -157,8 +147,8 @@ class AdUnlockService:
                     "FAIL", "쿨다운 해제 기록 생성에 실패했습니다."
                 )
 
-            # 예측 슬롯 증가
-            self.stats_repo.increase_max_predictions(
+            # 쿨다운은 3까지 회복 (가용 슬롯을 최대 3까지 리필)
+            self.stats_repo.refill_by_cooldown(
                 user_id, current_date, self.SLOTS_PER_UNLOCK
             )
 
@@ -214,15 +204,13 @@ class AdUnlockService:
 
             # 해제 가능 여부 판단 (일일 제한 없음, cap만 적용)
             cap = settings.BASE_PREDICTION_SLOTS + settings.MAX_AD_SLOTS
-            can_unlock_by_ad = stats.max_predictions < cap
+            can_unlock_by_ad = stats.available_predictions < cap
             can_unlock_by_cooldown = self._can_use_cooldown(user_id, current_date)
 
             return AvailableSlotsResponse(
-                current_max_predictions=stats.max_predictions,
+                current_max_predictions=stats.available_predictions,
                 predictions_made=stats.predictions_made,
-                available_predictions=max(
-                    0, stats.max_predictions - stats.predictions_made
-                ),
+                available_predictions=max(0, stats.available_predictions),
                 can_unlock_by_ad=can_unlock_by_ad,
                 can_unlock_by_cooldown=can_unlock_by_cooldown,
                 today_ad_unlocks=today_ad_unlocks,
@@ -351,6 +339,6 @@ class AdUnlockService:
         """
         try:
             stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
-            return stats.max_predictions
+            return stats.available_predictions
         except Exception:
             return 3  # 기본값

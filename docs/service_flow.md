@@ -153,10 +153,10 @@ graph TD
 #### 4.2 쿨다운/광고 슬롯 정책 요약 (2025-09-02 반영)
 
 - 기본 슬롯: `BASE_PREDICTION_SLOTS = 3`
-- 광고 시청: 1회 시청 시 `max_predictions + 1` (상한 10)
+- 광고 시청: 1회 시청 시 `available + 1` (상한 10)
   - 상한(cap): `BASE_PREDICTION_SLOTS + MAX_AD_SLOTS` = `3 + 7 = 10`
   - AdUnlockService는 일일 횟수 제한 없이 cap만 적용 (표시용 카운트는 유지)
-- 자동 쿨다운: 남은 슬롯(`available = max_predictions`)이 `<= 3`이면 발동
+- 자동 쿨다운: 남은 슬롯(`available`)이 `<= 3`이면 발동
   - 간격: `COOLDOWN_MINUTES = 5`분마다 1칸 회복 (cap 이내)
   - 임계값은 용량보다 클 수 없음: `threshold = min(COOLDOWN_TRIGGER_THRESHOLD, stats.max_predictions)`
   - 회복 후에도 `available <= threshold`면 다음 타이머 자동 연장
@@ -165,6 +165,11 @@ graph TD
 구현 위치
 - 로직: `myapi/services/cooldown_service.py`, `myapi/repositories/prediction_repository.py`
 - 설정: `myapi/config.py` (`BASE_PREDICTION_SLOTS`, `MAX_AD_SLOTS`, `COOLDOWN_MINUTES`, `COOLDOWN_TRIGGER_THRESHOLD`)
+ - 컬럼 리네이밍: `user_daily_stats.max_predictions` → `available_predictions` (2025-09-02)
+ - 예측 생성 트랜잭션 통합: 슬롯 소모 + 예측 생성 원자 처리 (2025-09-02)
+
+취소 정책
+- 취소는 `PENDING` 상태에서만 허용되며, 서비스 정책에 따른 시간 제한 내에서만 가능(기본 5분 제안).
 
 #### 4.3 정산 및 보상 플로우
 
