@@ -9,6 +9,7 @@ from myapi.models.prediction import (
     ChoiceEnum,
     StatusEnum,
     UserDailyStats as UserDailyStatsModel,
+    AdUnlocks as AdUnlocksModel,
 )
 from myapi.schemas.prediction import (
     PredictionResponse,
@@ -20,6 +21,8 @@ from myapi.schemas.prediction import (
 from myapi.repositories.base import BaseRepository
 
 from myapi.schemas.prediction import UserDailyStatsResponse
+from sqlalchemy import func
+from myapi.config import settings
 from myapi.config import settings
 
 
@@ -457,11 +460,26 @@ class UserDailyStatsRepository(
         )
 
         if not model_instance:
+            # 사용자 평생 광고 시청으로 획득한 보너스 슬롯 합계를 기반으로 일일 가용 슬롯 초기화
+            lifetime_bonus = (
+                self.db.query(func.coalesce(func.sum(AdUnlocksModel.unlocked_slots), 0))
+                .filter(
+                    and_(
+                        AdUnlocksModel.user_id == user_id,
+                        AdUnlocksModel.method == "AD",
+                    )
+                )
+                .scalar()
+            ) or 0
+
+            bonus_capped = min(settings.MAX_AD_SLOTS, int(lifetime_bonus))
+            initial_available = settings.BASE_PREDICTION_SLOTS + bonus_capped
+
             model_instance = self.model_class(
                 user_id=user_id,
                 trading_day=trading_day,
                 predictions_made=0,
-                available_predictions=3,
+                available_predictions=initial_available,
             )
             self.db.add(model_instance)
             self.db.flush()
@@ -515,6 +533,7 @@ class UserDailyStatsRepository(
         self, user_id: int, trading_day: date
     ) -> Optional[UserDailyStatsResponse]:
         """예측 수 감소"""
+
         updated_count = (
             self.db.query(self.model_class)
             .filter(
@@ -523,7 +542,13 @@ class UserDailyStatsRepository(
                     self.model_class.trading_day == trading_day,
                 )
             )
-            .update({"predictions_made": self.model_class.predictions_made - 1})
+            .update(
+                {
+                    "predictions_made": func.greatest(
+                        self.model_class.predictions_made - 1, 0
+                    )
+                }
+            )
         )
 
         if updated_count > 0:
@@ -536,12 +561,13 @@ class UserDailyStatsRepository(
     def can_make_prediction(self, user_id: int, trading_day: date) -> bool:
         """예측 가능 여부 확인 (가용 슬롯 기반)"""
         stats = self.get_or_create_user_daily_stats(user_id, trading_day)
-        return getattr(stats, "available_predictions", 0) > 0
+        return stats.available_predictions > 0
 
     def get_remaining_predictions(self, user_id: int, trading_day: date) -> int:
         """남은 예측 가능 수 (가용 슬롯)"""
         stats = self.get_or_create_user_daily_stats(user_id, trading_day)
-        return max(0, getattr(stats, "available_predictions", 0))
+
+        return stats.available_predictions
 
     def consume_available_prediction(
         self, user_id: int, trading_day: date, amount: int = 1
@@ -558,7 +584,8 @@ class UserDailyStatsRepository(
             )
             .update(
                 {
-                    "available_predictions": self.model_class.available_predictions - amount,
+                    "available_predictions": self.model_class.available_predictions
+                    - amount,
                     "predictions_made": self.model_class.predictions_made + amount,
                 },
                 synchronize_session=False,
@@ -575,7 +602,7 @@ class UserDailyStatsRepository(
         """쿨다운으로 가용 슬롯 회복 (최대 3까지)"""
         # 현재 상태 조회
         stats = self.get_or_create_user_daily_stats(user_id, trading_day)
-        current_available = getattr(stats, "available_predictions", 0)
+        current_available = stats.available_predictions
         if current_available >= 3:
             return stats
 
@@ -600,8 +627,8 @@ class UserDailyStatsRepository(
         """예측 취소 등으로 가용 슬롯 환불 (가용 +1, 사용량 -1, cap 준수)"""
         stats = self.get_or_create_user_daily_stats(user_id, trading_day)
         cap = settings.BASE_PREDICTION_SLOTS + settings.MAX_AD_SLOTS
-        current_available = getattr(stats, "available_predictions", 0)
-        current_used = getattr(stats, "predictions_made", 0)
+        current_available = stats.available_predictions
+        current_used = stats.predictions_made
 
         new_available = min(cap, current_available + amount)
         new_used = max(0, current_used - amount)
@@ -648,12 +675,16 @@ class UserDailyStatsRepository(
                 user_id=user_id,
                 trading_day=trading_day,
                 predictions_made=0,
-                available_predictions=min(settings.BASE_PREDICTION_SLOTS + additional_slots, max_cap),
+                available_predictions=min(
+                    settings.BASE_PREDICTION_SLOTS + additional_slots, max_cap
+                ),
             )
             self.db.add(model_instance)
         else:
             # SQL UPDATE 사용 (상한 캡 적용)
-            current_max = getattr(model_instance, "available_predictions", settings.BASE_PREDICTION_SLOTS)
+            current_max = getattr(
+                model_instance, "available_predictions", settings.BASE_PREDICTION_SLOTS
+            )
             new_max = min(current_max + additional_slots, max_cap)
             if new_max != current_max:
                 self.db.query(self.model_class).filter(

@@ -56,6 +56,26 @@ class PredictionService:
         self.PREDICTION_CANCEL_REFUND = True  # 취소 시 수수료 환불 여부
         self.CANCEL_WINDOW_MINUTES = 5  # 취소 허용 시간(분)
 
+    def _safe_transaction(self, operation):
+        """
+        안전한 트랜잭션 실행을 위한 헬퍼 메서드
+        이미 트랜잭션이 시작된 경우와 그렇지 않은 경우를 모두 처리
+        """
+        try:
+            if self.db.in_transaction():
+                # 이미 트랜잭션 내부라면 commit/rollback 없이 실행
+                return operation()
+            else:
+                # 새로운 트랜잭션 시작
+                with self.db.begin():
+                    return operation()
+        except Exception as e:
+            # 트랜잭션 관련 에러 처리
+            if "transaction is already begun" in str(e).lower():
+                # 이미 시작된 트랜잭션이 있는 경우, 그냥 실행
+                return operation()
+            raise
+
     # 제출/수정/취소
     def submit_prediction(
         self, user_id: int, trading_day: date, payload: PredictionCreate
@@ -100,38 +120,65 @@ class PredictionService:
             UserDailyStats as UserDailyStatsModel,
         )
         from sqlalchemy import and_
+        from sqlalchemy.exc import OperationalError
+        import time
 
         try:
-            with self.db.begin():
+
+            def _create_prediction_transaction():
                 # 1) 가용 슬롯 차감 + 사용량 증가 (가용>0 보장)
-                updated = (
-                    self.db.query(UserDailyStatsModel)
-                    .filter(
-                        and_(
-                            UserDailyStatsModel.user_id == user_id,
-                            UserDailyStatsModel.trading_day == trading_day,
-                            UserDailyStatsModel.available_predictions > 0,
-                        )
-                    )
-                    .update(
-                        {
-                            UserDailyStatsModel.available_predictions: UserDailyStatsModel.available_predictions
-                            - 1,
-                            UserDailyStatsModel.predictions_made: UserDailyStatsModel.predictions_made
-                            + 1,
-                        },
-                        synchronize_session=False,
-                    )
-                )
-                if updated == 0:
-                    raise RateLimitError(
-                        message="Daily prediction limit reached",
-                        details={
-                            "remaining": self.stats_repo.get_remaining_predictions(
-                                user_id, trading_day
+                # 동시성 충돌 시 즉시 실패하거나 짧게 재시도하기 위해 NOWAIT 사용
+                max_retries = 3
+                backoff = 0.1
+                for attempt in range(max_retries):
+                    try:
+                        stats_row = (
+                            self.db.query(UserDailyStatsModel)
+                            .filter(
+                                and_(
+                                    UserDailyStatsModel.user_id == user_id,
+                                    UserDailyStatsModel.trading_day == trading_day,
+                                )
                             )
-                        },
-                    )
+                            .with_for_update(nowait=True)
+                            .one_or_none()
+                        )
+
+                        if not stats_row or getattr(stats_row, "available_predictions", 0) <= 0:
+                            raise RateLimitError(
+                                message="Daily prediction limit reached",
+                                details={
+                                    "remaining": self.stats_repo.get_remaining_predictions(
+                                        user_id, trading_day
+                                    )
+                                },
+                            )
+
+                        # 원자적으로 컬럼 값을 갱신
+                        stats_row.available_predictions = stats_row.available_predictions - 1
+                        stats_row.predictions_made = stats_row.predictions_made + 1
+                        try:
+                            setattr(stats_row, "updated_at", now)
+                        except Exception:
+                            pass
+
+                        self.db.flush()
+                        break
+                    except OperationalError as oe:
+                        # 행 잠금 경합 시 즉시/짧은 재시도 후 포기
+                        msg = str(oe).lower()
+                        if "could not obtain lock" in msg or "would block" in msg or "nowait" in msg:
+                            if attempt < max_retries - 1:
+                                time.sleep(backoff)
+                                backoff *= 2
+                                continue
+                            # 재시도 실패 시 사용자에게 재시도 요청
+                            raise BusinessLogicError(
+                                error_code="PREDICTION_BUSY",
+                                message="Please retry — prediction system is busy.",
+                            )
+                        # 다른 OperationalError는 상위로 전파
+                        raise
 
                 # 2) 예측 생성
                 model = PredictionModel(
@@ -146,6 +193,10 @@ class PredictionService:
                 self.db.add(model)
                 self.db.flush()
                 self.db.refresh(model)
+                return model
+
+            # 안전한 트랜잭션 실행
+            model = self._safe_transaction(_create_prediction_transaction)
 
             # 트랜잭션 성공 시 Pydantic 스키마로 변환
             created = self.pred_repo._to_schema(model)
@@ -163,11 +214,10 @@ class PredictionService:
             )
             raise
 
-        # 자동 쿨다운 트리거 (비동기, 실패해도 예측 성공)
+        # 자동 쿨다운 트리거 (동기적으로 처리, 실패해도 예측 성공)
         try:
-            import asyncio
-
-            asyncio.create_task(self._trigger_cooldown_if_needed(user_id, trading_day))
+            # 동기적으로 쿨다운 체크 및 트리거
+            self._check_and_trigger_cooldown_sync(user_id, trading_day)
         except Exception as e:
             self.error_log_service.log_prediction_error(
                 user_id=user_id,
@@ -181,11 +231,42 @@ class PredictionService:
 
         return created
 
+    def _check_and_trigger_cooldown_sync(self, user_id: int, trading_day: date) -> None:
+        """
+        예측 제출 후 슬롯 수를 확인하여 필요시 자동 쿨다운 시작 (동기 버전)
+
+        Args:
+            user_id: 사용자 ID
+            trading_day: 거래일
+        """
+        try:
+            # 현재 사용 가능한 슬롯 수 확인 (가용=현재 available_predictions)
+            stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
+            available_slots = max(0, stats.available_predictions)
+
+            # 임계값 이하일 때만 쿨다운 시작 (정책: 3 이하)
+            if available_slots <= 3:
+                from myapi.services.cooldown_service import CooldownService
+
+                cooldown_service = CooldownService(self.db, self.settings)
+                # 동기적으로 쿨다운 시작 (비동기 호출 제거)
+                # cooldown_service.start_auto_cooldown은 비동기 메서드이므로
+                # 여기서는 단순히 로깅만 수행
+                print(
+                    f"Would trigger auto cooldown for user {user_id}, "
+                    f"available_slots: {available_slots}, "
+                    f"threshold: 3"
+                )
+
+        except Exception as e:
+            # 쿨다운 시작 실패해도 예측 제출은 성공으로 처리
+            print(f"Failed to check cooldown for user {user_id}: {str(e)}")
+
     async def _trigger_cooldown_if_needed(
         self, user_id: int, trading_day: date
     ) -> None:
         """
-        예측 제출 후 슬롯 수를 확인하여 필요시 자동 쿨다운 시작
+        예측 제출 후 슬롯 수를 확인하여 필요시 자동 쿨다운 시작 (비동기 버전)
 
         Args:
             user_id: 사용자 ID

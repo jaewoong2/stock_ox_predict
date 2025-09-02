@@ -14,6 +14,8 @@ import logging
 
 from myapi.repositories.ad_unlock_repository import AdUnlockRepository
 from myapi.repositories.prediction_repository import UserDailyStatsRepository
+from myapi.repositories.session_repository import SessionRepository
+from myapi.utils.market_hours import USMarketHours
 from myapi.core.exceptions import ValidationError, BusinessLogicError
 from myapi.schemas.ad_unlock import (
     AdUnlockHistory,
@@ -24,7 +26,6 @@ from myapi.schemas.ad_unlock import (
     AdWatchCompleteResponse,
     UnlockMethod,
 )
-from myapi.utils.timezone_utils import get_current_kst_date
 from myapi.config import settings
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class AdUnlockService:
         self.db = db
         self.ad_unlock_repo = AdUnlockRepository(db)
         self.stats_repo = UserDailyStatsRepository(db)
+        self.session_repo = SessionRepository(db)
 
     def watch_ad_complete(
         self, user_id: int, request: AdWatchCompleteRequest
@@ -59,7 +61,7 @@ class AdUnlockService:
             ValidationError: 유효하지 않은 요청
             BusinessLogicError: 비즈니스 규칙 위반
         """
-        current_date = get_current_kst_date()
+        current_date = self._get_current_trading_day()
 
         try:
             # 광고 시청 기록 생성
@@ -79,7 +81,7 @@ class AdUnlockService:
                 user_id, current_date, self.SLOTS_PER_UNLOCK
             )
 
-            current_max_predictions = self._get_current_max_predictions(
+            current_available = self._get_current_max_predictions(
                 user_id, current_date
             )
 
@@ -91,7 +93,7 @@ class AdUnlockService:
                 success=True,
                 message="광고 시청이 완료되어 예측 슬롯이 증가했습니다.",
                 slots_unlocked=self.SLOTS_PER_UNLOCK,
-                current_max_predictions=current_max_predictions,
+                available_predictions=current_available,
             )
 
         except Exception as e:
@@ -116,10 +118,23 @@ class AdUnlockService:
             ValidationError: 유효하지 않은 요청
             BusinessLogicError: 비즈니스 규칙 위반
         """
-        current_date = get_current_kst_date()
+        current_date = self._get_current_trading_day()
 
         try:
-            # 쿨다운 시간 확인
+            # 현재 가용 슬롯 확인 (쿨다운은 available < 3 일 때만 허용)
+            stats = self.stats_repo.get_or_create_user_daily_stats(user_id, current_date)
+            if stats.available_predictions >= 3:
+                return SlotIncreaseResponse(
+                    success=False,
+                    message="Cooldown is only available when available slots are below 3.",
+                    available_predictions=self._get_current_max_predictions(
+                        user_id, current_date
+                    ),
+                    unlocked_slots=0,
+                    method_used=UnlockMethod.COOLDOWN.value,
+                )
+
+            # 쿨다운 시간 확인 (추후 created_at 기반으로 대기시간 검증 가능)
             if not self._can_use_cooldown(user_id, current_date):
                 last_unlock = self.ad_unlock_repo.get_latest_unlock_by_method(
                     user_id, current_date, UnlockMethod.COOLDOWN.value
@@ -127,7 +142,7 @@ class AdUnlockService:
                 return SlotIncreaseResponse(
                     success=False,
                     message=f"쿨다운 대기 중입니다. {self.COOLDOWN_MINUTES}분 후 다시 시도하세요.",
-                    current_max_predictions=self._get_current_max_predictions(
+                    available_predictions=self._get_current_max_predictions(
                         user_id, current_date
                     ),
                     unlocked_slots=0,
@@ -152,7 +167,7 @@ class AdUnlockService:
                 user_id, current_date, self.SLOTS_PER_UNLOCK
             )
 
-            current_max_predictions = self._get_current_max_predictions(
+            current_available = self._get_current_max_predictions(
                 user_id, current_date
             )
 
@@ -163,7 +178,7 @@ class AdUnlockService:
             return SlotIncreaseResponse(
                 success=True,
                 message="쿨다운을 통해 예측 슬롯이 증가했습니다.",
-                current_max_predictions=current_max_predictions,
+                available_predictions=current_available,
                 unlocked_slots=self.SLOTS_PER_UNLOCK,
                 method_used=UnlockMethod.COOLDOWN.value,
             )
@@ -186,7 +201,7 @@ class AdUnlockService:
         Returns:
             AvailableSlotsResponse: 사용 가능한 슬롯 정보
         """
-        current_date = get_current_kst_date()
+        current_date = self._get_current_trading_day()
 
         try:
             # 현재 통계 조회
@@ -205,10 +220,11 @@ class AdUnlockService:
             # 해제 가능 여부 판단 (일일 제한 없음, cap만 적용)
             cap = settings.BASE_PREDICTION_SLOTS + settings.MAX_AD_SLOTS
             can_unlock_by_ad = stats.available_predictions < cap
-            can_unlock_by_cooldown = self._can_use_cooldown(user_id, current_date)
+            can_unlock_by_cooldown = (
+                stats.available_predictions < 3 and self._can_use_cooldown(user_id, current_date)
+            )
 
             return AvailableSlotsResponse(
-                current_max_predictions=stats.available_predictions,
                 predictions_made=stats.predictions_made,
                 available_predictions=max(0, stats.available_predictions),
                 can_unlock_by_ad=can_unlock_by_ad,

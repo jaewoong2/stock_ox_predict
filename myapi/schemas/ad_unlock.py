@@ -60,7 +60,7 @@ class SlotIncreaseResponse(BaseModel):
     
     success: bool = Field(..., description="성공 여부")
     message: str = Field(..., description="응답 메시지")
-    current_max_predictions: int = Field(..., description="현재 최대 예측 수")
+    available_predictions: int = Field(..., description="현재 가용 슬롯 수")
     unlocked_slots: int = Field(..., description="해제된 슬롯 수")
     method_used: str = Field(..., description="사용된 해제 방법")
     
@@ -71,7 +71,6 @@ class SlotIncreaseResponse(BaseModel):
 class AvailableSlotsResponse(BaseModel):
     """사용 가능한 슬롯 조회 응답"""
     
-    current_max_predictions: int = Field(..., description="현재 최대 예측 수")
     predictions_made: int = Field(..., description="이미 만든 예측 수")
     available_predictions: int = Field(..., description="남은 예측 가능 수")
     can_unlock_by_ad: bool = Field(..., description="광고로 슬롯 해제 가능 여부")
@@ -111,7 +110,7 @@ class AdWatchCompleteResponse(BaseModel):
     success: bool = Field(..., description="성공 여부")
     message: str = Field(..., description="응답 메시지")
     slots_unlocked: int = Field(..., description="해제된 슬롯 수")
-    current_max_predictions: int = Field(..., description="현재 최대 예측 수")
+    available_predictions: int = Field(..., description="현재 가용 슬롯 수")
     
     class Config:
         from_attributes = True
