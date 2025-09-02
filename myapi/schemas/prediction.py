@@ -36,12 +36,12 @@ class PredictionUpdate(BaseModel):
 class PredictionResponse(BaseModel):
     id: int
     user_id: int
-    trading_day: str
+    trading_day: date
     symbol: str
     choice: PredictionChoice
     status: PredictionStatus
-    submitted_at: str
-    updated_at: Optional[str] = None
+    submitted_at: datetime
+    updated_at: Optional[datetime] = None
     points_earned: Optional[int] = None
 
     class Config:
@@ -49,7 +49,7 @@ class PredictionResponse(BaseModel):
 
 
 class UserPredictionsResponse(BaseModel):
-    trading_day: str
+    trading_day: date
     predictions: List[PredictionResponse]
     total_predictions: int
     completed_predictions: int
@@ -57,7 +57,7 @@ class UserPredictionsResponse(BaseModel):
 
 
 class PredictionStats(BaseModel):
-    trading_day: str
+    trading_day: date
     total_predictions: int
     up_predictions: int
     down_predictions: int
@@ -68,7 +68,7 @@ class PredictionStats(BaseModel):
 
 class PredictionSummary(BaseModel):
     user_id: int
-    trading_day: str
+    trading_day: date
     total_submitted: int
     correct_count: int
     incorrect_count: int
@@ -79,11 +79,11 @@ class PredictionSummary(BaseModel):
 
 class UserDailyStatsResponse(BaseModel):
     user_id: int
-    trading_day: str
+    trading_day: date
     predictions_made: int
     max_predictions: int
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True

@@ -1036,6 +1036,70 @@ GET /admin/integrity/check      # 데이터 정합성 검증
 2. **MVP 출시**: 현재 상태로 베타 서비스 시작 가능
 3. **정식 출시**: 알림+모니터링 시스템 추가 후 (1-2주)
 
+---
+
+## 🔄 **자동 쿨다운 시스템 설계** (신규)
+
+### **현재 쿨다운 vs 자동 쿨다운**
+
+**기존 수동 쿨다운:**
+- 사용자가 버튼 클릭 → 즉시 슬롯 +1
+- 60분 제한 (실제 시간 체크 없음)
+- `POST /ads/unlock-slot` 호출 방식
+
+**신규 자동 쿨다운:**
+- 예측 제출 후 슬롯 < 3개 → 자동 5분 타이머 시작
+- EventBridge + SQS 기반 자동 슬롯 충전
+- 사용자 개입 없이 백그라운드 동작
+
+### **구현 계획**
+
+#### **1. DB 모델 추가**
+```python
+# myapi/models/cooldown_timer.py (신규)
+class CooldownTimer(Base):
+    __tablename__ = "cooldown_timers"
+    __table_args__ = {"schema": "crypto"}
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("crypto.users.id"))
+    trading_day = Column(Date, nullable=False)
+    started_at = Column(TIMESTAMP(timezone=True))
+    scheduled_at = Column(TIMESTAMP(timezone=True))  # 5분 후
+    status = Column(String(20))  # ACTIVE/COMPLETED/CANCELLED
+    eventbridge_rule_arn = Column(String(255))
+```
+
+#### **2. EventBridge 스케줄링 서비스**
+```python
+# myapi/services/aws_service.py 확장
+async def schedule_one_time_event(delay_minutes: int, target_queue: str, message: dict)
+async def cancel_scheduled_event(rule_arn: str)
+```
+
+#### **3. 쿨다운 관리 서비스**
+```python
+# myapi/services/cooldown_service.py (신규)
+class CooldownService:
+    async def start_auto_cooldown(user_id, trading_day)
+    async def handle_cooldown_completion(timer_id)
+    async def cancel_active_cooldown(user_id)
+```
+
+#### **4. 예측 서비스 연동**
+```python
+# myapi/services/prediction_service.py 수정
+async def after_prediction_submit():
+    if available_slots < 3 and not has_active_cooldown:
+        await start_auto_cooldown()
+```
+
+### **기술적 고려사항**
+- **멱등성**: timer_id 기반 중복 처리 방지
+- **장애 처리**: EventBridge 실패 시 재시도 로직
+- **상태 관리**: ACTIVE → COMPLETED → cleanup
+- **비용 최적화**: one-time rule 자동 삭제
+
 
 
 

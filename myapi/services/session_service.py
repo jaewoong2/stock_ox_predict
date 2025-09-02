@@ -45,7 +45,22 @@ class SessionService:
         if not current_session:
             current_session = self.create_session(trading_day)
 
-        return SessionToday.model_validate(current_session)
+        return SessionToday(
+            trading_day=trading_day.strftime("%Y-%m-%d"),
+            phase=current_session.phase,
+            predict_open_at=current_session.predict_open_at.strftime("%H:%M:%S"),
+            predict_cutoff_at=current_session.predict_cutoff_at.strftime("%H:%M:%S"),
+            settle_ready_at=(
+                current_session.settle_ready_at.strftime("%H:%M:%S")
+                if current_session.settle_ready_at
+                else None
+            ),
+            settled_at=(
+                current_session.settled_at.strftime("%H:%M:%S")
+                if current_session.settled_at
+                else None
+            ),
+        )
 
     def create_session(self, trading_day: date) -> SessionStatus:
         """
@@ -161,8 +176,6 @@ class SessionService:
                     f"예측 가능. 마감까지 {status.time_until_end}초 남았습니다."
                 )
             else:
-                status.message = (
-                    f"예측 시간대이지만 세션이 OPEN 상태가 아닙니다 (현재: {session.phase.value if session else '없음'})."
-                )
+                status.message = f"예측 시간대이지만 세션이 OPEN 상태가 아닙니다 (현재: {session.phase.value if session else '없음'})."
 
         return status

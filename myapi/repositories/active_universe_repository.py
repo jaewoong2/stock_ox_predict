@@ -60,66 +60,80 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
         self, trading_day: date, universe_items: List[UniverseItem]
     ) -> List[UniverseItem]:
         """특정 날짜의 유니버스 설정 (기존 항목 삭제 후 새로 생성)"""
-        # 기존 유니버스 삭제
-        self.db.query(self.model_class).filter(
-            self.model_class.trading_day == trading_day
-        ).delete()
+        try:
+            # 기존 유니버스 삭제
+            self.db.query(self.model_class).filter(
+                self.model_class.trading_day == trading_day
+            ).delete()
 
-        # 새 유니버스 생성
-        created_items = []
-        for item in universe_items:
-            model_instance = self.model_class(
-                trading_day=trading_day, symbol=item.symbol, seq=item.seq
-            )
-            self.db.add(model_instance)
-            created_items.append(item)
+            # 새 유니버스 생성
+            created_items = []
+            for item in universe_items:
+                model_instance = self.model_class(
+                    trading_day=trading_day, symbol=item.symbol, seq=item.seq
+                )
+                self.db.add(model_instance)
+                created_items.append(item)
 
-        self.db.flush()
-        self.db.commit()
-        return created_items
+            self.db.commit()
+            return created_items
+
+        except Exception as e:
+            self.db.rollback()
+            raise e
 
     def add_symbol_to_universe(
         self, trading_day: date, symbol: str, seq: int
     ) -> UniverseItem:
         """유니버스에 심볼 추가"""
-        # 중복 확인
-        if self.symbol_exists_in_universe(trading_day, symbol):
-            raise ValueError(
-                f"Symbol {symbol} already exists in universe for {trading_day}"
+        try:
+            # 중복 확인
+            if self.symbol_exists_in_universe(trading_day, symbol):
+                raise ValueError(
+                    f"Symbol {symbol} already exists in universe for {trading_day}"
+                )
+
+            # 시퀀스 중복 확인
+            if self.sequence_exists_in_universe(trading_day, seq):
+                raise ValueError(
+                    f"Sequence {seq} already exists in universe for {trading_day}"
+                )
+
+            # BaseRepository의 create 메서드 활용
+            model_instance = self.model_class(
+                trading_day=trading_day, symbol=symbol, seq=seq
             )
+            self.db.add(model_instance)
+            self.db.flush()
+            self.db.refresh(model_instance)
+            self.db.commit()
 
-        # 시퀀스 중복 확인
-        if self.sequence_exists_in_universe(trading_day, seq):
-            raise ValueError(
-                f"Sequence {seq} already exists in universe for {trading_day}"
-            )
+            return self._to_universe_item(model_instance)
 
-        # BaseRepository의 create 메서드 활용
-        model_instance = self.model_class(
-            trading_day=trading_day, symbol=symbol, seq=seq
-        )
-        self.db.add(model_instance)
-        self.db.flush()
-        self.db.refresh(model_instance)
-        self.db.commit()
-
-        return self._to_universe_item(model_instance)
+        except Exception as e:
+            self.db.rollback()
+            raise e
 
     def remove_symbol_from_universe(self, trading_day: date, symbol: str) -> bool:
         """유니버스에서 심볼 제거"""
-        deleted_count = (
-            self.db.query(self.model_class)
-            .filter(
-                and_(
-                    self.model_class.trading_day == trading_day,
-                    self.model_class.symbol == symbol,
+        try:
+            deleted_count = (
+                self.db.query(self.model_class)
+                .filter(
+                    and_(
+                        self.model_class.trading_day == trading_day,
+                        self.model_class.symbol == symbol,
+                    )
                 )
+                .delete()
             )
-            .delete()
-        )
 
-        self.db.commit()
-        return deleted_count > 0
+            self.db.commit()
+            return deleted_count > 0
+
+        except Exception as e:
+            self.db.rollback()
+            raise e
 
     def symbol_exists_in_universe(self, trading_day: date, symbol: str) -> bool:
         """특정 날짜 유니버스에서 심볼 존재 여부 확인"""
@@ -230,11 +244,16 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def clear_universe_for_date(self, trading_day: date) -> int:
         """특정 날짜의 유니버스 전체 삭제"""
-        deleted_count = (
-            self.db.query(self.model_class)
-            .filter(self.model_class.trading_day == trading_day)
-            .delete()
-        )
+        try:
+            deleted_count = (
+                self.db.query(self.model_class)
+                .filter(self.model_class.trading_day == trading_day)
+                .delete()
+            )
 
-        self.db.commit()
-        return deleted_count
+            self.db.commit()
+            return deleted_count
+
+        except Exception as e:
+            self.db.rollback()
+            raise e

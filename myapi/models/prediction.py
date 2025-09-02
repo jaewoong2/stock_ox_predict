@@ -9,9 +9,11 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
 )
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import UniqueConstraint, PrimaryKeyConstraint
 from myapi.models.base import BaseModel
 import enum
+from datetime import date
 
 
 class ChoiceEnum(enum.Enum):
@@ -53,10 +55,10 @@ class UserDailyStats(BaseModel):
         {"schema": "crypto"},
     )
 
-    user_id = Column(BigInteger, ForeignKey("crypto.users.id"), nullable=False)
-    trading_day = Column(Date, nullable=False)
-    predictions_made = Column(SmallInteger, default=0, nullable=False)
-    max_predictions = Column(SmallInteger, default=3, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crypto.users.id"), nullable=False)
+    trading_day: Mapped[date] = mapped_column(Date, nullable=False)
+    predictions_made: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    max_predictions: Mapped[int] = mapped_column(SmallInteger, default=3, nullable=False)
 
 
 class AdUnlocks(BaseModel):

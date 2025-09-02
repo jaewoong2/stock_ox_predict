@@ -50,7 +50,7 @@ class PredictionService:
         self.point_service = PointService(db)
         self.error_log_service = ErrorLogService(db)
         self.settings = settings
-        
+
         # 포인트 설정 (비즈니스 설정)
         self.PREDICTION_FEE_POINTS = settings.PREDICTION_FEE_POINTS
         self.PREDICTION_CANCEL_REFUND = True  # 취소 시 수수료 환불 여부
@@ -91,23 +91,6 @@ class PredictionService:
                 details={"remaining": remaining},
             )
 
-        # 예측 수수료 차감 (포인트 부족 시 예외 발생)
-        try:
-            fee_result = self.point_service.charge_prediction_fee(
-                user_id=user_id,
-                prediction_id=0,  # 임시, 실제 prediction_id는 생성 후 업데이트
-                fee=self.PREDICTION_FEE_POINTS,
-                trading_day=trading_day,
-                symbol=symbol
-            )
-            
-            if not fee_result.success:
-                raise InsufficientBalanceError(fee_result.message)
-        except InsufficientBalanceError:
-            raise
-        except Exception as e:
-            raise ValidationError(f"Failed to charge prediction fee: {str(e)}")
-
         # 생성
         choice = ChoiceEnum(payload.choice.value)
         now = datetime.now(timezone.utc)
@@ -123,17 +106,19 @@ class PredictionService:
             # 예측 생성 실패 시 차감된 수수료 환불
             try:
                 from myapi.schemas.points import PointsTransactionRequest
-                
+
                 refund_request = PointsTransactionRequest(
                     amount=self.PREDICTION_FEE_POINTS,
                     reason=f"Refund for failed prediction creation ({symbol})",
-                    ref_id=f"failed_prediction_refund_{user_id}_{trading_day.strftime('%Y%m%d')}_{symbol}"
+                    ref_id=f"failed_prediction_refund_{user_id}_{trading_day.strftime('%Y%m%d')}_{symbol}",
                 )
-                
-                self.point_service.add_points(user_id=user_id, request=refund_request, trading_day=trading_day)
+
+                self.point_service.add_points(
+                    user_id=user_id, request=refund_request, trading_day=trading_day
+                )
             except Exception:
                 pass  # 환불 실패해도 원래 오류를 우선
-            
+
             # 예측 생성 실패 에러 로깅
             self.error_log_service.log_prediction_error(
                 user_id=user_id,
@@ -142,8 +127,8 @@ class PredictionService:
                 error_message="Failed to create prediction in database",
                 prediction_details={
                     "choice": payload.choice.value,
-                    "fee_charged": self.PREDICTION_FEE_POINTS
-                }
+                    "fee_charged": self.PREDICTION_FEE_POINTS,
+                },
             )
             raise ValidationError("Failed to create prediction")
 
@@ -155,7 +140,7 @@ class PredictionService:
                 prediction_id=created.id,
                 fee=0,  # 이미 차감했으므로 0으로 기록만 업데이트
                 trading_day=trading_day,
-                symbol=symbol
+                symbol=symbol,
             )
         except Exception:
             pass  # 기록 업데이트 실패해도 예측 생성은 유지
@@ -237,21 +222,23 @@ class PredictionService:
         if self.PREDICTION_CANCEL_REFUND:
             try:
                 from myapi.schemas.points import PointsTransactionRequest
-                
+
                 refund_request = PointsTransactionRequest(
                     amount=self.PREDICTION_FEE_POINTS,
                     reason=f"Refund for canceled prediction {prediction_id}",
-                    ref_id=f"cancel_refund_{prediction_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+                    ref_id=f"cancel_refund_{prediction_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
                 )
-                
+
                 refund_result = self.point_service.add_points(
-                    user_id=user_id, 
+                    user_id=user_id,
                     request=refund_request,
-                    trading_day=getattr(model, 'trading_day', date.today())
+                    trading_day=getattr(model, "trading_day", date.today()),
                 )
-                
+
                 if refund_result.success:
-                    print(f"✅ Refunded {self.PREDICTION_FEE_POINTS} points for canceled prediction {prediction_id}")
+                    print(
+                        f"✅ Refunded {self.PREDICTION_FEE_POINTS} points for canceled prediction {prediction_id}"
+                    )
                 else:
                     # 취소 환불 실패 에러 로깅
                     self.error_log_service.log_point_transaction_error(
@@ -260,9 +247,11 @@ class PredictionService:
                         amount=self.PREDICTION_FEE_POINTS,
                         error_message=refund_result.message,
                         ref_id=f"cancel_refund_{prediction_id}",
-                        trading_day=getattr(model, 'trading_day', date.today())
+                        trading_day=getattr(model, "trading_day", date.today()),
                     )
-                    print(f"❌ Failed to refund points for canceled prediction {prediction_id}: {refund_result.message}")
+                    print(
+                        f"❌ Failed to refund points for canceled prediction {prediction_id}: {refund_result.message}"
+                    )
             except Exception as e:
                 # 취소 환불 시스템 에러 로깅
                 self.error_log_service.log_point_transaction_error(
@@ -271,9 +260,11 @@ class PredictionService:
                     amount=self.PREDICTION_FEE_POINTS,
                     error_message=str(e),
                     ref_id=f"cancel_refund_{prediction_id}",
-                    trading_day=getattr(model, 'trading_day', date.today())
+                    trading_day=getattr(model, "trading_day", date.today()),
                 )
-                print(f"❌ Error refunding points for canceled prediction {prediction_id}: {str(e)}")
+                print(
+                    f"❌ Error refunding points for canceled prediction {prediction_id}: {str(e)}"
+                )
 
         return canceled
 
@@ -313,18 +304,18 @@ class PredictionService:
         """사용자 예측 이력 조회 (페이지네이션 정보 포함)"""
         if limit > 100:  # 최대 제한
             limit = 100
-        
+
         predictions = self.pred_repo.get_user_prediction_history(
             user_id, limit=limit + 1, offset=offset
         )  # +1로 다음 페이지 존재 여부 확인
-        
+
         has_next = len(predictions) > limit
         if has_next:
             predictions = predictions[:limit]  # 실제 요청한 limit 만큼만 반환
-        
+
         # 전체 카운트는 별도 쿼리로 조회
         total_count = self.pred_repo.count_user_predictions(user_id)
-        
+
         return predictions, total_count, has_next
 
     # 정산 관련

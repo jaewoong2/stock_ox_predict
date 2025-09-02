@@ -26,8 +26,8 @@ class Settings(BaseSettings):
 
     # Legacy Database URL (will be constructed from POSTGRES_* vars)
     DATABASE_URL: Optional[str] = None
-    DB_POOL_SIZE: int = 10
-    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_SIZE: int = 5  # 동시 연결 수를 줄임
+    DB_MAX_OVERFLOW: int = 10  # 최대 오버플로우도 줄임
 
     @property
     def database_url(self) -> str:

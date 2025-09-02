@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,7 +16,7 @@ from myapi.containers import Container
 
 
 def _fake_now():
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def _stub_current_user():
@@ -48,40 +48,42 @@ class FakePredictionService:
         return PredictionResponse(
             id=1,
             user_id=user_id,
-            trading_day=trading_day.strftime("%Y-%m-%d"),
+            trading_day=trading_day,
             symbol=payload.symbol,
             choice=payload.choice,
             status=PredictionStatus.PENDING,
-            submitted_at=_fake_now().strftime("%Y-%m-%d %H:%M:%S"),
+            submitted_at=_fake_now(),
             updated_at=None,
             points_earned=0,
         )
 
     def update_prediction(self, user_id, prediction_id, payload):
         from myapi.schemas.prediction import PredictionResponse, PredictionStatus
+        from datetime import date
         return PredictionResponse(
             id=prediction_id,
             user_id=user_id,
-            trading_day="2025-01-01",
+            trading_day=date(2025, 1, 1),
             symbol="AAPL",
             choice=payload.choice,
             status=PredictionStatus.PENDING,
-            submitted_at=_fake_now().strftime("%Y-%m-%d %H:%M:%S"),
-            updated_at=_fake_now().strftime("%Y-%m-%d %H:%M:%S"),
+            submitted_at=_fake_now(),
+            updated_at=_fake_now(),
             points_earned=0,
         )
 
     def cancel_prediction(self, user_id, prediction_id):
         from myapi.schemas.prediction import PredictionResponse, PredictionChoice, PredictionStatus
+        from datetime import date
         return PredictionResponse(
             id=prediction_id,
             user_id=user_id,
-            trading_day="2025-01-01",
+            trading_day=date(2025, 1, 1),
             symbol="AAPL",
             choice=PredictionChoice.UP,
             status=PredictionStatus.CANCELLED,
-            submitted_at=_fake_now().strftime("%Y-%m-%d %H:%M:%S"),
-            updated_at=_fake_now().strftime("%Y-%m-%d %H:%M:%S"),
+            submitted_at=_fake_now(),
+            updated_at=_fake_now(),
             points_earned=0,
         )
 
@@ -93,16 +95,16 @@ class FakePredictionService:
             PredictionStatus,
         )
         return UserPredictionsResponse(
-            trading_day=trading_day.strftime("%Y-%m-%d"),
+            trading_day=trading_day,
             predictions=[
                 PredictionResponse(
                     id=1,
                     user_id=user_id,
-                    trading_day=trading_day.strftime("%Y-%m-%d"),
+                    trading_day=trading_day,
                     symbol="AAPL",
                     choice=PredictionChoice.UP,
                     status=PredictionStatus.PENDING,
-                    submitted_at=_fake_now().strftime("%Y-%m-%d %H:%M:%S"),
+                    submitted_at=_fake_now(),
                     updated_at=None,
                     points_earned=0,
                 )
@@ -115,7 +117,7 @@ class FakePredictionService:
     def get_prediction_stats(self, trading_day):
         from myapi.schemas.prediction import PredictionStats
         return PredictionStats(
-            trading_day=trading_day.strftime("%Y-%m-%d"),
+            trading_day=trading_day,
             total_predictions=10,
             up_predictions=6,
             down_predictions=4,
@@ -128,7 +130,7 @@ class FakePredictionService:
         from myapi.schemas.prediction import PredictionSummary
         return PredictionSummary(
             user_id=user_id,
-            trading_day=trading_day.strftime("%Y-%m-%d"),
+            trading_day=trading_day,
             total_submitted=1,
             correct_count=0,
             incorrect_count=0,

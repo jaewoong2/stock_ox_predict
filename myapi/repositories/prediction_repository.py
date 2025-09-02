@@ -1,7 +1,8 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, cast
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, desc, asc, func
 from datetime import date, datetime, timezone
+
 
 from myapi.models.prediction import (
     Prediction as PredictionModel,
@@ -14,7 +15,6 @@ from myapi.schemas.prediction import (
     UserPredictionsResponse,
     PredictionStats,
     PredictionSummary,
-    PredictionChoice,
     PredictionStatus,
 )
 from myapi.repositories.base import BaseRepository
@@ -27,33 +27,6 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
 
     def __init__(self, db: Session):
         super().__init__(PredictionModel, PredictionResponse, db)
-
-    def _to_prediction_response(
-        self, model_instance: PredictionModel
-    ) -> PredictionResponse:
-        """Prediction 모델을 PredictionResponse 스키마로 변환"""
-
-        # SQLAlchemy 모델의 속성들을 딕셔너리로 변환 후 Pydantic 생성
-        data = {
-            "id": model_instance.id,
-            "user_id": model_instance.user_id,
-            "trading_day": model_instance.trading_day.strftime("%Y-%m-%d"),
-            "symbol": str(model_instance.symbol),
-            "choice": PredictionChoice(model_instance.choice.value),
-            "status": PredictionStatus(model_instance.status.value),
-            "submitted_at": model_instance.submitted_at.strftime("%Y-%m-%d %H:%M:%S"),
-            "updated_at": (
-                model_instance.updated_at.strftime("%Y-%m-%d %H:%M:%S")
-                if model_instance.updated_at
-                else None
-            ),
-            "points_earned": (
-                model_instance.points_earned
-                if model_instance.points_earned is not None
-                else 0
-            ),
-        }
-        return PredictionResponse(**data)
 
     def create_prediction(
         self,
@@ -102,8 +75,11 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             .all()
         )
 
+        # _to_schema may return None; filter to guarantee PredictionResponse list
         predictions = [
-            self._to_prediction_response(instance) for instance in model_instances
+            p
+            for p in (self._to_schema(instance) for instance in model_instances)
+            if p is not None
         ]
 
         total_predictions = len(predictions)
@@ -113,7 +89,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         pending_predictions = total_predictions - completed_predictions
 
         return UserPredictionsResponse(
-            trading_day=trading_day.strftime("%Y-%m-%d"),
+            trading_day=trading_day,
             predictions=predictions,
             total_predictions=total_predictions,
             completed_predictions=completed_predictions,
@@ -136,7 +112,11 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             query = query.filter(self.model_class.status == status_filter)
 
         model_instances = query.order_by(asc(self.model_class.submitted_at)).all()
-        return [self._to_prediction_response(instance) for instance in model_instances]
+        return [
+            p
+            for p in (self._to_schema(instance) for instance in model_instances)
+            if p is not None
+        ]
 
     def prediction_exists(self, user_id: int, trading_day: date, symbol: str) -> bool:
         """특정 사용자의 특정 날짜/심볼 예측 존재 여부 확인"""
@@ -263,7 +243,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
 
         if not stats:
             return PredictionStats(
-                trading_day=trading_day.strftime("%Y-%m-%d"),
+                trading_day=trading_day,
                 total_predictions=0,
                 up_predictions=0,
                 down_predictions=0,
@@ -281,7 +261,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         accuracy_rate = (correct_count / total * 100) if total > 0 else 0.0
 
         return PredictionStats(
-            trading_day=trading_day.strftime("%Y-%m-%d"),
+            trading_day=trading_day,
             total_predictions=total,
             up_predictions=up_count,
             down_predictions=down_count,
@@ -326,7 +306,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         if not stats:
             return PredictionSummary(
                 user_id=user_id,
-                trading_day=trading_day.strftime("%Y-%m-%d"),
+                trading_day=trading_day,
                 total_submitted=0,
                 correct_count=0,
                 incorrect_count=0,
@@ -349,7 +329,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
 
         return PredictionSummary(
             user_id=user_id,
-            trading_day=trading_day.strftime("%Y-%m-%d"),
+            trading_day=trading_day,
             total_submitted=total,
             correct_count=correct,
             incorrect_count=incorrect,
@@ -373,8 +353,11 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             .order_by(asc(self.model_class.symbol), asc(self.model_class.submitted_at))
             .all()
         )
-
-        return [self._to_prediction_response(instance) for instance in model_instances]
+        return [
+            p
+            for p in (self._to_schema(instance) for instance in model_instances)
+            if p is not None
+        ]
 
     def cancel_prediction(self, prediction_id: int) -> Optional[PredictionResponse]:
         """예측 취소"""
@@ -395,7 +378,11 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             .all()
         )
 
-        return [self._to_prediction_response(instance) for instance in model_instances]
+        return [
+            p
+            for p in (self._to_schema(instance) for instance in model_instances)
+            if p is not None
+        ]
 
     def count_predictions_by_date(self, trading_day: date) -> int:
         """특정 날짜의 전체 예측 개수"""
@@ -439,18 +426,18 @@ class UserDailyStatsRepository(
 
     def _to_response(
         self, model_instance: UserDailyStatsModel
-    ) -> UserDailyStatsResponse:
+    ) -> Optional[UserDailyStatsResponse]:
         """UserDailyStats 모델을 UserDailyStatsResponse로 변환"""
         if model_instance is None:
             return None
 
         return UserDailyStatsResponse(
             user_id=getattr(model_instance, "user_id", 0),
-            trading_day=model_instance.trading_day.strftime("%Y-%m-%d"),
+            trading_day=model_instance.trading_day,
             predictions_made=getattr(model_instance, "predictions_made", 0),
             max_predictions=getattr(model_instance, "max_predictions", 3),
-            created_at=(model_instance.created_at.strftime("%Y-%m-%d %H:%M:%S")),
-            updated_at=(model_instance.updated_at.strftime("%Y-%m-%d %H:%M:%S")),
+            created_at=model_instance.created_at,
+            updated_at=model_instance.updated_at,
         )
 
     def get_or_create_user_daily_stats(
@@ -480,7 +467,11 @@ class UserDailyStatsRepository(
             self.db.refresh(model_instance)
             self.db.commit()
 
-        return self._to_response(model_instance)
+        response = self._to_response(model_instance)
+        if response is None:
+            raise ValueError("Failed to convert model instance to response")
+
+        return response
 
     def increment_predictions_made(
         self, user_id: int, trading_day: date
@@ -512,7 +503,10 @@ class UserDailyStatsRepository(
                 )
                 .first()
             )
-            return self._to_response(model_instance)
+            response = self._to_response(model_instance)
+            if response is None:
+                raise ValueError("Failed to convert model instance to response")
+            return response
 
         return stats
 
@@ -578,4 +572,7 @@ class UserDailyStatsRepository(
             .first()
         )
 
-        return self._to_response(updated_model)
+        response = self._to_response(updated_model)
+        if response is None:
+            raise ValueError("Failed to convert model instance to response")
+        return response

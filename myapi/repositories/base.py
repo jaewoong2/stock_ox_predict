@@ -25,23 +25,36 @@ class BaseRepository(Generic[T, SchemaType], ABC):
         # Pydantic v2의 model_validate를 사용하여 from_attributes 활용
         try:
             return self.schema_class.model_validate(model_instance)
-        except Exception:
+        except Exception as e:
             # fallback: 수동으로 dict 변환
             model_dict = {}
+
+            # SQLAlchemy 모델의 모든 속성 추출
             if hasattr(model_instance, "__mapper__"):
                 mapper = getattr(model_instance, "__mapper__", None)
                 if mapper and hasattr(mapper, "columns"):
                     for column in mapper.columns:
                         column_name = getattr(column, "name", None)
                         if column_name:
-                            model_dict[column_name] = getattr(
-                                model_instance, column_name, None
-                            )
+                            value = getattr(model_instance, column_name, None)
+                            # None이 아닌 값만 포함
+                            if value is not None:
+                                model_dict[column_name] = value
 
-            if not model_dict and hasattr(model_instance, "__dict__"):
-                model_dict = getattr(model_instance, "__dict__", {})
+            # __dict__에서도 속성 추출 (SQLAlchemy 내부 속성 제외)
+            if hasattr(model_instance, "__dict__"):
+                for key, value in model_instance.__dict__.items():
+                    if not key.startswith("_") and key not in model_dict:
+                        model_dict[key] = value
 
-            return self.schema_class(**model_dict)
+            # Pydantic 스키마 생성 시도
+            try:
+                return self.schema_class(**model_dict)
+            except Exception:
+                # 최종 fallback: 에러 정보와 함께 실패
+                raise ValueError(
+                    f"Failed to convert model to schema: {e}. Model dict: {model_dict}"
+                )
 
     def _ensure_clean_session(self) -> None:
         """보류중/실패한 트랜잭션이 있으면 롤백하여 세션을 정상화"""

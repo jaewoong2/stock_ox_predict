@@ -41,53 +41,76 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
         """
         현재 활성 세션 조회 (가장 최근 거래일)
         """
-        model_instance = (
-            self.db.query(self.model_class)
-            .order_by(desc(self.model_class.trading_day))
-            .first()
-        )
+        try:
+            model_instance = (
+                self.db.query(self.model_class)
+                .order_by(desc(self.model_class.trading_day))
+                .first()
+            )
 
-        if not model_instance:
-            return None
+            if not model_instance:
+                return None
 
-        return self._to_session_status(model_instance)
+            return self._to_session_status(model_instance)
+        except Exception as e:
+            # 읽기 전용 작업이므로 rollback은 필요 없음
+            # 하지만 연결 상태를 확인하고 필요시 재연결
+            if hasattr(self.db, "is_active") and not self.db.is_active:
+                self.db.rollback()
+            raise e
 
     def get_session_by_date(self, trading_day: date) -> Optional[SessionStatus]:
         """
         특정 날짜의 세션 조회
         """
-        model_instance = (
-            self.db.query(self.model_class)
-            .filter(self.model_class.trading_day == trading_day)
-            .first()
-        )
+        try:
+            model_instance = (
+                self.db.query(self.model_class)
+                .filter(self.model_class.trading_day == trading_day)
+                .first()
+            )
 
-        if not model_instance:
-            return None
+            if not model_instance:
+                return None
 
-        return self._to_session_status(model_instance)
+            return self._to_session_status(model_instance)
+        except Exception as e:
+            # 읽기 전용 작업이므로 rollback은 필요 없음
+            # 하지만 연결 상태를 확인하고 필요시 재연결
+            if hasattr(self.db, "is_active") and not self.db.is_active:
+                self.db.rollback()
+            raise e
 
     def get_today_session_info(self, trading_day: date) -> Optional[SessionToday]:
         """오늘의 세션 정보 조회 (API 응답용)"""
-        model_instance = (
-            self.db.query(self.model_class)
-            .filter(self.model_class.trading_day == trading_day)
-            .first()
-        )
+        try:
+            model_instance = (
+                self.db.query(self.model_class)
+                .filter(self.model_class.trading_day == trading_day)
+                .first()
+            )
 
-        if not model_instance:
-            return None
+            if not model_instance:
+                return None
 
-        # SQLAlchemy 모델의 속성들을 안전하게 추출하여 변환
-        data = {
-            "trading_day": model_instance.trading_day.strftime("%Y-%m-%d"),
-            "phase": SessionPhase(model_instance.phase.value),
-            "predict_open_at": model_instance.predict_open_at.strftime("%H:%M:%S"),
-            "predict_cutoff_at": model_instance.predict_cutoff_at.strftime("%H:%M:%S"),
-            "settle_ready_at": model_instance.settle_ready_at.strftime("%H:%M:%S"),
-            "settled_at": model_instance.settled_at.strftime("%H:%M:%S"),
-        }
-        return SessionToday(**data)
+            # SQLAlchemy 모델의 속성들을 안전하게 추출하여 변환
+            data = {
+                "trading_day": model_instance.trading_day.strftime("%Y-%m-%d"),
+                "phase": SessionPhase(model_instance.phase.value),
+                "predict_open_at": model_instance.predict_open_at.strftime("%H:%M:%S"),
+                "predict_cutoff_at": model_instance.predict_cutoff_at.strftime(
+                    "%H:%M:%S"
+                ),
+                "settle_ready_at": model_instance.settle_ready_at.strftime("%H:%M:%S"),
+                "settled_at": model_instance.settled_at.strftime("%H:%M:%S"),
+            }
+            return SessionToday(**data)
+        except Exception as e:
+            # 읽기 전용 작업이므로 rollback은 필요 없음
+            # 하지만 연결 상태를 확인하고 필요시 재연결
+            if hasattr(self.db, "is_active") and not self.db.is_active:
+                self.db.rollback()
+            raise e
 
     def create_session(
         self,
@@ -97,67 +120,77 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
         phase: PhaseEnum = PhaseEnum.CLOSED,
     ) -> SessionStatus:
         """새 세션 생성"""
-        model_instance = self.model_class(
-            trading_day=trading_day,
-            phase=phase,
-            predict_open_at=predict_open_at,
-            predict_cutoff_at=predict_cutoff_at,
-        )
-        self.db.add(model_instance)
-        self.db.flush()
-        self.db.commit()
-        self.db.refresh(model_instance)
-        return self._to_session_status(model_instance)
+        try:
+            model_instance = self.model_class(
+                trading_day=trading_day,
+                phase=phase,
+                predict_open_at=predict_open_at,
+                predict_cutoff_at=predict_cutoff_at,
+            )
+            self.db.add(model_instance)
+            self.db.flush()
+            self.db.commit()
+            self.db.refresh(model_instance)
+            return self._to_session_status(model_instance)
+        except Exception as e:
+            self.db.rollback()
+            raise e
 
     def update_session_phase(
         self, trading_day: date, new_phase: PhaseEnum
     ) -> Optional[SessionStatus]:
         """세션 페이즈 업데이트"""
-        from datetime import timezone
+        try:
+            from datetime import timezone
 
-        model_instance = (
-            self.db.query(self.model_class)
-            .filter(self.model_class.trading_day == trading_day)
-            .first()
-        )
+            model_instance = (
+                self.db.query(self.model_class)
+                .filter(self.model_class.trading_day == trading_day)
+                .first()
+            )
 
-        if not model_instance:
-            return None
+            if not model_instance:
+                return None
 
-        update_data = {
-            self.model_class.phase: new_phase,
-            self.model_class.settle_ready_at: None,
-            self.model_class.settled_at: None,
-        }
+            update_data = {
+                self.model_class.phase: new_phase,
+                self.model_class.settle_ready_at: None,
+                self.model_class.settled_at: None,
+            }
 
-        # 페이즈에 따른 타임스탬프 업데이트
-        current_phase = getattr(model_instance, "phase", None)
-        if new_phase == PhaseEnum.SETTLING:
-            update_data[self.model_class.settle_ready_at] = datetime.now(timezone.utc)
-        elif new_phase == PhaseEnum.CLOSED and current_phase == PhaseEnum.SETTLING:
-            update_data[self.model_class.settled_at] = datetime.now(timezone.utc)
+            # 페이즈에 따른 타임스탬프 업데이트
+            current_phase = getattr(model_instance, "phase", None)
+            if new_phase == PhaseEnum.SETTLING:
+                update_data[self.model_class.settle_ready_at] = datetime.now(
+                    timezone.utc
+                )
+            elif new_phase == PhaseEnum.CLOSED and current_phase == PhaseEnum.SETTLING:
+                update_data[self.model_class.settled_at] = datetime.now(timezone.utc)
 
-        # SQL UPDATE 사용
-        updated_count = (
-            self.db.query(self.model_class)
-            .filter(self.model_class.trading_day == trading_day)
-            .update(update_data, synchronize_session=False)
-        )
+            # SQL UPDATE 사용
+            updated_count = (
+                self.db.query(self.model_class)
+                .filter(self.model_class.trading_day == trading_day)
+                .update(update_data, synchronize_session=False)
+            )
 
-        if updated_count == 0:
-            return None
+            if updated_count == 0:
+                return None
 
-        self.db.flush()
-        self.db.commit()
+            self.db.flush()
+            self.db.commit()
 
-        # 업데이트된 모델 재조회
-        updated_model = (
-            self.db.query(self.model_class)
-            .filter(self.model_class.trading_day == trading_day)
-            .first()
-        )
+            # 업데이트된 모델 재조회
+            updated_model = (
+                self.db.query(self.model_class)
+                .filter(self.model_class.trading_day == trading_day)
+                .first()
+            )
 
-        return self._to_session_status(updated_model)
+            return self._to_session_status(updated_model)
+        except Exception as e:
+            self.db.rollback()
+            raise e
 
     def mark_settle_ready(self, trading_day: date) -> Optional[SessionStatus]:
         """정산 준비 완료 표시"""

@@ -52,10 +52,8 @@ class UniverseStats(BaseModel):
 class UniverseItemWithPrice(BaseModel):
     """가격 정보가 포함된 유니버스 아이템"""
 
-    symbol: str = Field(
-        ..., pattern=r"^[A-Z]{1,5}$", description="Stock symbol (e.g., AAPL)"
-    )
-    seq: int = Field(..., ge=1, le=20, description="Sequence number for ordering")
+    symbol: str = Field(..., description="Stock symbol (e.g., AAPL)")
+    seq: int = Field(..., description="Sequence number for ordering")
     company_name: str = Field(..., description="Company name")
     current_price: float = Field(..., description="Current stock price")
     previous_close: float = Field(..., description="Previous close price")

@@ -1,4 +1,5 @@
 from typing import Any
+import logging
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -25,6 +26,7 @@ from myapi.core.exceptions import (
 
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
+logger = logging.getLogger("myapi")
 
 
 @router.post("/{symbol}", response_model=BaseResponse)
@@ -36,7 +38,7 @@ def submit_prediction(
     service: PredictionService = Depends(
         Provide[Container.services.prediction_service]
     ),
-) -> Any:
+):
     try:
         # 경로의 symbol과 body의 choice로 PredictionCreate 구성
         create_payload = PredictionCreate(symbol=symbol.upper(), choice=payload.choice)
@@ -48,16 +50,21 @@ def submit_prediction(
         )
         return BaseResponse(success=True, data={"prediction": created.model_dump()})
     except (ValidationError, BusinessLogicError, ConflictError, RateLimitError) as e:
+        msg = getattr(e, "message", str(e))
+        logger.warning(f"[PredictionError] submit: {msg}")
         return BaseResponse(
             success=False,
-            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=str(e)),
+            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=msg),
         )
     except NotFoundError as e:
+        msg = getattr(e, "message", str(e))
+        logger.warning(f"[PredictionError] submit: {msg}")
         return BaseResponse(
             success=False,
-            error=Error(code=ErrorCode.USER_NOT_FOUND, message=str(e)),
+            error=Error(code=ErrorCode.USER_NOT_FOUND, message=msg),
         )
-    except Exception:
+    except Exception as e:
+        logger.exception("[PredictionError] submit: unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Prediction submit failed",
@@ -78,16 +85,21 @@ def update_prediction(
         updated = service.update_prediction(current_user.id, prediction_id, payload)
         return BaseResponse(success=True, data={"prediction": updated.model_dump()})
     except (ValidationError, BusinessLogicError, ConflictError) as e:
+        msg = getattr(e, "message", str(e))
+        logger.warning(f"[PredictionError] update: {msg}")
         return BaseResponse(
             success=False,
-            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=str(e)),
+            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=msg),
         )
     except NotFoundError as e:
+        msg = getattr(e, "message", str(e))
+        logger.warning(f"[PredictionError] update: {msg}")
         return BaseResponse(
             success=False,
-            error=Error(code=ErrorCode.USER_NOT_FOUND, message=str(e)),
+            error=Error(code=ErrorCode.USER_NOT_FOUND, message=msg),
         )
     except Exception:
+        logger.exception("[PredictionError] update: unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Prediction update failed",
@@ -107,16 +119,21 @@ def cancel_prediction(
         canceled = service.cancel_prediction(current_user.id, prediction_id)
         return BaseResponse(success=True, data={"prediction": canceled.model_dump()})
     except (BusinessLogicError,) as e:
+        msg = getattr(e, "message", str(e))
+        logger.warning(f"[PredictionError] cancel: {msg}")
         return BaseResponse(
             success=False,
-            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=str(e)),
+            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=msg),
         )
     except NotFoundError as e:
+        msg = getattr(e, "message", str(e))
+        logger.warning(f"[PredictionError] cancel: {msg}")
         return BaseResponse(
             success=False,
-            error=Error(code=ErrorCode.USER_NOT_FOUND, message=str(e)),
+            error=Error(code=ErrorCode.USER_NOT_FOUND, message=msg),
         )
     except Exception:
+        logger.exception("[PredictionError] cancel: unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Prediction cancel failed",
@@ -144,6 +161,9 @@ def get_user_predictions_for_day(
             ),
         )
     except Exception:
+        logger.exception(
+            "[PredictionError] get_user_predictions_for_day: unexpected error"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Predictions fetch failed",
@@ -171,6 +191,7 @@ def get_prediction_stats(
             ),
         )
     except Exception:
+        logger.exception("[PredictionError] get_prediction_stats: unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Prediction stats failed",
@@ -198,6 +219,9 @@ def get_user_prediction_summary(
             ),
         )
     except Exception:
+        logger.exception(
+            "[PredictionError] get_user_prediction_summary: unexpected error"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Prediction summary failed",
@@ -207,7 +231,11 @@ def get_user_prediction_summary(
 @router.get("/history", response_model=BaseResponse)
 @inject
 def get_user_prediction_history(
-    limit: int = Query(PaginationLimits.PREDICTIONS_HISTORY["default"], ge=PaginationLimits.PREDICTIONS_HISTORY["min"], le=PaginationLimits.PREDICTIONS_HISTORY["max"]),
+    limit: int = Query(
+        PaginationLimits.PREDICTIONS_HISTORY["default"],
+        ge=PaginationLimits.PREDICTIONS_HISTORY["min"],
+        le=PaginationLimits.PREDICTIONS_HISTORY["max"],
+    ),
     offset: int = Query(0, ge=0),
     current_user: UserSchema = Depends(get_current_active_user),
     service: PredictionService = Depends(
@@ -220,16 +248,19 @@ def get_user_prediction_history(
             current_user.id, limit=limit, offset=offset
         )
         return BaseResponse(
-            success=True, 
+            success=True,
             data={"history": [pred.model_dump() for pred in history]},
             meta={
                 "limit": limit,
                 "offset": offset,
                 "total_count": total_count,
-                "has_next": has_next
-            }
+                "has_next": has_next,
+            },
         )
     except Exception:
+        logger.exception(
+            "[PredictionError] get_user_prediction_history: unexpected error"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Prediction history fetch failed",
@@ -264,6 +295,9 @@ def get_predictions_by_symbol(
             ),
         )
     except Exception:
+        logger.exception(
+            "[PredictionError] get_predictions_by_symbol: unexpected error"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Predictions by symbol fetch failed",
@@ -292,6 +326,9 @@ def get_remaining_predictions(
             ),
         )
     except Exception:
+        logger.exception(
+            "[PredictionError] get_remaining_predictions: unexpected error"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Remaining predictions fetch failed",
@@ -324,11 +361,16 @@ def increase_prediction_slots(
             ),
         )
     except (ValidationError, BusinessLogicError) as e:
+        msg = getattr(e, "message", str(e))
+        logger.warning(f"[PredictionError] increase_prediction_slots: {msg}")
         return BaseResponse(
             success=False,
-            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=str(e)),
+            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=msg),
         )
     except Exception:
+        logger.exception(
+            "[PredictionError] increase_prediction_slots: unexpected error"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Increase prediction slots failed",
@@ -360,6 +402,9 @@ def lock_predictions_for_settlement(
             ),
         )
     except Exception:
+        logger.exception(
+            "[PredictionError] lock_predictions_for_settlement: unexpected error"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Lock predictions failed",
@@ -393,6 +438,9 @@ def get_pending_predictions_for_settlement(
             ),
         )
     except Exception:
+        logger.exception(
+            "[PredictionError] get_pending_predictions_for_settlement: unexpected error"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Pending predictions fetch failed",
@@ -436,6 +484,9 @@ def bulk_update_predictions_status(
             ),
         )
     except Exception:
+        logger.exception(
+            "[PredictionError] bulk_update_predictions_status: unexpected error"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Bulk update predictions failed",

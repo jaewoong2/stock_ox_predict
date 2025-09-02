@@ -26,6 +26,9 @@ class BaseAPIException(HTTPException):
             }
         )
 
+    def __str__(self) -> str:  # Ensure str(e) returns the human message
+        return self.message
+
 class AuthenticationError(BaseAPIException):
     """Authentication related errors"""
     def __init__(self, message: str = "Authentication failed", details: Optional[Dict] = None):
