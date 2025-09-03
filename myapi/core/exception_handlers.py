@@ -20,17 +20,27 @@ def _request_context(request: Request) -> Dict[str, Any]:
 
 async def handle_base_api_exception(request, exc):
     ctx = _request_context(request)
-    logger.warning(
-        f"[BaseAPIException] {ctx['method']} {ctx['url']} from {ctx['client']} -> {exc.status_code}: {exc.detail}"
-    )
+    if getattr(exc, "status_code", 500) >= 500:
+        logger.error(
+            f"[BaseAPIException] {ctx['method']} {ctx['url']} from {ctx['client']} -> {exc.status_code}: {exc.detail}"
+        )
+    else:
+        logger.warning(
+            f"[BaseAPIException] {ctx['method']} {ctx['url']} from {ctx['client']} -> {exc.status_code}: {exc.detail}"
+        )
     return JSONResponse(status_code=exc.status_code, content=exc.detail)  # type: ignore[arg-type]
 
 
 async def handle_http_exception(request, exc):
     ctx = _request_context(request)
-    logger.warning(
-        f"[HTTPException] {ctx['method']} {ctx['url']} from {ctx['client']} -> {exc.status_code}: {exc.detail}"
-    )
+    if getattr(exc, "status_code", 500) >= 500:
+        logger.error(
+            f"[HTTPException] {ctx['method']} {ctx['url']} from {ctx['client']} -> {exc.status_code}: {exc.detail}"
+        )
+    else:
+        logger.warning(
+            f"[HTTPException] {ctx['method']} {ctx['url']} from {ctx['client']} -> {exc.status_code}: {exc.detail}"
+        )
     # If detail is already structured (e.g., from BaseAPIException), pass through; else normalize
     if isinstance(exc.detail, dict) and "error" in exc.detail:  # type: ignore[truthy-bool]
         content = exc.detail  # type: ignore[assignment]

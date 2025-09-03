@@ -236,8 +236,27 @@
 - `reserve_inventory()`: flush → commit 변경 (2곳)
 - `release_reservation()`: flush → commit 변경
 - `create_redemption()`: flush 후 commit 추가
-- `process_redemption()`: flush → commit 변경
-- `delete_inventory_item()`: flush → commit 변경
+    - `process_redemption()`: flush → commit 변경
+    - `delete_inventory_item()`: flush → commit 변경
+
+## 최근 완료 작업 (2025-09-03) ✅
+
+### 1. 쿨다운 상태머신 규칙 적용 및 서비스 연동
+
+- [x] 정책 정리: 슬롯이 3 미만일 때만 쿨다운 동작 (시작/재시작)
+- [x] 예측 제출 시 동기 트리거: 3 → 2 전이 시점에서만 타이머 시작
+- [x] 중복 방지: 활성 타이머 존재 시 시작 안 함
+- [x] 타이머 만료 처리: 현재 슬롯 < 3이면 +1 회복, 이후 슬롯 < 3이면 자동 재시작
+- [x] 2 → 3 회복 시에는 재시작하지 않음
+- [x] `CooldownService.start_auto_cooldown_sync()` 신설 (동기 컨텍스트 지원)
+- [x] `PredictionService._check_and_trigger_cooldown_sync()` 실제 트리거 구현 (기존 로그만 남기던 부분 수정)
+- [x] `docs/service_flow.md` 갱신 (상태머신 규칙 및 예시 시나리오 추가)
+
+### 2. 남은 과제 (후속)
+
+- [ ] 타이머 활성 중, 외부 요인(취소/광고)으로 슬롯이 3이 된 경우 자동 취소 여부 정책 확정 및 구현 (현상태: 유지)
+- [ ] 운영 메트릭 추가: 일별 타이머 생성/완료/취소 카운트, 평균 회복 시간
+- [ ] 장애 복구 가이드: EventBridge 실패 시 재시도/보정 절차 문서화
 
 #### 3.4 **prediction_repository.py** (5곳 수정)
 

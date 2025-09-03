@@ -56,19 +56,37 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
             total_count=len(universe_items),
         )
 
+    def get_universe_items_not_in_list(
+        self, trading_day: date, universe_items: List[UniverseItem]
+    ):
+        """유니버스 항목 없는 애들 조회"""
+
+        return (
+            self.db.query(self.model_class)
+            .filter(
+                and_(
+                    self.model_class.trading_day == trading_day,
+                    self.model_class.symbol.not_in(
+                        [item.symbol for item in universe_items]
+                    ),
+                )
+            )
+            .all()
+        )
+
     def set_universe_for_date(
         self, trading_day: date, universe_items: List[UniverseItem]
     ) -> List[UniverseItem]:
         """특정 날짜의 유니버스 설정 (기존 항목 삭제 후 새로 생성)"""
         try:
-            # 기존 유니버스 삭제
-            self.db.query(self.model_class).filter(
-                self.model_class.trading_day == trading_day
-            ).delete()
-
             # 새 유니버스 생성
             created_items = []
-            for item in universe_items:
+
+            universe_items_not_in_list = self.get_universe_items_not_in_list(
+                trading_day, universe_items
+            )
+
+            for item in universe_items_not_in_list:
                 model_instance = self.model_class(
                     trading_day=trading_day, symbol=item.symbol, seq=item.seq
                 )

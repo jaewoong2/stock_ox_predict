@@ -144,7 +144,10 @@ class PredictionService:
                             .one_or_none()
                         )
 
-                        if not stats_row or getattr(stats_row, "available_predictions", 0) <= 0:
+                        if (
+                            not stats_row
+                            or getattr(stats_row, "available_predictions", 0) <= 0
+                        ):
                             raise RateLimitError(
                                 message="Daily prediction limit reached",
                                 details={
@@ -155,7 +158,9 @@ class PredictionService:
                             )
 
                         # 원자적으로 컬럼 값을 갱신
-                        stats_row.available_predictions = stats_row.available_predictions - 1
+                        stats_row.available_predictions = (
+                            stats_row.available_predictions - 1
+                        )
                         stats_row.predictions_made = stats_row.predictions_made + 1
                         try:
                             setattr(stats_row, "updated_at", now)
@@ -167,7 +172,11 @@ class PredictionService:
                     except OperationalError as oe:
                         # 행 잠금 경합 시 즉시/짧은 재시도 후 포기
                         msg = str(oe).lower()
-                        if "could not obtain lock" in msg or "would block" in msg or "nowait" in msg:
+                        if (
+                            "could not obtain lock" in msg
+                            or "would block" in msg
+                            or "nowait" in msg
+                        ):
                             if attempt < max_retries - 1:
                                 time.sleep(backoff)
                                 backoff *= 2
@@ -244,20 +253,20 @@ class PredictionService:
             stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
             available_slots = max(0, stats.available_predictions)
 
-            # 임계값 이하일 때만 쿨다운 시작 (정책: 3 이하)
-            if available_slots <= 3:
+            # 쿨다운 트리거 정책
+            # - 이미 활성 쿨다운이 있으면 아무 것도 하지 않음
+            # - 3 → 2 로 감소한 시점(즉, 현재 값이 2)에서만 타이머 시작
+            # - 2 → 1 은 시작 안 함 (이미 활성)
+            # - 회복 1 → 2 는 재시작, 2 → 3 은 재시작 안 함 (handle에서 처리)
+            if available_slots == self.settings.COOLDOWN_TRIGGER_THRESHOLD - 1:
                 from myapi.services.cooldown_service import CooldownService
 
                 cooldown_service = CooldownService(self.db, self.settings)
-                # 동기적으로 쿨다운 시작 (비동기 호출 제거)
-                # cooldown_service.start_auto_cooldown은 비동기 메서드이므로
-                # 여기서는 단순히 로깅만 수행
-                print(
-                    f"Would trigger auto cooldown for user {user_id}, "
-                    f"available_slots: {available_slots}, "
-                    f"threshold: 3"
+                active = cooldown_service.cooldown_repo.get_active_timer(
+                    user_id, trading_day
                 )
-
+                if not active:
+                    cooldown_service.start_auto_cooldown_sync(user_id, trading_day)
         except Exception as e:
             # 쿨다운 시작 실패해도 예측 제출은 성공으로 처리
             print(f"Failed to check cooldown for user {user_id}: {str(e)}")

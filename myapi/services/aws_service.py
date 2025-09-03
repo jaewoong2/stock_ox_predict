@@ -222,6 +222,7 @@ class AwsService:
         message_body: dict,
         message_group_id: str,
         rule_name_prefix: str = "cooldown-slot-refill",
+        role_arn: Optional[str] = None,
     ) -> str:
         """
         EventBridge를 사용하여 일회성 이벤트를 스케줄링합니다.
@@ -245,15 +246,23 @@ class AwsService:
 
         eventbridge = self._client("events")
 
-        # 스케줄 시간 계산 (UTC) - datetime.utcnow() 대신 timezone.utc 사용
+        # 스케줄 시간 계산 (UTC) 및 1분 단위로 반올림
         scheduled_time = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
-        schedule_expression = f"at({scheduled_time.strftime('%Y-%m-%dT%H:%M:%S')})"
+        # CloudWatch Events(EventBridge) put_rule는 at()를 지원하지 않음. cron() 사용 필요.
+        # 초 단위는 불가하므로 다음 분으로 반올림하여 예약한다.
+        rounded = scheduled_time.replace(second=0, microsecond=0)
+        if scheduled_time.second > 0 or scheduled_time.microsecond > 0:
+            rounded = rounded + timedelta(minutes=1)
+        # cron(M H D M ? Y) — UTC 기준
+        schedule_expression = (
+            f"cron({rounded.minute} {rounded.hour} {rounded.day} {rounded.month} ? {rounded.year})"
+        )
 
         # 고유한 규칙 이름 생성
         rule_name = f"{rule_name_prefix}-{uuid.uuid4().hex[:8]}"
 
         try:
-            # EventBridge 규칙 생성
+            # EventBridge 규칙 생성 (단발성 시간에만 매칭되도록 연도까지 고정)
             rule_response = eventbridge.put_rule(
                 Name=rule_name,
                 ScheduleExpression=schedule_expression,
@@ -263,19 +272,19 @@ class AwsService:
 
             rule_arn = rule_response["RuleArn"]
 
-            # SQS 대상 추가 - InputTransformer 수정
+            # SQS 대상 추가 - Input 사용 (message body 직접 전달)
+            target = {
+                "Id": "1",
+                "Arn": self._get_queue_arn_from_url(target_queue_url),
+                "SqsParameters": {"MessageGroupId": message_group_id},
+                "Input": json.dumps(message_body),
+            }
+            if role_arn:
+                target["RoleArn"] = role_arn
+
             eventbridge.put_targets(
                 Rule=rule_name,
-                Targets=[
-                    {
-                        "Id": "1",
-                        "Arn": self._get_queue_arn_from_url(target_queue_url),
-                        "SqsParameters": {"MessageGroupId": message_group_id},
-                        "Input": json.dumps(
-                            message_body
-                        ),  # InputTransformer 대신 Input 사용
-                    }
-                ],
+                Targets=[target],
             )
 
             logger.info(f"Scheduled one-time event: {rule_name}, ARN: {rule_arn}")

@@ -11,6 +11,7 @@ from myapi.config import Settings, settings
 from myapi.repositories.prediction_repository import UserDailyStatsRepository
 from myapi.schemas.cooldown import CooldownTimerSchema
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +49,13 @@ class CooldownService:
                 logger.warning(f"User {user_id} already has active cooldown timer")
                 return False
 
-            # 2. 현재 슬롯 수 및 임계값 확인 (동적 임계값: 현재 최대 허용치보다 클 수 없음)
+            # 2. 현재 슬롯 수 및 임계값 확인
+            # 정책: 슬롯이 3 미만일 때만 쿨다운 시작 (즉, 0/1/2일 때)
             current_slots = self._get_available_slots(user_id, trading_day)
-            stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
-            threshold = 3  # 정책: 쿨다운 트리거/회복 임계값은 3
-            if current_slots > threshold:
+            threshold = settings.COOLDOWN_TRIGGER_THRESHOLD  # 보통 3
+            if current_slots >= threshold:
                 logger.info(
-                    f"User {user_id} has enough slots ({current_slots} > {threshold}), no cooldown needed"
+                    f"User {user_id} has enough slots ({current_slots} >= {threshold}), no cooldown needed"
                 )
                 return False
 
@@ -78,21 +79,28 @@ class CooldownService:
                 )
 
             timer_id = int(timer.id)
-            # 5. SQS 메시지 준비
-            message_body = SlotRefillMessage(
+            # 5. SQS 메시지 준비 (batch_router와 동일한 HTTP proxy 포맷)
+            payload = SlotRefillMessage(
                 user_id=user_id,
                 timer_id=timer_id,
                 trading_day=trading_day.isoformat(),
                 slots_to_refill=1,
             ).model_dump()
+            http_message = self.aws_service.generate_queue_message_http(
+                path="api/v1/cooldown/handle-slot-refill",
+                method="POST",
+                body=json.dumps(payload),
+                auth_token=settings.AUTH_TOKEN,
+            )
 
             # 6. EventBridge 스케줄링
             rule_arn = self.aws_service.schedule_one_time_event(
                 delay_minutes=settings.COOLDOWN_MINUTES,
                 target_queue_url=settings.SQS_MAIN_QUEUE_URL,
-                message_body=message_body,
+                message_body=http_message.model_dump(),
                 message_group_id="cooldown",
                 rule_name_prefix=f"cooldown-{user_id}",
+                role_arn=settings.EVENTBRIDGE_TARGET_ROLE_ARN,
             )
 
             # 7. ARN 업데이트
@@ -107,6 +115,79 @@ class CooldownService:
 
         except Exception as e:
             logger.error(f"Failed to start auto cooldown for user {user_id}: {str(e)}")
+            raise ValidationError(f"자동 쿨다운 시작 중 오류가 발생했습니다: {str(e)}")
+
+    def start_auto_cooldown_sync(self, user_id: int, trading_day: date) -> bool:
+        """
+        자동 쿨다운 타이머 시작 (동기 버전)
+
+        비동기 컨텍스트가 아닌 서비스 호출에서 사용.
+        정책: 활성 타이머가 없고, 현재 슬롯이 3 미만일 때만 시작.
+        """
+        try:
+            active_timer: Optional[CooldownTimerSchema] = (
+                self.cooldown_repo.get_active_timer(user_id, trading_day)
+            )
+            if active_timer:
+                logger.warning(f"User {user_id} already has active cooldown timer")
+                return False
+
+            current_slots = self._get_available_slots(user_id, trading_day)
+            threshold = settings.COOLDOWN_TRIGGER_THRESHOLD
+            if current_slots >= threshold:
+                logger.info(
+                    f"User {user_id} has enough slots ({current_slots} >= {threshold}), no cooldown needed"
+                )
+                return False
+
+            now = USMarketHours.get_current_kst_time()
+            scheduled_at = now + timedelta(minutes=settings.COOLDOWN_MINUTES)
+
+            timer: Optional[CooldownTimerSchema] = (
+                self.cooldown_repo.create_cooldown_timer(
+                    user_id=user_id,
+                    trading_day=trading_day,
+                    scheduled_at=scheduled_at,
+                    slots_to_refill=1,
+                )
+            )
+
+            if not timer:
+                raise BusinessLogicError(
+                    "TIMER_CREATE_FAILED", "쿨다운 타이머 생성에 실패했습니다."
+                )
+
+            timer_id = int(timer.id)
+            payload = SlotRefillMessage(
+                user_id=user_id,
+                timer_id=timer_id,
+                trading_day=trading_day.isoformat(),
+                slots_to_refill=1,
+            ).model_dump()
+            http_message = self.aws_service.generate_queue_message_http(
+                path="api/v1/cooldown/handle-slot-refill",
+                method="POST",
+                body=json.dumps(payload),
+                auth_token=settings.AUTH_TOKEN,
+            )
+
+            rule_arn = self.aws_service.schedule_one_time_event(
+                delay_minutes=settings.COOLDOWN_MINUTES,
+                target_queue_url=settings.SQS_MAIN_QUEUE_URL,
+                message_body=http_message.model_dump(),
+                message_group_id="cooldown",
+                rule_name_prefix=f"cooldown-{user_id}",
+                role_arn=settings.EVENTBRIDGE_TARGET_ROLE_ARN,
+            )
+
+            self.cooldown_repo.update_timer_arn(timer_id, rule_arn)
+
+            logger.info(
+                f"Started auto cooldown (sync) for user {user_id}, timer_id: {timer_id}, scheduled_at: {scheduled_at}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start auto cooldown (sync) for user {user_id}: {str(e)}")
             raise ValidationError(f"자동 쿨다운 시작 중 오류가 발생했습니다: {str(e)}")
 
     async def handle_cooldown_completion(self, timer_id: int) -> bool:
@@ -131,10 +212,8 @@ class CooldownService:
             # 2. 현재 슬롯 수 확인
             current_slots = self._get_available_slots(timer.user_id, timer.trading_day)
 
-            # 3. 슬롯 충전 (임계값 이하일 때만, 쿨다운은 최대 3까지만 회복)
-            threshold = 3  # 정책: 쿨다운 트리거/회복 임계값은 3
-            if current_slots <= threshold:
-                # 쿨다운 회복: 3 미만일 때만 +1 (최대 3)
+            # 3. 슬롯 충전: 현재 슬롯이 3 미만일 때만 +1 (최대 3)
+            if current_slots < settings.COOLDOWN_TRIGGER_THRESHOLD:
                 self.stats_repo.refill_by_cooldown(
                     timer.user_id, timer.trading_day, timer.slots_to_refill
                 )
@@ -142,13 +221,21 @@ class CooldownService:
                     f"Refilled {timer.slots_to_refill} slots for user {timer.user_id}"
                 )
 
-            # 4. 타이머 완료 처리
+            # 4. 타이머 완료 처리 (+ EventBridge 규칙 정리)
             self.cooldown_repo.complete_timer(timer_id)
+            try:
+                if timer.eventbridge_rule_arn:
+                    self.aws_service.cancel_scheduled_event(str(timer.eventbridge_rule_arn))
+            except Exception:
+                # 정리 실패는 치명적이지 않음. 로깅만 수행.
+                logger.warning(
+                    f"Failed to cleanup EventBridge rule for timer {timer_id}"
+                )
 
             # 5. 아직 슬롯이 부족하면 다음 쿨다운 시작
             updated_slots = self._get_available_slots(timer.user_id, timer.trading_day)
-            threshold = 3  # 정책: 쿨다운 트리거/회복 임계값은 3
-            if updated_slots <= threshold:
+            # 슬롯이 여전히 3 미만이면 다음 쿨다운을 즉시 시작 (2→3 도달 시에는 재시작하지 않음)
+            if updated_slots < settings.COOLDOWN_TRIGGER_THRESHOLD:
                 await self.start_auto_cooldown(timer.user_id, timer.trading_day)
 
             return True

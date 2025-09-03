@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     POINTS_VOID_REWARD: int = 0
     BASE_PREDICTION_SLOTS: int = 3
     MAX_AD_SLOTS: int = 7
-    
+
     # Cooldown System Settings
     COOLDOWN_MINUTES: int = 5  # 자동 쿨다운 간격 (분)
     COOLDOWN_TRIGGER_THRESHOLD: int = 3  # 쿨다운 시작 임계값 (슬롯 개수)
@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     AWS_SQS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SQS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_SQS_REGION: str = "ap-northeast-2"
+
+    # EventBridge → SQS delivery role (optional)
+    EVENTBRIDGE_TARGET_ROLE_ARN: Optional[str] = (
+        "arn:aws:events:ap-northeast-2:849441246713:rule/cooldown-4-c7814f59"
+    )
 
 
 settings = Settings()

@@ -25,6 +25,7 @@ from myapi.routers import (
     batch_router,
 )
 from myapi.routers import price_router, settlement_router
+from myapi.routers import cooldown_router
 from myapi.routers import reward_router, point_router, ad_unlock_router
 from myapi.routers import admin_router
 from myapi.containers import Container
@@ -65,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(price_router.router, prefix=settings.API_V1_STR)
     app.include_router(settlement_router.router, prefix=settings.API_V1_STR)
     app.include_router(settlement_router.public_router, prefix=settings.API_V1_STR)
+    app.include_router(cooldown_router.router, prefix=settings.API_V1_STR)
     app.include_router(session_router.router, prefix=settings.API_V1_STR)
     app.include_router(universe_router.router, prefix=settings.API_V1_STR)
     app.include_router(batch_router.router, prefix=settings.API_V1_STR)

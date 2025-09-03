@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from dependency_injector.wiring import inject, Provide
-from myapi.core.container import Container
-from myapi.core.dependencies import get_current_active_user, require_admin
-from myapi.schemas.user import UserSchema
+from myapi.containers import Container
+from myapi.core.auth_middleware import get_current_active_user
+from myapi.schemas.user import User as UserSchema
 from myapi.schemas.cooldown import SlotRefillMessage, CooldownStatusResponse
 from myapi.services.cooldown_service import CooldownService
 from myapi.core.exceptions import ValidationError, BusinessLogicError
