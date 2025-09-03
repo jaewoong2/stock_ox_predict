@@ -110,8 +110,15 @@ class Settings(BaseSettings):
 
     # EventBridge → SQS delivery role (optional)
     EVENTBRIDGE_TARGET_ROLE_ARN: Optional[str] = (
-        "arn:aws:events:ap-northeast-2:849441246713:rule/cooldown-4-c7814f59"
+        "arn:aws:iam::849441246713:role/service-role/Amazon_EventBridge_Invoke_Sqs_1118066146"
     )
+
+    # EventBridge Scheduler → Lambda
+    LAMBDA_FUNCTION_NAME: str = "ox-universe-lambda"
+    SCHEDULER_TARGET_ROLE_ARN: Optional[str] = (
+        "arn:aws:iam::849441246713:role/service-role/Amazon_EventBridge_Scheduler_LAMBDA_49a1ee802b"  # must allow lambda:InvokeFunction
+    )
+    SCHEDULER_GROUP_NAME: str = "default"
 
 
 settings = Settings()

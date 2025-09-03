@@ -86,6 +86,7 @@ class CooldownService:
                 trading_day=trading_day.isoformat(),
                 slots_to_refill=1,
             ).model_dump()
+
             http_message = self.aws_service.generate_queue_message_http(
                 path="api/v1/cooldown/handle-slot-refill",
                 method="POST",
@@ -93,14 +94,14 @@ class CooldownService:
                 auth_token=settings.AUTH_TOKEN,
             )
 
-            # 6. EventBridge 스케줄링
-            rule_arn = self.aws_service.schedule_one_time_event(
+            # 6. EventBridge Scheduler로 Lambda 직접 호출 스케줄링 (입력 포맷은 동일)
+            rule_arn = self.aws_service.schedule_one_time_lambda_with_scheduler(
                 delay_minutes=settings.COOLDOWN_MINUTES,
-                target_queue_url=settings.SQS_MAIN_QUEUE_URL,
-                message_body=http_message.model_dump(),
-                message_group_id="cooldown",
-                rule_name_prefix=f"cooldown-{user_id}",
-                role_arn=settings.EVENTBRIDGE_TARGET_ROLE_ARN,
+                function_name=settings.LAMBDA_FUNCTION_NAME,
+                input_payload=http_message.model_dump(),
+                schedule_name_prefix=f"cooldown-{user_id}",
+                scheduler_role_arn=settings.SCHEDULER_TARGET_ROLE_ARN,
+                scheduler_group_name=settings.SCHEDULER_GROUP_NAME,
             )
 
             # 7. ARN 업데이트
@@ -171,13 +172,13 @@ class CooldownService:
                 auth_token=settings.AUTH_TOKEN,
             )
 
-            rule_arn = self.aws_service.schedule_one_time_event(
+            rule_arn = self.aws_service.schedule_one_time_lambda_with_scheduler(
                 delay_minutes=settings.COOLDOWN_MINUTES,
-                target_queue_url=settings.SQS_MAIN_QUEUE_URL,
-                message_body=http_message.model_dump(),
-                message_group_id="cooldown",
-                rule_name_prefix=f"cooldown-{user_id}",
-                role_arn=settings.EVENTBRIDGE_TARGET_ROLE_ARN,
+                function_name=settings.LAMBDA_FUNCTION_NAME,
+                input_payload=http_message.model_dump(),
+                schedule_name_prefix=f"cooldown-{user_id}",
+                scheduler_role_arn=settings.SCHEDULER_TARGET_ROLE_ARN,
+                scheduler_group_name=settings.SCHEDULER_GROUP_NAME,
             )
 
             self.cooldown_repo.update_timer_arn(timer_id, rule_arn)
@@ -187,7 +188,9 @@ class CooldownService:
             )
             return True
         except Exception as e:
-            logger.error(f"Failed to start auto cooldown (sync) for user {user_id}: {str(e)}")
+            logger.error(
+                f"Failed to start auto cooldown (sync) for user {user_id}: {str(e)}"
+            )
             raise ValidationError(f"자동 쿨다운 시작 중 오류가 발생했습니다: {str(e)}")
 
     async def handle_cooldown_completion(self, timer_id: int) -> bool:
@@ -225,7 +228,9 @@ class CooldownService:
             self.cooldown_repo.complete_timer(timer_id)
             try:
                 if timer.eventbridge_rule_arn:
-                    self.aws_service.cancel_scheduled_event(str(timer.eventbridge_rule_arn))
+                    self.aws_service.cancel_scheduled_event(
+                        str(timer.eventbridge_rule_arn)
+                    )
             except Exception:
                 # 정리 실패는 치명적이지 않음. 로깅만 수행.
                 logger.warning(

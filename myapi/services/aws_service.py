@@ -306,21 +306,18 @@ class AwsService:
         Returns:
             bool: 취소 성공 여부
         """
+        # 새 EventBridge Scheduler ARN도 지원 (arn:aws:scheduler:...:schedule/{group}/{name})
         try:
+            if rule_arn.startswith("arn:aws:scheduler:"):
+                return self._cancel_scheduler_schedule(rule_arn)
+
+            # Legacy CloudWatch Events rule
             eventbridge = self._client("events")
-
-            # ARN에서 규칙 이름 추출
             rule_name = rule_arn.split("/")[-1]
-
-            # 대상 제거
             eventbridge.remove_targets(Rule=rule_name, Ids=["1"])
-
-            # 규칙 삭제
             eventbridge.delete_rule(Name=rule_name)
-
             logger.info(f"Successfully cancelled scheduled event: {rule_name}")
             return True
-
         except Exception as e:
             logger.error(f"Failed to cancel scheduled event {rule_arn}: {str(e)}")
             return False
@@ -342,3 +339,104 @@ class AwsService:
         region = queue_url.split(".")[1]
 
         return f"arn:aws:sqs:{region}:{account_id}:{queue_name}"
+
+    # -------------------------------
+    # EventBridge Scheduler (Lambda)
+    # -------------------------------
+    def _get_lambda_function_arn(self, function_name: str) -> str:
+        lambda_client = self._client("lambda")
+        try:
+            resp = lambda_client.get_function(FunctionName=function_name)
+            return resp["Configuration"]["FunctionArn"]
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to resolve Lambda ARN for {function_name}: {str(e)}",
+            )
+
+    def schedule_one_time_lambda_with_scheduler(
+        self,
+        *,
+        delay_minutes: int,
+        function_name: str,
+        input_payload: dict,
+        schedule_name_prefix: str = "cooldown",
+        scheduler_role_arn: Optional[str] = None,
+        scheduler_group_name: str = "default",
+    ) -> str:
+        """
+        EventBridge Scheduler로 일회성 스케줄을 생성하여 지정된 Lambda를 호출합니다.
+
+        Returns created schedule ARN (arn:aws:scheduler:...:schedule/{group}/{name})
+        """
+        import uuid
+        from datetime import datetime, timezone, timedelta
+        import json as _json
+
+        if not scheduler_role_arn:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Scheduler role ARN not configured. Set SCHEDULER_TARGET_ROLE_ARN."
+                ),
+            )
+
+        scheduler = self._client("scheduler")
+
+        # Compute UTC time and use at() for one-time schedule
+        scheduled_time = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+        # EventBridge Scheduler expects RFC3339 without microseconds
+        at_expression = f"at({scheduled_time.strftime('%Y-%m-%dT%H:%M:%SZ')})"
+
+        target_lambda_arn = self._get_lambda_function_arn(function_name)
+        schedule_name = f"{schedule_name_prefix}-{uuid.uuid4().hex[:8]}"
+
+        try:
+            resp = scheduler.create_schedule(
+                Name=schedule_name,
+                GroupName=scheduler_group_name,
+                ScheduleExpression=at_expression,
+                FlexibleTimeWindow={"Mode": "OFF"},
+                Target={
+                    "Arn": target_lambda_arn,
+                    "RoleArn": scheduler_role_arn,
+                    "Input": _json.dumps(input_payload),
+                    "RetryPolicy": {
+                        "MaximumRetryAttempts": 2,
+                        "MaximumEventAgeInSeconds": 3600,
+                    },
+                },
+                State="ENABLED",
+                Description=f"One-time schedule to invoke {function_name}",
+            )
+            schedule_arn = resp.get("ScheduleArn") or (
+                f"arn:aws:scheduler:{self.region_name}:schedule/{scheduler_group_name}/{schedule_name}"
+            )
+            logger.info(
+                f"Created Scheduler one-time schedule: {schedule_name}, ARN: {schedule_arn}"
+            )
+            return schedule_arn
+        except Exception as e:
+            logger.error(f"Failed to create Scheduler schedule: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"EventBridge Scheduler 스케줄 생성 실패: {str(e)}",
+            )
+
+    def _cancel_scheduler_schedule(self, schedule_arn: str) -> bool:
+        """Delete a schedule by ARN for EventBridge Scheduler."""
+        try:
+            # ARN format: arn:aws:scheduler:region:account:schedule/{group}/{name}
+            if ":schedule/" not in schedule_arn:
+                raise ValueError("Invalid Scheduler ARN")
+            parts = schedule_arn.split(":schedule/")[-1].split("/")
+            if len(parts) != 2:
+                raise ValueError("Invalid Scheduler ARN components")
+            group, name = parts[0], parts[1]
+            scheduler = self._client("scheduler")
+            scheduler.delete_schedule(Name=name, GroupName=group)
+            logger.info(f"Deleted Scheduler schedule: {group}/{name}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to delete Scheduler schedule {schedule_arn}: {str(e)}")
+            return False

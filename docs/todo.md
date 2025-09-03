@@ -1092,7 +1092,7 @@ class CooldownTimer(Base):
 #### **2. EventBridge 스케줄링 서비스**
 ```python
 # myapi/services/aws_service.py 확장
-async def schedule_one_time_event(delay_minutes: int, target_queue: str, message: dict)
+async def schedule_one_time_lambda_with_scheduler(delay_minutes: int, target_queue: str, message: dict)
 async def cancel_scheduled_event(rule_arn: str)
 ```
 
