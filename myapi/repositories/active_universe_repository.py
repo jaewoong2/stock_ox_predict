@@ -1,10 +1,11 @@
-from typing import List, Optional
+from typing import List, Optional, Any, cast
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, asc, and_
 from datetime import date
 
 from myapi.models.session import ActiveUniverse as ActiveUniverseModel
 from myapi.schemas.universe import UniverseItem, UniverseResponse, UniverseStats
+from myapi.schemas.price import StockPrice
 from myapi.repositories.base import BaseRepository
 
 
@@ -31,6 +32,60 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
         )
 
         return [self._to_universe_item(instance) for instance in model_instances]
+
+    def get_universe_models_for_date(
+        self, trading_day: date
+    ) -> List[ActiveUniverseModel]:
+        """특정 날짜의 유니버스 Raw 모델 조회 (가격 포함)"""
+        return (
+            self.db.query(self.model_class)
+            .filter(self.model_class.trading_day == trading_day)
+            .order_by(asc(self.model_class.seq))
+            .all()
+        )
+
+    def get_universe_item_model(
+        self, trading_day: date, symbol: str
+    ) -> Optional[ActiveUniverseModel]:
+        """특정 날짜+심볼의 Raw 모델 조회"""
+        return (
+            self.db.query(self.model_class)
+            .filter(
+                and_(
+                    self.model_class.trading_day == trading_day,
+                    self.model_class.symbol == symbol,
+                )
+            )
+            .first()
+        )
+
+    def update_symbol_price(
+        self, trading_day: date, symbol: str, price: StockPrice
+    ) -> bool:
+        """유니버스 항목에 현재가 정보를 저장/업데이트"""
+        try:
+            instance = self.get_universe_item_model(trading_day, symbol)
+            if not instance:
+                return False
+
+            # Use setattr to avoid static type errors with SQLAlchemy Column typing
+            inst: Any = cast(Any, instance)
+            setattr(inst, "current_price", price.current_price)
+            setattr(inst, "previous_close", price.previous_close)
+            setattr(inst, "change_amount", price.change)
+            setattr(inst, "change_percent", price.change_percent)
+            setattr(inst, "volume", price.volume)
+            setattr(inst, "market_status", price.market_status)
+            setattr(inst, "last_price_updated", price.last_updated)
+
+            self.db.add(instance)
+            self.db.flush()
+            self.db.refresh(instance)
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            raise e
 
     def get_current_universe(self) -> List[UniverseItem]:
         """현재(가장 최근) 유니버스 조회"""

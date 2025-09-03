@@ -119,75 +119,40 @@ class PredictionService:
             Prediction as PredictionModel,
             UserDailyStats as UserDailyStatsModel,
         )
-        from sqlalchemy import and_
-        from sqlalchemy.exc import OperationalError
-        import time
+        from sqlalchemy import and_, func
 
         try:
 
             def _create_prediction_transaction():
-                # 1) 가용 슬롯 차감 + 사용량 증가 (가용>0 보장)
-                # 동시성 충돌 시 즉시 실패하거나 짧게 재시도하기 위해 NOWAIT 사용
-                max_retries = 3
-                backoff = 0.1
-                for attempt in range(max_retries):
-                    try:
-                        stats_row = (
-                            self.db.query(UserDailyStatsModel)
-                            .filter(
-                                and_(
-                                    UserDailyStatsModel.user_id == user_id,
-                                    UserDailyStatsModel.trading_day == trading_day,
-                                )
-                            )
-                            .with_for_update(nowait=True)
-                            .one_or_none()
+                # 1) 단일 UPDATE로 가용 슬롯 차감(+사용량 증가). 영향 행 수 0이면 제한 초과
+                updated = (
+                    self.db.query(UserDailyStatsModel)
+                    .filter(
+                        and_(
+                            UserDailyStatsModel.user_id == user_id,
+                            UserDailyStatsModel.trading_day == trading_day,
+                            UserDailyStatsModel.available_predictions > 0,
                         )
+                    )
+                    .update(
+                        {
+                            "available_predictions": UserDailyStatsModel.available_predictions - 1,
+                            "predictions_made": UserDailyStatsModel.predictions_made + 1,
+                            "updated_at": func.now(),
+                        },
+                        synchronize_session=False,
+                    )
+                )
 
-                        if (
-                            not stats_row
-                            or getattr(stats_row, "available_predictions", 0) <= 0
-                        ):
-                            raise RateLimitError(
-                                message="Daily prediction limit reached",
-                                details={
-                                    "remaining": self.stats_repo.get_remaining_predictions(
-                                        user_id, trading_day
-                                    )
-                                },
+                if updated == 0:
+                    raise RateLimitError(
+                        message="Daily prediction limit reached",
+                        details={
+                            "remaining": self.stats_repo.get_remaining_predictions(
+                                user_id, trading_day
                             )
-
-                        # 원자적으로 컬럼 값을 갱신
-                        stats_row.available_predictions = (
-                            stats_row.available_predictions - 1
-                        )
-                        stats_row.predictions_made = stats_row.predictions_made + 1
-                        try:
-                            setattr(stats_row, "updated_at", now)
-                        except Exception:
-                            pass
-
-                        self.db.flush()
-                        break
-                    except OperationalError as oe:
-                        # 행 잠금 경합 시 즉시/짧은 재시도 후 포기
-                        msg = str(oe).lower()
-                        if (
-                            "could not obtain lock" in msg
-                            or "would block" in msg
-                            or "nowait" in msg
-                        ):
-                            if attempt < max_retries - 1:
-                                time.sleep(backoff)
-                                backoff *= 2
-                                continue
-                            # 재시도 실패 시 사용자에게 재시도 요청
-                            raise BusinessLogicError(
-                                error_code="PREDICTION_BUSY",
-                                message="Please retry — prediction system is busy.",
-                            )
-                        # 다른 OperationalError는 상위로 전파
-                        raise
+                        },
+                    )
 
                 # 2) 예측 생성
                 model = PredictionModel(
@@ -387,17 +352,24 @@ class PredictionService:
                 message="Prediction has been locked for settlement",
             )
 
-        canceled = self.pred_repo.cancel_prediction(prediction_id)
-        if not canceled:
-            raise ValidationError("Failed to cancel prediction")
-
-        # 취소 성공 시 예측 환불 처리 (가용 +1, 사용량 -1)
+        # 서비스 단위 원자 트랜잭션으로 취소 + 슬롯 환불 처리
         try:
-            trading_day = to_date(model.trading_day)
-            if trading_day:
-                self.stats_repo.refund_prediction(user_id, trading_day, 1)
+            with self.db.begin():
+                canceled = self.pred_repo.cancel_prediction(
+                    prediction_id, commit=False
+                )
+                if not canceled:
+                    raise ValidationError("Failed to cancel prediction")
+
+                # 취소 성공 시 예측 환불 처리 (가용 +1, 사용량 -1)
+                trading_day = to_date(model.trading_day)
+                if trading_day:
+                    self.stats_repo.refund_prediction(
+                        user_id, trading_day, 1, commit=False
+                    )
         except Exception:
-            pass
+            # 트랜잭션은 자동 롤백
+            raise
 
         # 취소 시 수수료 환불 (비즈니스 규칙에 따라)
         if self.PREDICTION_CANCEL_REFUND:

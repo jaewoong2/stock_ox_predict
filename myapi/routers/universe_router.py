@@ -1,10 +1,9 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from dependency_injector.wiring import inject, Provide
+from dependency_injector.wiring import inject
 
 from myapi.core.tickers import get_default_tickers
-from myapi.containers import Container
 from myapi.core.auth_middleware import (
     get_current_user_optional,
     get_current_active_user,
@@ -13,6 +12,7 @@ from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse
 from myapi.schemas.universe import UniverseUpdate
 from myapi.services.universe_service import UniverseService
+from myapi.deps import get_universe_service
 
 
 router = APIRouter(prefix="/universe", tags=["universe"])
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/universe", tags=["universe"])
 @inject
 def get_today_universe(
     _user: Optional[UserSchema] = Depends(get_current_user_optional),
-    service: UniverseService = Depends(Provide[Container.services.universe_service]),
+    service: UniverseService = Depends(get_universe_service),
 ) -> Any:
     """
     오늘의 유니버스(종목 리스트)를 조회합니다.
@@ -51,7 +51,7 @@ def get_today_universe(
 @inject
 async def get_today_universe_with_prices(
     _user: Optional[UserSchema] = Depends(get_current_user_optional),
-    service: UniverseService = Depends(Provide[Container.services.universe_service]),
+    service: UniverseService = Depends(get_universe_service),
 ) -> Any:
     """
     오늘의 유니버스(종목 리스트)를 현재 가격 정보와 함께 조회합니다.
@@ -82,7 +82,7 @@ async def get_today_universe_with_prices(
 def upsert_universe(
     payload: UniverseUpdate,
     _current_user: UserSchema = Depends(get_current_active_user),
-    service: UniverseService = Depends(Provide[Container.services.universe_service]),
+    service: UniverseService = Depends(get_universe_service),
 ) -> Any:
     """
     특정 날짜의 유니버스를 생성하거나 업데이트합니다. (관리자용)

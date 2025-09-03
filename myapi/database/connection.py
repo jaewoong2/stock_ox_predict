@@ -13,4 +13,11 @@ engine = create_engine(
     connect_args={"options": f"-csearch_path={settings.POSTGRES_SCHEMA}"},
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Use expire_on_commit=False to avoid DetachedInstanceError when accessing
+# attributes after commit within the same request scope (common FastAPI pattern).
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+    expire_on_commit=False,
+)

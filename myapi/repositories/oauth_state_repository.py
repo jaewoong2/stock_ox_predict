@@ -13,18 +13,26 @@ class OAuthStateRepository:
         self.db = db
 
     def save(self, state: str, client_redirect_uri: str, expires_at: datetime) -> None:
+        """Persist OAuth state with explicit commit/rollback.
+
+        Avoids nesting a new `Session.begin()` after a prior read started a transaction.
+        """
         obj = OAuthStateModel(
             state=state, redirect_uri=client_redirect_uri, expires_at=expires_at
         )
         self.db.add(obj)
         try:
-            self.db.flush()
             self.db.commit()
         except Exception:
             self.db.rollback()
             raise
 
     def pop(self, state: str) -> Optional[str]:
+        """Fetch and delete state. Returns the client redirect URI.
+
+        Uses explicit commit/rollback to avoid nested transaction errors when a
+        previous read implicitly opened a transaction on the Session.
+        """
         rec = (
             self.db.query(OAuthStateModel)
             .filter(OAuthStateModel.state == state)
@@ -37,7 +45,6 @@ class OAuthStateRepository:
         client_redirect = rec.redirect_uri
         try:
             self.db.delete(rec)
-            self.db.flush()
             self.db.commit()
         except Exception:
             self.db.rollback()

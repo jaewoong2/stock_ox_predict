@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from myapi.core.exceptions import ValidationError, NotFoundError, ServiceException
 from myapi.repositories.active_universe_repository import ActiveUniverseRepository
 from myapi.repositories.price_repository import PriceRepository
+from myapi.repositories.session_repository import SessionRepository
 from myapi.schemas.price import (
     StockPrice,
     EODPrice,
@@ -31,6 +32,7 @@ class PriceService:
         self.db = db
         self.universe_repo = ActiveUniverseRepository(db)
         self.price_repo = PriceRepository(db)
+        self.session_repo = SessionRepository(db)
         self.error_log_service = ErrorLogService(db)
         self.current_price_cache = {}
         self.eod_price_cache = {}
@@ -44,7 +46,9 @@ class PriceService:
         pass
 
     async def get_current_price(self, symbol: str) -> StockPrice:
-        """특정 종목의 현재 가격을 조회합니다. 캐싱을 적용합니다."""
+        """특정 종목의 현재 가격을 조회합니다.
+        우선순위: 메모리 캐시 → DB(universe) → yfinance 초기 수집 후 DB 저장.
+        """
         # 캐시 확인
         now = datetime.now(timezone.utc)
         if symbol in self.current_price_cache:
@@ -52,12 +56,65 @@ class PriceService:
             if now - timestamp < self.cache_ttl:
                 return cached_data
 
+        # DB(universe)에서 시도: 오늘(현재 세션) 유니버스에 가격이 있으면 그걸 사용
         try:
-            # yfinance를 사용한 실시간 가격 조회
+            session = self.session_repo.get_current_session()
+            trading_day = session.trading_day if session else date.today()
+
+            uni_item = self.universe_repo.get_universe_item_model(trading_day, symbol)
+            if uni_item and uni_item.current_price is not None:
+                # DB 스냅샷을 StockPrice로 변환
+                price_data = StockPrice(
+                    symbol=symbol,
+                    current_price=Decimal(str(uni_item.current_price)),
+                    previous_close=(
+                        Decimal(str(uni_item.previous_close))
+                        if uni_item.previous_close is not None
+                        else Decimal("0")
+                    ),
+                    change=(
+                        Decimal(str(uni_item.change_amount))
+                        if uni_item.change_amount is not None
+                        else Decimal("0")
+                    ),
+                    change_percent=(
+                        Decimal(str(uni_item.change_percent))
+                        if uni_item.change_percent is not None
+                        else Decimal("0")
+                    ),
+                    volume=uni_item.volume if uni_item.volume is not None else None,  # type: ignore
+                    market_status=(
+                        str(uni_item.market_status)
+                        if uni_item.market_status is not None
+                        else "UNKNOWN"
+                    ),
+                    last_updated=uni_item.last_price_updated if uni_item.last_price_updated is not None else now,  # type: ignore
+                )
+                # 캐시에 저장 후 반환
+                self.current_price_cache[symbol] = (price_data, now)
+                return price_data
+        except Exception:
+            # DB 조회 실패해도 이후 단계 진행
+            pass
+
+        # DB에 없거나(또는 오늘의 유니버스가 아니라면) 최초 1회 yfinance 조회 후 저장
+        try:
             ticker = yf.Ticker(symbol)
             price_data = await self._get_current_price_with_yf(ticker, symbol)
 
-            # 캐시에 저장
+            # 유니버스에 해당 심볼이 있으면 가격을 저장 (없으면 저장 안 함)
+            try:
+                session = self.session_repo.get_current_session()
+                trading_day = session.trading_day if session else date.today()
+                if self.universe_repo.symbol_exists_in_universe(trading_day, symbol):
+                    self.universe_repo.update_symbol_price(
+                        trading_day, symbol, price_data
+                    )
+            except Exception:
+                # 저장 실패는 무시하고 계속 진행
+                pass
+
+            # 캐시에 저장 후 반환
             self.current_price_cache[symbol] = (price_data, now)
             return price_data
         except Exception as e:

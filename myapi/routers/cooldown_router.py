@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
-from dependency_injector.wiring import inject, Provide
-from myapi.containers import Container
+from dependency_injector.wiring import inject
 from myapi.core.auth_middleware import get_current_active_user
 from myapi.schemas.user import User as UserSchema
 from myapi.schemas.cooldown import SlotRefillMessage, CooldownStatusResponse
 from myapi.services.cooldown_service import CooldownService
+from myapi.deps import get_cooldown_service
 from myapi.core.exceptions import ValidationError, BusinessLogicError
 from myapi.utils.timezone_utils import get_current_kst_date
 import logging
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/cooldown", tags=["cooldown"])
 @inject
 async def get_cooldown_status(
     current_user: UserSchema = Depends(get_current_active_user),
-    cooldown_service: CooldownService = Depends(Provide[Container.services.cooldown_service]),
+    cooldown_service: CooldownService = Depends(get_cooldown_service),
 ) -> CooldownStatusResponse:
     """
     사용자의 현재 쿨다운 상태 조회
@@ -44,7 +44,7 @@ async def get_cooldown_status(
 @inject
 async def cancel_cooldown(
     current_user: UserSchema = Depends(get_current_active_user),
-    cooldown_service: CooldownService = Depends(Provide[Container.services.cooldown_service]),
+    cooldown_service: CooldownService = Depends(get_cooldown_service),
 ) -> dict:
     """
     활성 쿨다운 취소 (사용자 요청 시)
@@ -73,7 +73,7 @@ async def cancel_cooldown(
 @inject
 async def handle_slot_refill_message(
     message: SlotRefillMessage,
-    cooldown_service: CooldownService = Depends(Provide[Container.services.cooldown_service]),
+    cooldown_service: CooldownService = Depends(get_cooldown_service),
 ) -> dict:
     """
     SQS 메시지 핸들러: 쿨다운 완료 후 슬롯 충전 처리

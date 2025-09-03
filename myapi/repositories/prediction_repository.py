@@ -1,6 +1,7 @@
 from typing import List, Optional, Tuple, cast
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, desc, asc, func
+from sqlalchemy import and_, desc, asc, func, text
+from sqlalchemy import exc as sa_exc
 from datetime import date, datetime, timezone
 
 
@@ -157,7 +158,12 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         return locked_count
 
     def update_prediction_status(
-        self, prediction_id: int, status: StatusEnum, points_earned: int = 0
+        self,
+        prediction_id: int,
+        status: StatusEnum,
+        points_earned: int = 0,
+        *,
+        commit: bool = True,
     ) -> Optional[PredictionResponse]:
         """예측 상태 및 획득 포인트 업데이트"""
         return self.update(
@@ -165,6 +171,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             status=status,
             points_earned=points_earned,
             updated_at=datetime.now(timezone.utc),
+            commit=commit,
         )
 
     def bulk_update_predictions_status(
@@ -363,9 +370,13 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             if p is not None
         ]
 
-    def cancel_prediction(self, prediction_id: int) -> Optional[PredictionResponse]:
+    def cancel_prediction(
+        self, prediction_id: int, *, commit: bool = True
+    ) -> Optional[PredictionResponse]:
         """예측 취소"""
-        return self.update_prediction_status(prediction_id, StatusEnum.CANCELLED)
+        return self.update_prediction_status(
+            prediction_id, StatusEnum.CANCELLED, commit=commit
+        )
 
     def get_user_prediction_history(
         self, user_id: int, limit: int = 50, offset: int = 0
@@ -596,33 +607,84 @@ class UserDailyStatsRepository(
         # 최신 상태 반환
         return self.get_or_create_user_daily_stats(user_id, trading_day)
 
-    def refill_by_cooldown(
-        self, user_id: int, trading_day: date, amount: int = 1
-    ) -> UserDailyStatsResponse:
-        """쿨다운으로 가용 슬롯 회복 (최대 3까지)"""
-        # 현재 상태 조회
-        stats = self.get_or_create_user_daily_stats(user_id, trading_day)
-        current_available = stats.available_predictions
-        if current_available >= 3:
-            return stats
+    def refill_by_cooldown(self, user_id: int, trading_day: date, amount: int = 1):
+        """쿨다운으로 가용 슬롯 회복 (최대 3까지).
 
-        new_available = min(3, current_available + amount)
-        updated_count = (
-            self.db.query(self.model_class)
-            .filter(
-                and_(
-                    self.model_class.user_id == user_id,
-                    self.model_class.trading_day == trading_day,
+        잠재적 락 경합을 줄이기 위해 단일 SQL로 원자적 업데이트를 시도하고,
+        일시적 타임아웃/락으로 실패 시 짧게 재시도합니다.
+        """
+        import time
+
+        max_retries = 3
+        backoff_sec = 0.2
+
+        for attempt in range(max_retries):
+            try:
+                # 잠금 대기 시간을 짧게 설정하여 빠르게 재시도
+                try:
+                    self.db.execute(text("SET LOCAL lock_timeout = '200ms'"))
+                    self.db.execute(text("SET LOCAL statement_timeout = '1000ms'"))
+                except Exception:
+                    # 일부 드라이버/엔진에서 실패하더라도 핵심 로직은 계속
+                    pass
+
+                # 먼저 NOWAIT로 행 잠금을 시도하여 대기 없이 충돌 감지
+                locked_row = (
+                    self.db.query(self.model_class)
+                    .filter(
+                        and_(
+                            self.model_class.user_id == user_id,
+                            self.model_class.trading_day == trading_day,
+                        )
+                    )
+                    .with_for_update(nowait=True)
+                    .one_or_none()
                 )
-            )
-            .update({"available_predictions": new_available}, synchronize_session=False)
-        )
-        if updated_count > 0:
-            self.db.commit()
-        return self.get_or_create_user_daily_stats(user_id, trading_day)
+
+                if locked_row is None:
+                    # 행이 없으면 생성 후 최신 상태 반환
+                    return self.get_or_create_user_daily_stats(user_id, trading_day)
+
+                # available_predictions < 3 인 경우에만 cap(3)까지 증가 (단일 UPDATE 유지)
+                updated_count = (
+                    self.db.query(self.model_class)
+                    .filter(
+                        and_(
+                            self.model_class.user_id == user_id,
+                            self.model_class.trading_day == trading_day,
+                            self.model_class.available_predictions < 3,
+                        )
+                    )
+                    .update(
+                        {
+                            "available_predictions": func.least(
+                                3, self.model_class.available_predictions + amount
+                            )
+                        },
+                        synchronize_session=False,
+                    )
+                )
+                if updated_count > 0:
+                    self.db.commit()
+                # 최신 상태 반환
+                return self.get_or_create_user_daily_stats(user_id, trading_day)
+            except sa_exc.OperationalError as e:
+                # 잠금 불가/타임아웃 등 운영 에러: 재시도 백오프
+                self.db.rollback()
+                if attempt < max_retries - 1:
+                    time.sleep(backoff_sec * (attempt + 1))
+                    continue
+                raise
+            except Exception:
+                # 기타 예외도 동일 처리
+                self.db.rollback()
+                if attempt < max_retries - 1:
+                    time.sleep(backoff_sec * (attempt + 1))
+                    continue
+                raise
 
     def refund_prediction(
-        self, user_id: int, trading_day: date, amount: int = 1
+        self, user_id: int, trading_day: date, amount: int = 1, *, commit: bool = True
     ) -> UserDailyStatsResponse:
         """예측 취소 등으로 가용 슬롯 환불 (가용 +1, 사용량 -1, cap 준수)"""
         stats = self.get_or_create_user_daily_stats(user_id, trading_day)
@@ -649,7 +711,7 @@ class UserDailyStatsRepository(
                 synchronize_session=False,
             )
         )
-        if updated_count > 0:
+        if updated_count > 0 and commit:
             self.db.commit()
         return self.get_or_create_user_daily_stats(user_id, trading_day)
 

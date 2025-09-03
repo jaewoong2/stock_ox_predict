@@ -27,12 +27,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from typing import List
 from datetime import date
-from dependency_injector.wiring import inject, Provide
+from dependency_injector.wiring import inject
 
 from myapi.core.auth_middleware import verify_bearer_token, require_admin, get_current_active_user
 from myapi.schemas.user import User as UserSchema
 from myapi.services.point_service import PointService
-from myapi.containers import Container
+from myapi.deps import get_point_service
 from myapi.schemas.points import (
     PointsBalanceResponse,
     PointsLedgerEntry,
@@ -63,7 +63,7 @@ router = APIRouter(prefix="/points", tags=["points"])
 @inject
 async def get_my_balance(
     current_user: UserSchema = Depends(get_current_active_user),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsBalanceResponse:
     """
     내 포인트 잔액 조회 - 인증된 사용자의 현재 포인트 잔액
@@ -101,7 +101,7 @@ async def get_my_ledger(
     limit: int = Query(PaginationLimits.POINTS_LEDGER["default"], ge=PaginationLimits.POINTS_LEDGER["min"], le=PaginationLimits.POINTS_LEDGER["max"], description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(get_current_active_user),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsLedgerResponse:
     """
     내 포인트 거래 내역 조회 - 페이징을 통한 거래 내역 조회
@@ -149,7 +149,7 @@ async def get_ledger_by_date_range(
     start_date: date = Query(..., description="시작 날짜 (YYYY-MM-DD)"),
     end_date: date = Query(..., description="종료 날짜 (YYYY-MM-DD)"),
     current_user: UserSchema = Depends(get_current_active_user),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> List[PointsLedgerEntry]:
     """날짜 범위별 포인트 거래 내역 조회
 
@@ -176,7 +176,7 @@ async def get_ledger_by_date_range(
 async def get_points_earned_today(
     trading_day: date = Path(..., description="거래일 (YYYY-MM-DD)"),
     current_user: UserSchema = Depends(get_current_active_user),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsEarnedResponse:
     """특정일 획득 포인트 조회
 
@@ -200,7 +200,7 @@ async def get_points_earned_today(
 @inject
 async def verify_my_integrity(
     current_user: UserSchema = Depends(get_current_active_user),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsIntegrityCheckResponse:
     """내 포인트 정합성 검증
 
@@ -230,7 +230,7 @@ async def admin_add_points(
     request: PointsTransactionRequest,
     user_id: int = Query(..., description="대상 사용자 ID"),
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsTransactionResponse:
     """
     관리자용 포인트 추가 - 특정 사용자에게 포인트 지급
@@ -283,7 +283,7 @@ async def admin_deduct_points(
     request: PointsTransactionRequest,
     user_id: int = Query(..., description="대상 사용자 ID"),
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsTransactionResponse:
     """포인트 차감 (관리자 전용)
 
@@ -308,7 +308,7 @@ async def admin_deduct_points(
 async def admin_adjust_points(
     request: AdminPointsAdjustmentRequest,
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsTransactionResponse:
     """포인트 조정 (관리자 전용)
 
@@ -337,7 +337,7 @@ async def admin_adjust_points(
 async def admin_get_user_balance(
     user_id: int = Path(..., description="조회할 사용자 ID"),
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsBalanceResponse:
     """사용자 포인트 잔액 조회 (관리자 전용)
 
@@ -360,7 +360,7 @@ async def admin_get_user_ledger(
     limit: int = Query(PaginationLimits.POINTS_LEDGER["default"], ge=PaginationLimits.POINTS_LEDGER["min"], le=PaginationLimits.POINTS_LEDGER["max"], description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsLedgerResponse:
     """사용자 포인트 거래 내역 조회 (관리자 전용)
 
@@ -383,7 +383,7 @@ async def admin_get_user_ledger(
 async def admin_verify_user_integrity(
     user_id: int = Path(..., description="검증할 사용자 ID"),
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsIntegrityCheckResponse:
     """사용자 포인트 정합성 검증 (관리자 전용)
 
@@ -403,7 +403,7 @@ async def admin_verify_user_integrity(
 @inject
 async def admin_verify_global_integrity(
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> PointsIntegrityCheckResponse:
     """
     전체 포인트 정합성 검증 - 시스템 전체의 포인트 무결성 검사
@@ -449,7 +449,7 @@ async def admin_verify_global_integrity(
 async def get_daily_points_stats(
     trading_day: date = Path(..., description="거래일 (YYYY-MM-DD)"),
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> DailyPointsStatsResponse:
     """일별 포인트 통계 (관리자 전용)
 
@@ -474,7 +474,7 @@ async def check_user_affordability(
     user_id: int = Path(..., description="확인할 사용자 ID"),
     amount: int = Path(..., description="확인할 포인트 금액"),
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> AffordabilityResponse:
     """사용자 지불 능력 확인 (관리자 전용)
 
@@ -506,7 +506,7 @@ async def check_user_affordability(
 async def verify_daily_points_integrity(
     trading_day: date = Path(..., description="검증할 거래일 (YYYY-MM-DD)"),
     current_user: UserSchema = Depends(require_admin),
-    point_service: PointService = Depends(Provide[Container.services.point_service]),
+    point_service: PointService = Depends(get_point_service),
 ) -> DailyPointsIntegrityResponse:
     """
     일별 포인트 정합성 검증 (관리자 전용)

@@ -2,14 +2,14 @@ from typing import Any, List, Optional
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from dependency_injector.wiring import inject, Provide
+from dependency_injector.wiring import inject
 
-from myapi.containers import Container
 from myapi.core.auth_middleware import require_admin, verify_bearer_token
 from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.schemas.prediction import PredictionChoice
 from myapi.services.settlement_service import SettlementService
+from myapi.deps import get_settlement_service
 
 
 router = APIRouter(prefix="/admin/settlement", tags=["settlement"])
@@ -23,9 +23,7 @@ public_router = APIRouter(prefix="/settlement", tags=["settlement-public"])
 async def settle_day(
     trading_day: str,
     _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
-    settlement_service: SettlementService = Depends(
-        Provide[Container.services.settlement_service]
-    ),
+    settlement_service: SettlementService = Depends(get_settlement_service),
 ) -> Any:
     """특정 거래일의 모든 예측을 자동으로 정산합니다. (관리자 전용)"""
     try:
@@ -51,9 +49,7 @@ async def settle_day(
 async def get_settlement_summary(
     trading_day: str,
     _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
-    settlement_service: SettlementService = Depends(
-        Provide[Container.services.settlement_service]
-    ),
+    settlement_service: SettlementService = Depends(get_settlement_service),
 ) -> Any:
     """특정 거래일의 정산 요약 정보를 조회합니다. (관리자 전용)"""
     try:
@@ -82,9 +78,7 @@ async def manual_settle_symbol(
     correct_choice: PredictionChoice,
     override_price_validation: bool = False,
     _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
-    settlement_service: SettlementService = Depends(
-        Provide[Container.services.settlement_service]
-    ),
+    settlement_service: SettlementService = Depends(get_settlement_service),
 ):
     """특정 종목에 대해 수동으로 정산을 수행합니다. (관리자 전용)"""
     try:
@@ -117,9 +111,7 @@ async def manual_settle_symbol(
 async def get_settlement_status(
     trading_day: str,
     _current_user: UserSchema = Depends(verify_bearer_token),  # 일반 사용자 인증
-    settlement_service: SettlementService = Depends(
-        Provide[Container.services.settlement_service]
-    ),
+    settlement_service: SettlementService = Depends(get_settlement_service),
 ) -> Any:
     """특정 거래일의 정산 진행 상태를 조회합니다. (인증된 사용자 전용)"""
     try:
@@ -153,9 +145,7 @@ async def retry_settlement(
         None, description="재시도할 종목 목록 (없으면 모든 PENDING 종목)"
     ),
     _current_user: UserSchema = Depends(require_admin),  # 관리자 권한 필요
-    settlement_service: SettlementService = Depends(
-        Provide[Container.services.settlement_service]
-    ),
+    settlement_service: SettlementService = Depends(get_settlement_service),
 ) -> Any:
     """실패했거나 PENDING 상태인 예측들의 정산을 재시도합니다. (관리자 전용)"""
     try:

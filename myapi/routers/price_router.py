@@ -2,13 +2,12 @@ from typing import Any
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from dependency_injector.wiring import inject, Provide
-
-from myapi.containers import Container
+from dependency_injector.wiring import inject
 from myapi.core.auth_middleware import get_current_active_user, require_admin
 from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.services.price_service import PriceService
+from myapi.deps import get_price_service
 
 
 router = APIRouter(prefix="/prices", tags=["prices"])
@@ -21,7 +20,7 @@ async def get_current_stock_price(
     _current_user: UserSchema = Depends(
         get_current_active_user
     ),  # Authentication required
-    price_service: PriceService = Depends(Provide[Container.services.price_service]),
+    price_service: PriceService = Depends(get_price_service),
 ) -> Any:
     """특정 종목의 현재 가격을 조회합니다."""
     try:
@@ -43,7 +42,7 @@ async def get_universe_current_prices(
     _current_user: UserSchema = Depends(
         get_current_active_user
     ),  # Authentication required
-    price_service: PriceService = Depends(Provide[Container.services.price_service]),
+    price_service: PriceService = Depends(get_price_service),
 ) -> Any:
     """오늘의 유니버스 모든 종목의 현재 가격을 조회합니다."""
     try:
@@ -75,7 +74,7 @@ async def get_eod_price(
     _current_user: UserSchema = Depends(
         get_current_active_user
     ),  # Authentication required
-    price_service: PriceService = Depends(Provide[Container.services.price_service]),
+    price_service: PriceService = Depends(get_price_service),
 ) -> Any:
     """특정 종목의 EOD(장 마감) 가격을 조회합니다."""
     try:
@@ -106,7 +105,7 @@ async def validate_settlement_prices(
     _current_user: UserSchema = Depends(
         get_current_active_user
     ),  # Admin authentication required
-    price_service: PriceService = Depends(Provide[Container.services.price_service]),
+    price_service: PriceService = Depends(get_price_service),
 ) -> Any:
     """정산을 위한 가격 검증을 수행합니다. (관리자 전용)"""
     try:
@@ -142,7 +141,7 @@ async def compare_prediction_with_outcome(
     _current_user: UserSchema = Depends(
         get_current_active_user
     ),  # Admin authentication required
-    price_service: PriceService = Depends(Provide[Container.services.price_service]),
+    price_service: PriceService = Depends(get_price_service),
 ) -> Any:
     """예측과 실제 결과를 비교합니다. (관리자 전용)"""
     try:
@@ -182,7 +181,7 @@ async def compare_prediction_with_outcome(
 async def collect_eod_data(
     trading_day: str,
     _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
-    price_service: PriceService = Depends(Provide[Container.services.price_service]),
+    price_service: PriceService = Depends(get_price_service),
 ) -> Any:
     """
     지정된 거래일의 EOD(End of Day) 가격 데이터를 수집합니다. (관리자 전용)

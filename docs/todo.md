@@ -1465,3 +1465,142 @@ ErrorLog를 활용한 통합 에러 추적 시스템 구현으로 운영 안정�
 - `myapi/services/cooldown_service.py`
 - `myapi/repositories/prediction_repository.py` (UserDailyStatsRepository cap 적용)
 - `myapi/services/ad_unlock_service.py` (일일 제한 제거, cap 기반 판단)
+
+
+
+DB 세션 누수 점검 및 개선 TODO
+
+요약
+- 증상: API 요청 이후 PostgreSQL 커넥션/세션이 회수되지 않고 누적(풀 고갈, idle in transaction 증가)되는 것으로 의심됨.
+- 핵심 원인: dependency-injector로 서비스에 주입하는 DB 세션이 FastAPI의 요청 스코프 종료 시점에 닫히지 않음.
+  - `Container.repositories.get_db = providers.Resource(get_db)` 형태로 세션을 주입하지만, 라우터에서 `Provide[Container.services.*]`로 서비스 인스턴스만 주입하여 FastAPI가 `get_db` 제너레이터의 정리를 인지하지 못함.
+  - 일부 라우터는 `Depends(get_db)`로 직접 세션을 받는 반면, 대부분은 컨테이너에서 서비스 인스턴스를 주입받음(세션 close 누락).
+- 보조 원인: 서비스/리포지토리 내부에서 트랜잭션을 시작/커밋/롤백하나, 세션 종료(close)는 의존성 계층에서 일관되게 관리되지 않음.
+
+현 상태 맵핑
+- 세션 생성
+  - `myapi/database/connection.py`: `engine = create_engine(...)`, `SessionLocal = sessionmaker(...)`
+  - `myapi/database/session.py`: `get_db()` 제너레이터가 `SessionLocal()` 생성 후 `finally: db.close()` 보장.
+- DI 컨테이너
+  - `myapi/containers.py`: `RepositoryModule.get_db = providers.Resource(get_db)`
+  - `ServiceModule.*_service = providers.Factory(ServiceClass, db=repositories.get_db, ...)`
+  - 라우터에서는 `Depends(Provide[Container.services.X])`로 서비스 인스턴스만 주입.
+    - FastAPI는 `get_db` 자원 정리(제너레이터 종료)를 모름 → 세션 미닫힘 가능성 큼.
+- 라우터에서 `Depends(get_db)` 직접 사용 예외
+  - 인증 미들웨어/일부 라우터(`auth_router.py`, `admin_router.py`, `core/auth_middleware.py`)는 `Depends(get_db)` 사용 → 이 경로는 안전.
+- 서비스/리포지토리
+  - 서비스는 `db: Session`을 생성자에서 보관 후 전역 사용.
+  - 리포지토리는 메서드 단위로 `commit()/rollback()` 수행. 세션 종료는 없음(의존성에서 해야 함).
+  - `PriceService`는 `async with price_service` 패턴을 쓰지만 `__aexit__`에서 DB 세션 close를 하지 않음(그리고 close를 여기서 해도 동일 세션을 공유하는 다른 컴포넌트에 영향 가능).
+
+문제 패턴 (누수 가능 지점)
+1) 컨테이너 기반 서비스 주입
+   - 예: `user_router.py`, `prediction_router.py`, `session_router.py`, `price_router.py` 등에서
+     `service: SomeService = Depends(Provide[Container.services.some_service])`
+   - 이 경우 SomeService 내부의 `db`는 `providers.Resource(get_db)`가 만든 세션이지만, 요청 종료 시 FastAPI가 해당 리소스를 종료하지 않음.
+   - 결과: 세션 close 누락 → 커넥션 풀 고갈/idle 세션 누적.
+2) 수동 롤백만 수행
+   - 일부 엔드포인트에서 예외 시 `service.db.rollback()`만 호출하고 `close()`는 하지 않음(`myapi/routers/user_router.py:342, 388, 414, 437, 472`).
+
+개선 방향 (권장안: FastAPI 의존성으로 세션 수명 관리 일원화)
+1) 서비스 의존성 팩토리로 전환 (가장 안전하고 명확)
+   - `myapi/deps.py`(신규) 또는 각 라우터 파일 상단에 서비스 의존성 팩토리 작성:
+     ```python
+     # 예) prediction
+     from fastapi import Depends
+     from sqlalchemy.orm import Session
+     from myapi.database.session import get_db
+     from myapi.config import settings  # 또는 Settings 의존성
+     from myapi.services.prediction_service import PredictionService
+
+     def get_prediction_service(db: Session = Depends(get_db)) -> PredictionService:
+         return PredictionService(db, settings=settings)
+     ```
+   - 라우터에서 기존 `Provide[Container.services.prediction_service]`를 `Depends(get_prediction_service)`로 교체.
+   - 이 방식은 FastAPI가 `get_db` 제너레이터 종료를 보장하므로 세션 누수가 발생하지 않음.
+
+2) 컨테이너를 유지해야 하는 경우 (대안안)
+   - `providers.Resource(get_db)`를 서비스 레벨 자원으로 래핑하여 서비스 자체를 리소스로 제공:
+     - 예: `providers.Resource(build_prediction_service, settings=config.config)`
+     - `build_prediction_service(settings: Settings)`는 내부에서 `db = SessionLocal()` 생성 후 `try: yield PredictionService(db, settings) finally: db.close()` 구현.
+   - 라우터는 그대로 `Depends(Provide[Container.services.prediction_service])` 사용 가능.
+   - 주의: 컨테이너/Provide의 요청 스코프와 리소스 정리 보장이 동작하는지 반드시 검증 필요. 확실성을 위해 1안이 더 권장됨.
+
+3) 컨테이너 설정 변경
+   - 현재 `init_resources()/shutdown_resources()`를 사용하지 않음. 이는 애플리케이션 전역 리소스(예: 커넥션, 클라이언트) 관리에 필요하지만, DB 세션은 요청 스코프여야 하므로 전역 init/shutdown과는 부합하지 않음.
+   - 결론: DB 세션은 전역 리소스로 관리하지 말 것. 요청 스코프로 한정.
+
+구체 작업 항목
+Phase 1 — 누수 차단 (우선 적용)
+- [x] `myapi/containers.py`: `RepositoryModule.get_db = providers.Resource(get_db)`의 세션을 서비스 주입 경로에서 더 이상 사용하지 않도록 라우터 의존성 전환.
+- [x] 서비스 의존성 팩토리 추가: `myapi/deps.py` 생성 및 제공 함수 추가
+  - [x] `get_user_service`
+  - [x] `get_prediction_service`
+  - [x] `get_session_service`
+  - [x] `get_universe_service`
+  - [x] `get_price_service`
+  - [x] `get_settlement_service`
+  - [x] `get_reward_service`
+  - [x] `get_point_service`
+  - [x] `get_ad_unlock_service`
+  - [x] `get_cooldown_service`
+  - (각 서비스 생성자 인자에 맞게 `settings` 등 주입)
+- [x] 라우터 교체: `Provide[Container.services.*]` → `Depends(get_*_service)` 변경
+  - [x] `myapi/routers/prediction_router.py`
+  - [x] `myapi/routers/user_router.py`
+  - [x] `myapi/routers/session_router.py`
+  - [x] `myapi/routers/universe_router.py`
+  - [x] `myapi/routers/price_router.py`
+  - [x] `myapi/routers/settlement_router.py`
+  - [x] `myapi/routers/cooldown_router.py`
+  - [x] `myapi/routers/reward_router.py`
+  - [x] `myapi/routers/point_router.py`
+  - [x] `myapi/routers/ad_unlock_router.py`
+- [x] `price_router.py` 등에서 사용 중인 `async with price_service as service:` 구문 유지. DB 세션 관리는 `get_db` 경로로 일원화(서비스의 `__aexit__`에서 DB close 하지 않음).
+- [x] 예외 처리 시 `service.db.rollback()` 호출은 유지. 요청 종료 시 FastAPI가 세션을 닫으므로 추가 close 불필요. (점진 정리 예정)
+
+Phase 2 — 일관된 트랜잭션 경계 정리 (권장 리팩토링)
+- [x] BaseRepository 트랜잭션 제어 옵션 추가: `create/update/delete(commit: bool=True)`로 커밋 제어 가능하도록 확장.
+- [x] PredictionRepository 메서드 커밋 제어 추가: `update_prediction_status(commit=False 지원)`, `cancel_prediction(commit=False 지원)`, `refund_prediction(commit=False 지원)`.
+- [x] 서비스 단위 UoW 적용(1차): `PredictionService.cancel_prediction()`을 `with db.begin():`으로 감싸 취소 + 슬롯 환불을 원자화(commit=False 활용) — DB 일관성 강화.
+- [ ] Repository 레벨의 분산 커밋 전반 제거(추가 범위): 정산(bulk update), 쿨다운 refill, 증가/감소 등 전역적으로 `commit=False` 경로 제공 후, 서비스에서 일괄 커밋하도록 확대.
+- [ ] 조회 전용 메서드는 트랜잭션 없음/암묵적 트랜잭션 허용. 장시간 점유 방지 점검.
+
+Phase 3 — 관측/검증 추가
+- [ ] 세션 생성/종료 로깅(샘플): `get_db()`에 간단한 debug 로그 추가(요청 id/경로 기준) → 개발 환경에서만 활성화.
+- [ ] DB 커넥션 수 모니터링 대시보드: `psql`의 `pg_stat_activity`/`pg_stat_database`로 active/idle/idle in transaction 추이 확인.
+- [ ] 부하 테스트 시나리오로 회귀 검증: 동시 요청 100~200 수준에서 풀 고갈/지연 여부 체크.
+
+Phase 4 — 비요청 컨텍스트에서의 세션 사용 점검
+- [ ] 배치/백그라운드 작업에서 세션 필요 시 `get_db_context()` 사용:
+  ```python
+  from myapi.database.session import get_db_context
+  with get_db_context() as db:
+      service = SomeService(db)
+      ...
+  ```
+- [ ] AWS Lambda 등 서버리스 경로에서 세션을 전역으로 재사용하지 않도록 주의(요청별 생성/정리).
+
+레거시/호환 주의사항
+- 컨테이너 사용을 완전히 제거할 필요는 없음. 설정, 외부 클라이언트(AWS 등)는 컨테이너에 남기고, DB 세션만 FastAPI 의존성으로 관리하면 됨.
+- 이미 `auth_middleware.py`/`admin_router.py`가 `Depends(get_db)`를 사용하므로, 동일 패턴으로 통일하면 안전.
+
+검증 방법(Checklist)
+- [ ] 변경 후, 동시 50~100요청 부하에서 `pg_stat_activity`의 active/idle 세션 수가 요청 후 빠르게 감소하는지 확인.
+- [ ] 풀 고갈 에러(SQLAlchemy QueuePool Timeout) 재현 시나리오가 사라지는지 확인.
+- [ ] 앱 로그에서 `get_db()` 진입/종료 로그가 1:1로 매칭되는지 확인(개발 환경에서만).
+
+추가 제안(선택)
+- [ ] `SessionLocal` 대신 `scoped_session`(요청 스코프) 고려 가능하나, FastAPI의 `Depends(get_db)` 패턴이 더 단순/명확.
+- [ ] SQLAlchemy 2.x로 업그레이드 시 async engine/AsyncSession 전환 검토. 현재는 sync ORM을 asyncio 핸들러에서 사용하므로 I/O 블로킹 발생 가능.
+
+참고 파일 경로
+- `myapi/database/connection.py:1`
+- `myapi/database/session.py:5`
+- `myapi/containers.py:29`
+- `myapi/routers/user_router.py:342`
+- `myapi/routers/price_router.py:1`
+- `myapi/routers/prediction_router.py:1`
+- `myapi/routers/session_router.py:1`
+- `myapi/services/price_service.py:1`
+- `myapi/repositories/base.py:1`

@@ -117,7 +117,7 @@ class BaseRepository(Generic[T, SchemaType], ABC):
                 results.append(schema_instance)
         return results
 
-    def create(self, **kwargs) -> Optional[SchemaType]:
+    def create(self, commit: bool = True, **kwargs) -> Optional[SchemaType]:
         """새 레코드 생성 - Pydantic 스키마 반환"""
         self._ensure_clean_session()
         instance = self.model_class(**kwargs)
@@ -125,13 +125,14 @@ class BaseRepository(Generic[T, SchemaType], ABC):
         try:
             self.db.flush()
             self.db.refresh(instance)
-            self.db.commit()
+            if commit:
+                self.db.commit()
         except Exception:
             self.db.rollback()
             raise
         return self._to_schema(instance)
 
-    def update(self, instance_id: Any, **kwargs) -> Optional[SchemaType]:
+    def update(self, instance_id: Any, commit: bool = True, **kwargs) -> Optional[SchemaType]:
         """레코드 업데이트 - Pydantic 스키마 반환"""
         self._ensure_clean_session()
         instance = (
@@ -151,13 +152,14 @@ class BaseRepository(Generic[T, SchemaType], ABC):
         try:
             self.db.flush()
             self.db.refresh(instance)
-            self.db.commit()
+            if commit:
+                self.db.commit()
         except Exception:
             self.db.rollback()
             raise
         return self._to_schema(instance)
 
-    def delete(self, instance_id: Any) -> bool:
+    def delete(self, instance_id: Any, commit: bool = True) -> bool:
         """레코드 삭제"""
         self._ensure_clean_session()
         instance = (
@@ -172,7 +174,8 @@ class BaseRepository(Generic[T, SchemaType], ABC):
         try:
             self.db.delete(instance)
             self.db.flush()
-            self.db.commit()
+            if commit:
+                self.db.commit()
             return True
         except Exception:
             self.db.rollback()

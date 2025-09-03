@@ -1,9 +1,9 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from dependency_injector.wiring import inject, Provide
+from dependency_injector.wiring import inject
 
-from myapi.containers import Container
+from myapi.deps import get_session_service
 from myapi.core.auth_middleware import (
     get_current_user_optional,
     get_current_active_user,
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/session", tags=["session"])
 @inject
 def get_today_session(
     _user: Optional[UserSchema] = Depends(get_current_user_optional),  # optional
-    service: SessionService = Depends(Provide[Container.services.session_service]),
+    service: SessionService = Depends(get_session_service),
 ) -> Any:
     """
     오늘의 세션 정보를 조회합니다.
@@ -81,7 +81,7 @@ def get_today_session(
 @inject
 def flip_to_predict(
     _current_user: UserSchema = Depends(get_current_active_user),
-    service: SessionService = Depends(Provide[Container.services.session_service]),
+    service: SessionService = Depends(get_session_service),
 ) -> Any:
     """
     예측 모드로 세션을 전환합니다.
@@ -109,7 +109,7 @@ def flip_to_predict(
 @inject
 def cutoff_predictions(
     _current_user: UserSchema = Depends(get_current_active_user),
-    service: SessionService = Depends(Provide[Container.services.session_service]),
+    service: SessionService = Depends(get_session_service),
 ) -> Any:
     try:
         status_obj = service.close_predictions()
@@ -128,7 +128,7 @@ def cutoff_predictions(
 def get_prediction_status(
     trading_day: Optional[str] = None,
     user: Optional[UserSchema] = Depends(get_current_user_optional),
-    service: SessionService = Depends(Provide[Container.services.session_service]),
+    service: SessionService = Depends(get_session_service),
 ) -> Any:
     """
     예측 가능 시간 상태를 상세히 조회합니다.
@@ -165,7 +165,7 @@ def get_prediction_status(
 def can_predict_now(
     trading_day: Optional[str] = None,
     user: Optional[UserSchema] = Depends(get_current_user_optional),
-    service: SessionService = Depends(Provide[Container.services.session_service]),
+    service: SessionService = Depends(get_session_service),
 ) -> Any:
     """
     현재 예측 가능한지 간단히 확인합니다.

@@ -385,8 +385,11 @@ class AwsService:
 
         # Compute UTC time and use at() for one-time schedule
         scheduled_time = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
-        # EventBridge Scheduler expects RFC3339 without microseconds
-        at_expression = f"at({scheduled_time.strftime('%Y-%m-%dT%H:%M:%SZ')})"
+        # Round up to the next minute and drop timezone suffix (Scheduler expects UTC without 'Z')
+        rounded = scheduled_time.replace(second=0, microsecond=0)
+        if scheduled_time.second > 0 or scheduled_time.microsecond > 0:
+            rounded = rounded + timedelta(minutes=1)
+        at_expression = f"at({rounded.strftime('%Y-%m-%dT%H:%M:%S')})"
 
         target_lambda_arn = self._get_lambda_function_arn(function_name)
         schedule_name = f"{schedule_name_prefix}-{uuid.uuid4().hex[:8]}"

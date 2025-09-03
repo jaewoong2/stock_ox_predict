@@ -2,13 +2,13 @@ from click import Option
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from dependency_injector.wiring import inject, Provide
+from dependency_injector.wiring import inject
 
 from myapi.database.session import get_db
 from myapi.core.auth_middleware import verify_bearer_token, require_admin
 from myapi.schemas.user import User as UserSchema
 from myapi.services.reward_service import RewardService
-from myapi.containers import Container
+from myapi.deps import get_reward_service
 from myapi.schemas.rewards import (
     DeleteResultResponse,
     RewardCatalogResponse,
@@ -38,7 +38,7 @@ router = APIRouter(prefix="/rewards", tags=["rewards"])
 @inject
 async def get_reward_catalog(
     available_only: bool = Query(True, description="재고 있는 상품만 조회"),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ) -> RewardCatalogResponse:
     """리워드 카탈로그 조회
 
@@ -56,7 +56,7 @@ async def get_reward_catalog(
 @inject
 async def get_reward_by_sku(
     sku: str = Path(..., description="리워드 SKU"),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ):
     """SKU로 리워드 상품 조회
 
@@ -77,7 +77,7 @@ async def get_reward_by_sku(
 async def redeem_reward(
     request: RewardRedemptionRequest,
     current_user: UserSchema = Depends(verify_bearer_token),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ) -> RewardRedemptionResponse:
     """리워드 교환
 
@@ -103,7 +103,7 @@ async def get_my_redemption_history(
     limit: int = Query(PaginationLimits.REWARDS_HISTORY["default"], ge=PaginationLimits.REWARDS_HISTORY["min"], le=PaginationLimits.REWARDS_HISTORY["max"], description="페이지 크기"),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(verify_bearer_token),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ) -> RewardRedemptionHistoryResponse:
     """내 교환 내역 조회
 
@@ -129,7 +129,7 @@ async def get_my_redemption_history(
 async def create_reward_item(
     request: AdminRewardCreateRequest,
     current_user: UserSchema = Depends(require_admin),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ) -> RewardsInventoryResponse:
     """리워드 아이템 생성 (관리자 전용)
 
@@ -153,7 +153,7 @@ async def update_reward_stock(
     sku: str = Path(..., description="리워드 SKU"),
     new_stock: int = Query(..., ge=0, description="새로운 재고 수량"),
     current_user: UserSchema = Depends(require_admin),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ):
     """리워드 재고 업데이트 (관리자 전용)
 
@@ -177,7 +177,7 @@ async def update_reward_stock(
 async def delete_reward_item(
     sku: str = Path(..., description="삭제할 리워드 SKU"),
     current_user: UserSchema = Depends(require_admin),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ) -> DeleteResultResponse:
     """리워드 아이템 삭제 (관리자 전용)
 
@@ -199,7 +199,7 @@ async def delete_reward_item(
 @inject
 async def get_admin_stats(
     current_user: UserSchema = Depends(require_admin),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ) -> AdminRewardsStatsResponse:
     """관리자용 리워드 통계
 
@@ -222,7 +222,7 @@ async def get_admin_stats(
 async def get_pending_redemptions(
     limit: int = Query(100, ge=1, le=500, description="조회할 최대 건수"),
     current_user: UserSchema = Depends(require_admin),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ) -> List:
     """대기 중인 교환 요청 조회 (관리자 전용)
 
@@ -256,7 +256,7 @@ async def update_redemption_status(
     new_status: str = Query(..., description="새로운 상태 (ISSUED, CANCELLED, FAILED)"),
     vendor_code: Optional[str] = Query(None, description="벤더 코드 (발급 완료시)"),
     current_user: UserSchema = Depends(require_admin),
-    reward_service: RewardService = Depends(Provide[Container.services.reward_service]),
+    reward_service: RewardService = Depends(get_reward_service),
 ) -> UpdateRedemptionStatusResponse:
     """교환 요청 상태 업데이트 (관리자 전용)
 

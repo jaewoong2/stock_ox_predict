@@ -8,6 +8,7 @@ from sqlalchemy import (
     Enum,
     SmallInteger,
     Index,
+    Numeric,
 )
 from sqlalchemy.schema import PrimaryKeyConstraint
 from myapi.models.base import BaseModel
@@ -67,3 +68,12 @@ class ActiveUniverse(BaseModel):
     trading_day = Column(Date, nullable=False)
     symbol = Column(Text, nullable=False)
     seq = Column(SmallInteger, nullable=False)
+
+    # Optional real-time-ish price snapshot fields
+    current_price = Column(Numeric(10, 4), nullable=True)
+    previous_close = Column(Numeric(10, 4), nullable=True)
+    change_amount = Column(Numeric(10, 4), nullable=True)
+    change_percent = Column(Numeric(6, 4), nullable=True)
+    volume = Column(BigInteger, nullable=True)
+    market_status = Column(String(32), nullable=True)
+    last_price_updated = Column(DateTime(timezone=True), nullable=True)

@@ -16,8 +16,9 @@ from myapi.schemas.auth import (
     ErrorCode,
 )
 
-from dependency_injector.wiring import inject, Provide
-from myapi.containers import Container
+from dependency_injector.wiring import inject
+from myapi.database.session import get_db
+from myapi.deps import get_auth_service
 from urllib.parse import urlencode
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -33,11 +34,8 @@ def oauth_authorize(
     request: Request,
     provider: str,
     client_redirect: str,
-    db: Session = Depends(Provide[Container.repositories.get_db]),
-    auth_service: AuthService = Depends(Provide[Container.services.auth_service]),
-    oauth_state_repo: OAuthStateRepository = Depends(
-        Provide[Container.repositories.oauth_state_repository]
-    ),
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
 ):
     """Redirects the user agent to the provider's authorization page.
 
@@ -59,6 +57,7 @@ def oauth_authorize(
         # State (CSRF & correlation)
         state = secrets.token_urlsafe(32)
         # Save state -> client redirect mapping
+        oauth_state_repo = OAuthStateRepository(db)
         oauth_state_repo.save(
             state=state,
             client_redirect_uri=client_redirect,
@@ -94,15 +93,13 @@ async def oauth_callback_get(
     provider: str,
     code: str,
     state: str,
-    db: Session = Depends(Provide[Container.repositories.get_db]),
-    auth_service: AuthService = Depends(Provide[Container.services.auth_service]),
-    oauth_state_repo: OAuthStateRepository = Depends(
-        Provide[Container.repositories.oauth_state_repository]
-    ),
+    db: Session = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
 ):
     """Provider redirects here. Exchange code -> token, then redirect to client."""
     try:
         # Resolve client redirect from stored state and clear it
+        oauth_state_repo = OAuthStateRepository(db)
         client_redirect = oauth_state_repo.pop(state)
         if not client_redirect:
             raise HTTPException(status_code=400, detail="Invalid or expired state")
@@ -155,7 +152,7 @@ async def oauth_callback_get(
 @inject
 async def oauth_callback(
     callback_data: OAuthCallbackRequest,
-    auth_service: AuthService = Depends(Provide[Container.services.auth_service]),
+    auth_service: AuthService = Depends(get_auth_service),
 ) -> Any:
     """Programmatic callback API for non-browser clients (kept for compatibility)."""
     try:
@@ -192,7 +189,7 @@ async def oauth_callback(
 @inject
 def refresh_token(
     current_token: str,
-    auth_service: AuthService = Depends(Provide[Container.services.auth_service]),
+    auth_service: AuthService = Depends(get_auth_service),
 ) -> Any:
     """JWT 토큰 갱신"""
     try:
@@ -225,7 +222,7 @@ def refresh_token(
 @inject
 def logout_user(
     token: str,
-    auth_service: AuthService = Depends(Provide[Container.services.auth_service]),
+    auth_service: AuthService = Depends(get_auth_service),
 ) -> Any:
     """사용자 로그아웃 (토큰 무효화)"""
     try:

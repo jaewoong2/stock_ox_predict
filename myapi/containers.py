@@ -27,7 +27,6 @@ class RepositoryModule(containers.DeclarativeContainer):
     """Database repositories."""
 
     get_db = providers.Resource(get_db)
-    oauth_state_repository = providers.Factory(OAuthStateRepository, db=get_db)
 
 
 class ServiceModule(containers.DeclarativeContainer):
@@ -55,7 +54,9 @@ class ServiceModule(containers.DeclarativeContainer):
     reward_service = providers.Factory(RewardService, db=repositories.get_db)
     point_service = providers.Factory(PointService, db=repositories.get_db)
     ad_unlock_service = providers.Factory(AdUnlockService, db=repositories.get_db)
-    cooldown_service = providers.Factory(CooldownService, db=repositories.get_db)
+    cooldown_service = providers.Factory(
+        CooldownService, db=repositories.get_db, settings=config.config
+    )
 
 
 class Container(containers.DeclarativeContainer):

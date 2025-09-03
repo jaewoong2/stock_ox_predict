@@ -21,7 +21,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from typing import List
 from datetime import date
-from dependency_injector.wiring import inject, Provide
+from dependency_injector.wiring import inject
 
 from myapi.core.auth_middleware import (
     verify_bearer_token,
@@ -30,7 +30,7 @@ from myapi.core.auth_middleware import (
 )
 from myapi.schemas.user import User as UserSchema
 from myapi.services.ad_unlock_service import AdUnlockService
-from myapi.containers import Container
+from myapi.deps import get_ad_unlock_service
 from myapi.schemas.ad_unlock import (
     AdUnlockCreate,
     AdUnlockResponse,
@@ -60,9 +60,7 @@ router = APIRouter(prefix="/ads", tags=["advertisements"])
 async def watch_ad_complete(
     request: AdWatchCompleteRequest,
     current_user: UserSchema = Depends(get_current_active_user),
-    ad_unlock_service: AdUnlockService = Depends(
-        Provide[Container.services.ad_unlock_service]
-    ),
+    ad_unlock_service: AdUnlockService = Depends(get_ad_unlock_service),
 ) -> AdWatchCompleteResponse:
     """
     광고 시청 완료 처리 - 광고를 시청한 후 예측 슬롯을 해제합니다
@@ -129,9 +127,7 @@ async def watch_ad_complete(
 @inject
 async def unlock_slot_by_cooldown(
     current_user: UserSchema = Depends(get_current_active_user),
-    ad_unlock_service: AdUnlockService = Depends(
-        Provide[Container.services.ad_unlock_service]
-    ),
+    ad_unlock_service: AdUnlockService = Depends(get_ad_unlock_service),
 ) -> SlotIncreaseResponse:
     """
     쿨다운을 통한 슬롯 해제 - 쿨다운 시간을 기다린 후 예측 슬롯을 해제합니다
@@ -193,9 +189,7 @@ async def unlock_slot_by_cooldown(
 @inject
 async def get_available_slots_info(
     current_user: UserSchema = Depends(get_current_active_user),
-    ad_unlock_service: AdUnlockService = Depends(
-        Provide[Container.services.ad_unlock_service]
-    ),
+    ad_unlock_service: AdUnlockService = Depends(get_ad_unlock_service),
 ) -> AvailableSlotsResponse:
     """
     사용 가능한 슬롯 정보 조회 - 현재 예측 현황과 해제 가능 상태를 조회합니다
@@ -246,9 +240,7 @@ async def get_available_slots_info(
 async def get_my_unlock_history(
     limit: int = Query(30, ge=1, le=90, description="조회할 최대 일수"),
     current_user: UserSchema = Depends(get_current_active_user),
-    ad_unlock_service: AdUnlockService = Depends(
-        Provide[Container.services.ad_unlock_service]
-    ),
+    ad_unlock_service: AdUnlockService = Depends(get_ad_unlock_service),
 ) -> List[AdUnlockHistory]:
     """
     내 광고 해제 히스토리 조회 - 사용자의 광고 해제 사용 내역을 일별로 조회합니다
@@ -303,9 +295,7 @@ async def get_my_unlock_history(
 async def get_daily_unlock_stats(
     trading_day: date = Path(..., description="조회할 거래일"),
     current_user: UserSchema = Depends(require_admin),
-    ad_unlock_service: AdUnlockService = Depends(
-        Provide[Container.services.ad_unlock_service]
-    ),
+    ad_unlock_service: AdUnlockService = Depends(get_ad_unlock_service),
 ) -> AdUnlockStatsResponse:
     """
     일별 광고 해제 통계 조회 (관리자 전용) - 특정 날짜의 전체 광고 해제 통계를 조회합니다
@@ -359,9 +349,7 @@ async def get_user_unlock_history_admin(
     user_id: int = Path(..., description="조회할 사용자 ID"),
     limit: int = Query(30, ge=1, le=90, description="조회할 최대 일수"),
     current_user: UserSchema = Depends(require_admin),
-    ad_unlock_service: AdUnlockService = Depends(
-        Provide[Container.services.ad_unlock_service]
-    ),
+    ad_unlock_service: AdUnlockService = Depends(get_ad_unlock_service),
 ) -> List[AdUnlockHistory]:
     """
     특정 사용자 광고 해제 히스토리 조회 (관리자 전용)

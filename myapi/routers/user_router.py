@@ -21,8 +21,8 @@ from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.schemas.points import PointsBalanceResponse, PointsLedgerResponse
 from myapi.schemas.pagination import PaginationLimits, PaginationMeta
 import logging
-from dependency_injector.wiring import inject, Provide
-from myapi.containers import Container
+from dependency_injector.wiring import inject
+from myapi.deps import get_user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ def get_current_user_profile(
 def update_current_user_profile(
     update_data: UserUpdate,
     current_user: UserSchema = Depends(get_current_active_user),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """현재 사용자 프로필 업데이트"""
     try:
@@ -92,7 +92,7 @@ def update_current_user_profile(
 def get_user_by_id(
     user_id: int,
     current_user: UserSchema = Depends(get_current_user_optional),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """사용자 ID로 프로필 조회 (공개 정보만)"""
     try:
@@ -134,7 +134,7 @@ def get_users_list(
     ),
     offset: int = Query(0, ge=0),
     current_user: UserSchema = Depends(get_current_active_user),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """활성 사용자 목록 조회 (페이지네이션)"""
     try:
@@ -181,7 +181,7 @@ def search_users_by_nickname(
         le=PaginationLimits.USER_SEARCH["max"],
     ),
     current_user: UserSchema = Depends(get_current_active_user),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """닉네임으로 사용자 검색 (제한된 페이지네이션 - offset 없음)"""
     try:
@@ -218,7 +218,7 @@ def search_users_by_nickname(
 @inject
 def get_user_stats(
     current_user: UserSchema = Depends(require_admin),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """사용자 통계 조회 (관리자 권한 필요)"""
     try:
@@ -246,7 +246,7 @@ def get_user_stats(
 def validate_email_availability(
     email: str,
     current_user: UserSchema = Depends(get_current_user_optional),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """이메일 사용 가능 여부 확인"""
     try:
@@ -269,7 +269,7 @@ def validate_email_availability(
 def validate_nickname_availability(
     nickname: str,
     current_user: UserSchema = Depends(get_current_user_optional),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """닉네임 사용 가능 여부 확인"""
     try:
@@ -293,7 +293,7 @@ def validate_nickname_availability(
 @inject
 def deactivate_current_user(
     current_user: UserSchema = Depends(get_current_active_user),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """현재 사용자 계정 비활성화"""
     try:
@@ -327,7 +327,7 @@ def deactivate_current_user(
 @inject
 def get_my_points_balance(
     current_user: UserSchema = Depends(get_current_active_user),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """내 포인트 잔액 조회"""
     try:
@@ -360,7 +360,7 @@ def get_my_points_ledger(
     ),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(get_current_active_user),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """내 포인트 거래 내역 조회 (페이지네이션)"""
     try:
@@ -399,7 +399,7 @@ def get_my_points_ledger(
 @inject
 def get_my_profile_with_points(
     current_user: UserSchema = Depends(get_current_active_user),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ):
     """포인트 정보를 포함한 내 프로필 조회"""
     try:
@@ -425,7 +425,7 @@ def get_my_profile_with_points(
 @inject
 def get_my_financial_summary(
     current_user: UserSchema = Depends(get_current_active_user),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """내 재정 요약 정보 조회"""
     try:
@@ -449,7 +449,7 @@ def get_my_financial_summary(
 def check_if_i_can_afford(
     amount: int,
     current_user: UserSchema = Depends(get_current_active_user),
-    user_service: UserService = Depends(Provide[Container.services.user_service]),
+    user_service: UserService = Depends(get_user_service),
 ) -> Any:
     """특정 포인트를 지불할 수 있는지 확인"""
     try:
