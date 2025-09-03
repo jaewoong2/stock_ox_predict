@@ -494,3 +494,9 @@ OAuth 로그인 → JWT 토큰 발급 → 신규 가입자 1000포인트 보너�
 - `POST /batch/session/start` - 세션 시작 배치
 - `POST /batch/session/end` - 세션 종료 배치
 - `POST /batch/schedule/settlement` - 정산 스케줄링
+
+
+
+#
+
+**1 예측 시 available_predict 가 1씩 줄어들어야함**
