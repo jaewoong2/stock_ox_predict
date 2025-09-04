@@ -7,6 +7,7 @@ from dependency_injector.wiring import inject
 from myapi.core.auth_middleware import require_admin, verify_bearer_token
 from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
+from myapi.core.exceptions import NotFoundError
 from myapi.schemas.prediction import PredictionChoice
 from myapi.services.settlement_service import SettlementService
 from myapi.deps import get_settlement_service
@@ -36,6 +37,12 @@ async def settle_day(
             error=Error(
                 code=ErrorCode.INVALID_CREDENTIALS, message="Invalid date format"
             ),
+        )
+    except NotFoundError as e:
+        # 정산 대상 데이터 부재 (EOD/Universe 등) → 409로 매핑
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{str(e)}. Ensure EOD prices and universe exist for the trading day.",
         )
     except Exception as e:
         raise HTTPException(

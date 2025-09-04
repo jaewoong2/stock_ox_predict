@@ -13,6 +13,7 @@ from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.schemas.session import SessionToday
 from myapi.services.session_service import SessionService
 from myapi.utils.market_hours import USMarketHours
+import logging
 
 
 router = APIRouter(prefix="/session", tags=["session"])
@@ -88,7 +89,19 @@ def flip_to_predict(
     미국 증시 거래일에만 실행 가능합니다.
     """
     try:
-        status_obj = service.open_predictions()
+        logger = logging.getLogger(__name__)
+        # KST 기준 거래일 산정 및 사전 가드
+        target_date = USMarketHours.get_kst_trading_day()
+        if not USMarketHours.is_us_trading_day(target_date):
+            logger.info(
+                f"flip-to-predict skipped: {target_date} is not a US trading day"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"{target_date} is not a US trading day",
+            )
+
+        status_obj = service.open_predictions(target_date)
         return BaseResponse(
             success=True,
             data={"status": status_obj.model_dump() if status_obj else None},

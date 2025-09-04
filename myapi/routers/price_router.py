@@ -8,6 +8,7 @@ from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.services.price_service import PriceService
 from myapi.deps import get_price_service
+from myapi.core.exceptions import NotFoundError
 
 
 router = APIRouter(prefix="/prices", tags=["prices"])
@@ -208,6 +209,12 @@ async def collect_eod_data(
                 code=ErrorCode.INVALID_CREDENTIALS, 
                 message="Invalid date format"
             ),
+        )
+    except NotFoundError as e:
+        # Universe 미존재 등 정합성 이슈는 409로 매핑
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{str(e)}. Ensure universe is set for the trading day before collecting EOD.",
         )
     except Exception as e:
         raise HTTPException(

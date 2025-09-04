@@ -223,22 +223,46 @@ graph TD
 
 ### 5. 시스템 배치 및 자동화 플로우
 
-#### 5.1 일일 배치 스케줄 (KST 기준)
+#### 5.0 KST 기준 거래일 정의 (중요)
+
+- 기준 타임존: KST (UTC+9)
+- 거래일 산정 로직: `USMarketHours.get_kst_trading_day()` 사용
+  - KST 00:00 ~ 05:59:59 구간은 전날 거래일로 귀속
+  - 그 외 시간대는 당일 날짜를 거래일로 간주
+- 이전 거래일: `USMarketHours.get_prev_trading_day(from_date)` 사용 (주말/미국 공휴일을 건너뛰어 직전 거래일을 반환)
+
+이 규칙에 따라 배치는 항상 다음의 두 값을 사용합니다.
+- `today_trading_day`: 현재 KST 시각을 기준으로 한 거래일
+- `yesterday_trading_day`: `today_trading_day`의 직전 거래일
+
+#### 5.1 일일 배치 스케줄 (KST 기준) 및 의존 관계
+
+의존 관계(06:00): EOD 수집 → 정산 → 세션 시작 → 유니버스 설정
 
 ```
-06:00 - 일일 종목 선정 배치 실행
-     └─► 인기 미국 주식 100개 선정
-     └─► active_universe 테이블 업데이트
+06:00 - 오전 일괄 배치 (Group: daily-morning-batch)
+  1) EOD 수집 (대상: yesterday_trading_day)
+     - 입력: yesterday_trading_day의 Universe 목록
+     - 처리: Yahoo Finance에서 EOD(OHLCV) 수집
+     - 출력: EOD 가격 DB 저장 (symbols x 1일)
+  2) 정산 (대상: yesterday_trading_day)
+     - 입력: EOD 가격, PENDING 예측 레코드
+     - 처리: 가격 비교로 CORRECT/INCORRECT/VOID 판정
+     - 출력: 예측 상태 업데이트, 포인트 지급/환불
+  3) 세션 시작 (대상: today_trading_day)
+     - 가드: today_trading_day가 미국 거래일인 경우에만 수행
+     - 입력: today_trading_day
+     - 출력: Session OPEN (predict_open_at~predict_cutoff_at, KST 기준)
+  4) 유니버스 설정 (대상: today_trading_day)
+     - 가드: today_trading_day가 미국 거래일인 경우에만 수행
+     - 입력: today_trading_day + 기본 티커 목록
+     - 처리: ActiveUniverse 업서트(삭제/삽입/seq 업데이트)
+     - 출력: ActiveUniverse 테이블에 당일 유니버스 반영
 
-06:00 - 정산 및 새 세션 시작 배치
-     ├─► EOD 가격 데이터 수집 (Yahoo Finance)
-     ├─► EOD 가격 데이터 DB저장
-     ├─► 전일 예측 정산 실행 (정답/오답/VOID 판정)
-     ├─► 포인트 지급 처리 (승리시 100pt, 실패시 0pt, 무효시 환불)
-     └─► 새 예측 세션 OPEN 상태로 전환
-
-23:59 - 예측 마감 배치
-     └─► 현재 예측 세션 CLOSED 상태로 전환
+23:59 - 예측 마감 배치 (Group: daily-evening-batch)
+  - 입력: today_trading_day의 Session
+  - 처리: Session CLOSED (마감)
+  - 출력: predict_cutoff_at 이후 예측 불가
 ```
 
 #### 5.2 SQS 기반 비동기 처리
@@ -377,6 +401,27 @@ graph TD
    - [23:59 KST] 예측 마감, CLOSED 상태 전환
    - [23:59-06:00] 정산 대기 및 처리
 
+### 10. 운영 가이드 (휴장/재시도/보정)
+
+1) 미국 휴장일 동작
+- today_trading_day가 미국 거래일이 아니면 06:00의 "세션 시작"과 "유니버스 설정" 단계는 스킵합니다.
+- 전일 기준의 EOD 수집/정산 단계는 정상 수행되며, `yesterday_trading_day`는 연속 휴장일을 건너뛴 직전 거래일을 사용합니다.
+
+2) 재시도/보정 절차 (운영자가 순서대로 수행)
+- Universe 누락 보정 (당일/과거 날짜)
+  - POST `/api/v1/universe/upsert` with `{ trading_day, symbols }`
+- EOD 백필 (과거 거래일)
+  - POST `/api/v1/prices/collect-eod/{trading_day}`
+  - 409(CONFLICT) 발생 시: Universe부터 설정 후 재시도
+- 정산 재시도 (과거 거래일)
+  - POST `/api/v1/admin/settlement/settle-day/{trading_day}`
+  - 또는 실패/미처리 심볼만: POST `/api/v1/admin/settlement/retry/{trading_day}`
+
+3) 배치 의존 관계 확인 포인트
+- 오전 배치(06:00): EOD → 정산 → 세션 시작 → 유니버스 설정 순서 보장
+- `all-jobs` 호출 응답 메시지에 today_trading_day/yesterday_trading_day가 포함되어 날짜 계산을 확인할 수 있습니다.
+
+
 2. **데이터 처리 파이프라인**
 
    - EOD 가격 데이터 외부 API 수집 (Yahoo Finance)
@@ -500,3 +545,5 @@ OAuth 로그인 → JWT 토큰 발급 → 신규 가입자 1000포인트 보너�
 #
 
 **1 예측 시 available_predict 가 1씩 줄어들어야함**
+
+

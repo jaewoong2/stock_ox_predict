@@ -13,6 +13,7 @@ from myapi.schemas.session import (
     PredictionTimeStatus,
 )
 from myapi.utils.market_hours import USMarketHours
+import logging
 
 
 class SessionService:
@@ -88,17 +89,33 @@ class SessionService:
         `session_router.flip_to_predict` 에서 호출됩니다.
         """
         target_date = trading_day or USMarketHours.get_kst_trading_day()
+        logger = logging.getLogger(__name__)
 
         if not USMarketHours.is_us_trading_day(target_date):
+            logger.info(
+                f"open_predictions aborted: {target_date} is not a US trading day"
+            )
             raise ValueError(f"{target_date}는 미국 증시 거래일이 아닙니다.")
 
         # 세션이 있는지 확인하고 없으면 생성
-        session = self.repo.get_session_by_date(target_date)
-        if not session:
+        session_before = self.repo.get_session_by_date(target_date)
+        if not session_before:
+            logger.info(f"No session for {target_date}. Creating CLOSED session.")
             self.create_session(target_date)
+        else:
+            logger.info(
+                f"Existing session for {target_date}: phase={session_before.phase.value}"
+            )
 
         # 세션을 OPEN 상태로 변경
-        return self.repo.open_predictions(target_date)
+        opened = self.repo.open_predictions(target_date)
+        if opened:
+            logger.info(
+                f"Session opened for {target_date}: phase={opened.phase.value}"
+            )
+        else:
+            logger.warning(f"Failed to open session for {target_date}")
+        return opened
 
     def close_predictions(
         self, trading_day: Optional[date] = None

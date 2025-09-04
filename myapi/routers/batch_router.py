@@ -44,12 +44,17 @@ def execute_all_jobs(
     06:00 KST 작업들은 의존성 순서대로 순차 실행됩니다.
     """
     queue_url = settings.SQS_MAIN_QUEUE_URL
-    today = dt.date.today()
-    yesterday = today - dt.timedelta(days=1)
 
     # 현재 시간 (한국 시간 KST, UTC+9)
     kst = pytz.timezone("Asia/Seoul")
     now = dt.datetime.now(kst)
+
+    # 거래일 계산 (KST 기준)
+    from myapi.utils.market_hours import USMarketHours
+
+    today_kst = now.date()
+    today_trading_day = USMarketHours.get_kst_trading_day()
+    yesterday_trading_day = USMarketHours.get_prev_trading_day(today_trading_day)
     current_hour = now.hour
     current_minute = now.minute
     current_total_minutes = current_hour * 60 + current_minute
@@ -67,12 +72,12 @@ def execute_all_jobs(
     # 1. EOD 데이터 수집 작업 (가장 먼저 실행)
     all_jobs.append(
         {
-            "path": f"api/v1/prices/collect-eod/{yesterday.isoformat()}",
+            "path": f"api/v1/prices/collect-eod/{yesterday_trading_day.isoformat()}",
             "method": "POST",
             "body": {},
             "group_id": "daily-morning-batch",
-            "description": f"Collect EOD data for {yesterday.isoformat()}",
-            "deduplication_id": f"eod-collection-{yesterday.strftime('%Y%m%d')}",
+            "description": f"Collect EOD data for {yesterday_trading_day.isoformat()}",
+            "deduplication_id": f"eod-collection-{yesterday_trading_day.strftime('%Y%m%d')}",
             "sequence": 1,
         }
     )
@@ -80,44 +85,53 @@ def execute_all_jobs(
     # 2. 정산 작업 (EOD 데이터 수집 후 실행)
     all_jobs.append(
         {
-            "path": f"api/v1/admin/settlement/settle-day/{yesterday.isoformat()}",
+            "path": f"api/v1/admin/settlement/settle-day/{yesterday_trading_day.isoformat()}",
             "method": "POST",
             "body": {},
             "group_id": "daily-morning-batch",
-            "description": f"Settlement for {yesterday.isoformat()}",
-            "deduplication_id": f"settlement-{yesterday.strftime('%Y%m%d')}",
+            "description": f"Settlement for {yesterday_trading_day.isoformat()}",
+            "deduplication_id": f"settlement-{yesterday_trading_day.strftime('%Y%m%d')}",
             "sequence": 2,
         }
     )
 
     # 3. 세션 시작 작업 (정산 후 실행)
-    all_jobs.append(
-        {
-            "path": "api/v1/session/flip-to-predict",
-            "method": "POST",
-            "body": {},
-            "group_id": "daily-morning-batch",
-            "description": "Start new prediction session",
-            "deduplication_id": f"session-start-{today.strftime('%Y%m%d')}",
-            "sequence": 3,
-        }
-    )
+    # flip-to-predict는 오늘의 거래일이 미국 거래일일 때만 수행
+    if USMarketHours.is_us_trading_day(today_trading_day):
+        all_jobs.append(
+            {
+                "path": "api/v1/session/flip-to-predict",
+                "method": "POST",
+                "body": {},
+                "group_id": "daily-morning-batch",
+                "description": (
+                    f"Start new prediction session for {today_trading_day.isoformat()}"
+                ),
+                "deduplication_id": f"session-start-{today_trading_day.strftime('%Y%m%d')}",
+                "sequence": 3,
+            }
+        )
 
     # 4. 유니버스 설정 작업 (세션 시작 후 실행)
-    all_jobs.append(
-        {
-            "path": "api/v1/universe/upsert",
-            "method": "POST",
-            "body": {
-                "trading_day": today.isoformat(),
-                "symbols": get_default_tickers(),
-            },
-            "group_id": "daily-morning-batch",
-            "description": f"Setup universe for {today.isoformat()} with {len(get_default_tickers())} symbols",
-            "deduplication_id": f"universe-setup-{today.strftime('%Y%m%d')}",
-            "sequence": 4,
-        }
-    )
+    # 유니버스 upsert도 오늘 거래일이 미국 거래일일 때만 수행
+    if USMarketHours.is_us_trading_day(today_trading_day):
+        tickers = get_default_tickers()
+        all_jobs.append(
+            {
+                "path": "api/v1/universe/upsert",
+                "method": "POST",
+                "body": {
+                    "trading_day": today_trading_day.isoformat(),
+                    "symbols": tickers,
+                },
+                "group_id": "daily-morning-batch",
+                "description": (
+                    f"Setup universe for {today_trading_day.isoformat()} with {len(tickers)} symbols"
+                ),
+                "deduplication_id": f"universe-setup-{today_trading_day.strftime('%Y%m%d')}",
+                "sequence": 4,
+            }
+        )
 
     # 23:59 KST 시간대 작업들
     if is_within_time_range(23, 59):
@@ -129,7 +143,7 @@ def execute_all_jobs(
                 "body": {},
                 "group_id": "daily-evening-batch",
                 "description": "Close prediction session",
-                "deduplication_id": f"session-close-{today.strftime('%Y%m%d')}",
+                "deduplication_id": f"session-close-{today_kst.strftime('%Y%m%d')}",
                 "sequence": 1,
             }
         )
@@ -196,6 +210,7 @@ def execute_all_jobs(
     return BatchQueueResponse(
         message=(
             f"Daily batch jobs queued for {current_hour:02d}:{current_minute:02d} KST. "
+            f"today_trading_day={today_trading_day}, yesterday_trading_day={yesterday_trading_day}. "
             f"Success: {len(successful_jobs)}, Failed: {len(failed_jobs)}"
         ),
         current_time=f"{current_hour:02d}:{current_minute:02d} KST",

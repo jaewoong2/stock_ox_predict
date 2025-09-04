@@ -299,6 +299,106 @@
   - [x] 사용자 포인트 잔액/내역/재정요약 API 엔드포인트
   - [x] 관리자용 포인트 조정 및 통계 API
 
+## Hotfix Plan (2025-09-04 KST)
+
+- [x] KST 기준 거래일/전일 계산 통일 및 배치 날짜 보정
+  - [x] `myapi/utils/market_hours.py`에 `get_prev_trading_day(from_date: date)` 추가 (미국 휴장 고려)
+  - [x] `myapi/routers/batch_router.py`의 날짜 계산을 KST 기준으로 변경
+    - [x] today_trading_day = `USMarketHours.get_kst_trading_day()` 사용
+    - [x] yesterday_trading_day = `USMarketHours.get_prev_trading_day(today_trading_day)` 사용
+    - [x] 06:00 배치 대상 조정 (EOD/정산=전일, 세션/유니버스=당일 거래일)
+    - [x] 당일이 휴장일이면 세션/유니버스 스킵
+  - [x] 라우트 호출 경로에 반영
+
+ - [x] Universe Upsert 로직 실제 upsert로 수정 (사용자 적용 완료)
+   - [x] 입력 기준 삭제/삽입/seq 업데이트를 트랜잭션 내 수행, 커밋 일관 처리
+   - [ ] Router/Service 응답 연계: 변경 요약(added/updated/removed 수) 반환 필요 시 스키마/응답 확장
+     - [ ] `universe_router.upsert`: 응답에 `summary`(counts) 포함 옵션 추가
+     - [ ] `universe_service.upsert_universe`: 리포지토리 변경 결과를 로그 및 응답에 반영
+
+- [x] 정산 실패 시 트랜잭션 회복 및 에러 로그 안정화
+  - [x] `myapi/repositories/error_log_repository.py#create_error_log`에 사전 세션 정리 추가
+  - [x] `myapi/services/settlement_service.py#validate_and_settle_day()`에서 로깅 전 롤백 수행
+  - [ ] 공통 패턴 문서화 (문서 작업)
+
+- [x] Flip-to-Predict가 CLOSED로 끝나는 증상 원인 제거
+  - [x] 배치 대상 거래일 보정 반영
+  - [x] `SessionService.open_predictions()`에 생성/OPEN 흐름 로그 추가
+  - [x] `session_router.flip-to-predict`에서 휴장일 가드(409)
+  - [ ] 독립 세션 보장 부분은 운영 검증으로 확인
+
+- [ ] Settlement/EOD 실행 전제조건 점검 및 가드 추가
+  - [ ] `PriceService.get_universe_eod_prices()`에서 Universe 미존재 시 명확한 가이드 메시지와 함께 NotFoundError 유지, 배치 단계에서 선행 작업(유니버스 세팅/세션 시작) 확인 로깅
+  - [ ] `batch_router` 06:00 시퀀스 간 의존 로그 강화: EOD 수집 → 정산 → 세션 시작 → 유니버스 upsert 순서와 결과 요약 로그
+
+- [x] Router 계층 보완 포인트
+  - [x] `session_router.flip-to-predict`: KST 거래일 기준 호출 로그 강화, 휴장일 409 반환
+  - [x] `universe_router.upsert`:
+    - [x] `symbols`가 빈 배열/None이면 `get_default_tickers()`로 대체 (`if not symbols:`로 단순화)
+    - [x] `trading_day` 파싱 검증 및 미래 날짜/휴장일 업서트 시 경고 로그
+  - [x] `price_router.collect-eod`: Universe 미존재 시 409(CONFLICT)로 매핑하고, 해결 가이드(유니버스 세팅 선행) 포함
+  - [x] `settlement_router.settle-day`: Universe/EOD 미존재 `NotFoundError`는 409로 매핑, 기타는 500 유지
+
+- [x] Service 계층 보완 포인트
+  - [x] `SessionService.open_predictions()`: 생성/OPEN 결과 구조화 로그 추가
+  - [x] `UniverseService.upsert_universe()`: upsert 결과 요약 로그 기록
+  - [x] `PriceService.get_universe_current_prices()`: 세션의 거래일 우선 사용
+  - [x] `SettlementService.validate_and_settle_day()`: 로깅 전 롤백 수행
+
+- [x] Repository 계층 보완 포인트
+  - [x] `prediction_repository` 읽기 메서드에 `self._ensure_clean_session()` 사전 호출 추가
+  - [ ] `SessionRepository.update_session_phase()`/`create_session()` 경로 로그 강화 (phase 전후, 타임스탬프, commit 여부)
+  - [ ] `ActiveUniverseRepository` upsert 후 `count()`/존재성 검증을 통해 결과 일치 여부 확인 로그 추가
+  - [ ] `PriceRepository` EOD 저장/조회 실패 시 쿼리 요약을 에러 로그 details에 포함
+
+- [ ] 운영 검증/리커버리 작업 목록
+  - [ ] 핫픽스 배포 후 즉시 점검 체크리스트 실행
+    - [ ] `GET /api/v1/session/today`로 `trading_day`와 `phase=OPEN` 확인
+    - [ ] `GET /api/v1/universe/today`로 유니버스 존재/카운트 확인
+    - [ ] 수동 정산 확인: `/api/v1/admin/settlement/summary/{yesterday_trading_day}` 조회
+  - [ ] 누락된 날짜 보정
+    - [ ] 2025-09-02/2025-09-03 유니버스 존재 여부 확인 후 필요 시 재생성
+    - [ ] `POST /api/v1/prices/collect-eod/{YYYY-MM-DD}`로 EOD 백필
+    - [ ] `POST /api/v1/admin/settlement/settle-day/{YYYY-MM-DD}`로 정산 재시도
+
+- [ ] 로깅/모니터링 가시성 강화 (원인 분석 가속)
+  - [ ] 배치 로그에 다음 필드 추가: `now_kst`, `today_kst_date`, `today_trading_day`, `yesterday_trading_day`, `is_us_trading_day(today_trading_day)`
+  - [ ] 에러 로그 구조에 `context`에 현재 세션/트랜잭션 상태 요약 포함 (is_active, in_transaction)
+
+- [x] 문서 갱신
+  - [x] `docs/service_flow.md`에 KST 기준 거래일 정의(00:00~05:59 전일 귀속), 배치 시간표, 각 단계 입력/출력 명세 추가
+  - [x] 운영 가이드: 휴장일 동작, 재시도/보정 절차, 배치 의존 관계 정리
+
+### 구현 체크 포인트 (파일별)
+
+- `myapi/utils/market_hours.py`
+  - [x] `get_prev_trading_day()` 구현
+- `myapi/routers/batch_router.py`
+  - [x] today/yesterday 계산 KST 교정 및 휴장 가드, 라우트 파라미터 보정
+- `myapi/repositories/active_universe_repository.py`
+  - [x] `set_universe_for_date()` upsert로 전면 수정 (삭제/삽입/수정)
+- `myapi/services/universe_service.py`
+  - [x] upsert 결과 요약 로그 기록
+- `myapi/repositories/error_log_repository.py`
+  - [x] `create_error_log()` 사전 rollback 처리 추가
+- `myapi/services/settlement_service.py`
+  - [x] 예외 발생 시 세션 정리 후 에러 로깅, 재전파
+- `myapi/repositories/prediction_repository.py`
+  - [x] settlement 경로의 읽기 메서드에 `self._ensure_clean_session()` 적용
+
+### 검증 시나리오 (0904 06:00 KST 기준)
+
+- [ ] 배치(all-jobs) 수동 실행 → 큐잉된 작업들이 올바른 날짜 대상으로 생성되는지 확인
+- [ ] 정산 타겟이 `yesterday_trading_day`로 호출되는지 확인 (로그)
+- [ ] flip-to-predict 이후 `Session.phase == OPEN` 확인, `predict_open_at/predict_cutoff_at` KST 기준 확인
+- [ ] 유니버스 upsert 후 `ActiveUniverse` 레코드 개수/seq 일관성 확인, 중복 없음 확인
+- [ ] 정산이 PENDING 예측을 정상 처리하고 `points` 지급 트랜잭션이 커밋되는지 확인
+ - [ ] 에러 상황 재현 테스트: 
+   - [ ] Universe 누락 → EOD/Settlement 409 반환 및 가이드 메시지 노출
+   - [ ] 의도적 DB 에러 후 후속 SELECT가 `rollback()`로 정상 수행되는지 확인
+ - [ ] 배치 응답 메시지에 today/yesterday 거래일 표기 확인
+
+
 - [x] **리워드 시스템 전면 구현** (`reward_service.py`, `reward_router.py`)
 
   - [x] 리워드 카탈로그 조회 및 상품 관리

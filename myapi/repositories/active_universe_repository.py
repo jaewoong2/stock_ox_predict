@@ -131,25 +131,77 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def set_universe_for_date(
         self, trading_day: date, universe_items: List[UniverseItem]
-    ) -> List[UniverseItem]:
-        """특정 날짜의 유니버스 설정 (기존 항목 삭제 후 새로 생성)"""
-        try:
-            # 새 유니버스 생성
-            created_items = []
+    ) -> dict:
+        """특정 날짜의 유니버스를 입력 리스트 기준으로 업서트합니다.
 
-            universe_items_not_in_list = self.get_universe_items_not_in_list(
-                trading_day, universe_items
+        - 삭제: DB에 있으나 입력에 없는 심볼 삭제
+        - 삽입: 입력에 있으나 DB에 없는 심볼 삽입
+        - 수정: 공존 심볼은 seq 변경 시 업데이트
+
+        Returns:
+            dict: {"added": int, "updated": int, "removed": int}
+        """
+        try:
+            # 현재 DB 상태 조회 (심볼 -> 모델)
+            existing_models = (
+                self.db.query(self.model_class)
+                .filter(self.model_class.trading_day == trading_day)
+                .all()
             )
 
-            for item in universe_items_not_in_list:
+            existing_by_symbol = {str(m.symbol): m for m in existing_models}
+            desired_by_symbol = {item.symbol: item for item in universe_items}
+
+            existing_symbols = set(existing_by_symbol.keys())
+            desired_symbols = set(desired_by_symbol.keys())
+
+            to_delete = existing_symbols - desired_symbols
+            to_insert = desired_symbols - existing_symbols
+            to_consider_update = existing_symbols & desired_symbols
+
+            created_items: List[UniverseItem] = []
+            updated_count = 0
+            removed_count = 0
+
+            # 삭제
+            if to_delete:
+                (
+                    self.db.query(self.model_class)
+                    .filter(
+                        and_(
+                            self.model_class.trading_day == trading_day,
+                            self.model_class.symbol.in_(list(to_delete)),
+                        )
+                    )
+                    .delete(synchronize_session=False)
+                )
+                removed_count = len(to_delete)
+
+            # 삽입
+            for symbol in to_insert:
+                item = desired_by_symbol[symbol]
                 model_instance = self.model_class(
                     trading_day=trading_day, symbol=item.symbol, seq=item.seq
                 )
                 self.db.add(model_instance)
                 created_items.append(item)
 
+            # 업데이트 (seq 변경 시)
+            for symbol in to_consider_update:
+                model_instance = existing_by_symbol[symbol]
+                desired_item = desired_by_symbol[symbol]
+                if getattr(model_instance, "seq", None) != desired_item.seq:
+                    setattr(model_instance, "seq", desired_item.seq)
+                    self.db.add(model_instance)
+                    updated_count += 1
+
+            self.db.flush()
             self.db.commit()
-            return created_items
+            return {
+                "added": len(created_items),
+                "updated": updated_count,
+                "removed": removed_count,
+            }
 
         except Exception as e:
             self.db.rollback()

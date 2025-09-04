@@ -68,6 +68,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         self, user_id: int, trading_day: date
     ) -> UserPredictionsResponse:
         """특정 사용자의 특정 날짜 예측 조회"""
+        self._ensure_clean_session()
         model_instances = (
             self.db.query(self.model_class)
             .filter(
@@ -105,7 +106,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         self, symbol: str, trading_day: date, status_filter: Optional[StatusEnum] = None
     ) -> List[PredictionResponse]:
         """특정 심볼과 날짜의 모든 예측 조회"""
-
+        self._ensure_clean_session()
         query = self.db.query(self.model_class).filter(
             and_(
                 self.model_class.symbol == symbol,
@@ -125,6 +126,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
 
     def prediction_exists(self, user_id: int, trading_day: date, symbol: str) -> bool:
         """특정 사용자의 특정 날짜/심볼 예측 존재 여부 확인"""
+        self._ensure_clean_session()
         return (
             self.db.query(self.model_class)
             .filter(
@@ -230,6 +232,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
 
     def get_prediction_stats(self, trading_day: date) -> PredictionStats:
         """예측 통계 조회"""
+        self._ensure_clean_session()
         stats = (
             self.db.query(
                 func.count(self.model_class.id).label("total"),
@@ -285,6 +288,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         self, user_id: int, trading_day: date
     ) -> PredictionSummary:
         """사용자별 예측 요약 조회"""
+        self._ensure_clean_session()
         stats = (
             self.db.query(
                 func.count(self.model_class.id).label("total"),

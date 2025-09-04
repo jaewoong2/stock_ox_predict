@@ -95,6 +95,14 @@ class USMarketHours:
         return next_day
 
     @classmethod
+    def get_prev_trading_day(cls, from_date: date) -> date:
+        """주어진 날짜(ET 기준)로부터 가장 가까운 이전 거래일을 찾습니다."""
+        prev_day = from_date - timedelta(days=1)
+        while not cls.is_us_trading_day(prev_day):
+            prev_day -= timedelta(days=1)
+        return prev_day
+
+    @classmethod
     def get_market_status(cls, check_date: date):
         """특정 날짜의 시장 상태 정보를 반환합니다."""
         from myapi.schemas.market import MarketStatusResponse

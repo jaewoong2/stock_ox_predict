@@ -12,6 +12,8 @@ from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse
 from myapi.schemas.universe import UniverseUpdate
 from myapi.services.universe_service import UniverseService
+from myapi.utils.market_hours import USMarketHours
+import logging
 from myapi.deps import get_universe_service
 
 
@@ -97,9 +99,38 @@ def upsert_universe(
     """
     try:
         symbols = payload.symbols
-
-        if not symbols and symbols == []:
+        # 빈 리스트/None 모두 기본 티커로 대체
+        if not symbols:
             symbols = get_default_tickers()
+
+        # trading_day 유효성 검증/로그
+        try:
+            trg_day = payload.trading_day
+            day = None
+            if trg_day:
+                from datetime import date as _date
+                day = _date.fromisoformat(trg_day)
+        except Exception:
+            # FastAPI validation이 잡겠지만 방어
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid trading_day format",
+            )
+
+        try:
+            logger = logging.getLogger(__name__)
+            today_trading_day = USMarketHours.get_kst_trading_day()
+            if day:
+                if day > today_trading_day:
+                    logger.warning(
+                        f"Universe upsert for future date {day} requested; proceeding"
+                    )
+                if not USMarketHours.is_us_trading_day(day):
+                    logger.warning(
+                        f"Universe upsert for non-trading day {day}; proceeding"
+                    )
+        except Exception:
+            pass
 
         res = service.upsert_universe(
             UniverseUpdate(

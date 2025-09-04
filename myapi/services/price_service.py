@@ -133,7 +133,18 @@ class PriceService:
     ) -> UniversePriceResponse:
         """오늘의 유니버스 모든 종목의 현재 가격을 조회합니다."""
         if not trading_day:
-            trading_day = date.today()
+            # 현재 세션의 거래일을 우선 사용 (KST 일관성)
+            try:
+                session = self.session_repo.get_current_session()
+                if session:
+                    trading_day = session.trading_day
+                else:
+                    # 세션이 없으면 KST 기준 오늘의 거래일 사용
+                    from myapi.utils.market_hours import USMarketHours
+                    trading_day = USMarketHours.get_kst_trading_day()
+            except Exception:
+                from myapi.utils.market_hours import USMarketHours
+                trading_day = USMarketHours.get_kst_trading_day()
 
         # 오늘의 유니버스 종목 조회
         universe_symbols = self.universe_repo.get_universe_for_date(trading_day)

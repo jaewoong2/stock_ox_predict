@@ -110,6 +110,12 @@ class SettlementService:
                 for result in settlement_results
                 if result.status == "FAILED"
             ]
+            # 트랜잭션이 중단된 경우 로깅 전에 세션 정리
+            try:
+                if hasattr(self.db, "is_active") and not self.db.is_active:  # type: ignore[attr-defined]
+                    self.db.rollback()
+            except Exception:
+                pass
             self.error_log_service.log_settlement_error(
                 trading_day=trading_day,
                 failed_symbols=failed_symbols,

@@ -21,6 +21,7 @@ from myapi.schemas.universe import (
 from datetime import datetime, timezone
 
 from myapi.services.price_service import PriceService
+import logging
 
 
 class UniverseService:
@@ -56,13 +57,20 @@ class UniverseService:
         # Parse date
         trg_day = date.fromisoformat(update.trading_day)
         # Set new list
-        self.repo.set_universe_for_date(
+        summary = self.repo.set_universe_for_date(
             trg_day,
             [
                 UniverseItem(symbol=symbol, seq=index + 1)
                 for index, symbol in enumerate(update.symbols)
             ],
         )
+        try:
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Universe upsert for {trg_day}: added={summary.get('added')}, updated={summary.get('updated')}, removed={summary.get('removed')}"
+            )
+        except Exception:
+            pass
         # Return response
         return self.repo.get_universe_response(trg_day)
 

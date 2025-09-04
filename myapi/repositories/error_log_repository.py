@@ -33,6 +33,12 @@ class ErrorLogRepository(BaseRepository[ErrorLog, ErrorLogResponse]):
     ) -> ErrorLogResponse:
         """에러 로그 생성"""
         try:
+            # 이전 트랜잭션 오류로 세션이 비정상인 경우 정리
+            try:
+                if hasattr(self.db, "is_active") and not self.db.is_active:  # type: ignore[attr-defined]
+                    self.db.rollback()
+            except Exception:
+                pass
             error_log = ErrorLog(
                 check_type=check_type,
                 trading_day=trading_day,
