@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, field_validator
 from datetime import date, datetime
 from typing import List, Optional
+from decimal import Decimal
 from enum import Enum
 
 
@@ -43,6 +44,10 @@ class PredictionResponse(BaseModel):
     submitted_at: datetime
     updated_at: Optional[datetime] = None
     points_earned: Optional[int] = None
+    # New: price snapshot at prediction time
+    prediction_price: Optional[Decimal] = None
+    prediction_price_at: Optional[datetime] = None
+    prediction_price_source: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -180,7 +180,25 @@ class SettlementService:
         for prediction in pending_predictions:
             # 예측 방향과 실제 결과 비교
             predicted_direction = prediction.choice.value.upper()  # UP or DOWN
-            actual_movement = price_data.price_movement  # UP, DOWN, or FLAT
+
+            # 기준 가격: 예측 시점 스냅샷이 있으면 그 값을, 없으면 reference_price 사용
+            base_price = None
+            if getattr(prediction, "prediction_price", None) is not None:
+                try:
+                    base_price = Decimal(str(prediction.prediction_price))
+                except Exception:
+                    base_price = None
+            if base_price is None:
+                base_price = price_data.reference_price
+
+            # 정산 가격 대비 움직임 계산 (예측시점 → 정산시점)
+            try:
+                actual_movement = self.price_service._calculate_price_movement(  # type: ignore
+                    price_data.settlement_price, base_price
+                )
+            except Exception:
+                # 안전하게 FLAT 처리 (정산 불가 케이스로 VOID 처리될 수 있음)
+                actual_movement = "FLAT"
 
             is_correct = self._is_prediction_correct(
                 predicted_direction, actual_movement

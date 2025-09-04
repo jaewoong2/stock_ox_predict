@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, cast
 
 import pandas as pd
 import yfinance as yf
@@ -13,6 +13,7 @@ from myapi.core.exceptions import ValidationError, NotFoundError, ServiceExcepti
 from myapi.repositories.active_universe_repository import ActiveUniverseRepository
 from myapi.repositories.price_repository import PriceRepository
 from myapi.repositories.session_repository import SessionRepository
+from myapi.repositories.prediction_repository import PredictionRepository
 from myapi.schemas.price import (
     StockPrice,
     EODPrice,
@@ -33,6 +34,7 @@ class PriceService:
         self.universe_repo = ActiveUniverseRepository(db)
         self.price_repo = PriceRepository(db)
         self.session_repo = SessionRepository(db)
+        self.pred_repo = PredictionRepository(db)
         self.error_log_service = ErrorLogService(db)
         self.current_price_cache = {}
         self.eod_price_cache = {}
@@ -141,9 +143,11 @@ class PriceService:
                 else:
                     # 세션이 없으면 KST 기준 오늘의 거래일 사용
                     from myapi.utils.market_hours import USMarketHours
+
                     trading_day = USMarketHours.get_kst_trading_day()
             except Exception:
                 from myapi.utils.market_hours import USMarketHours
+
                 trading_day = USMarketHours.get_kst_trading_day()
 
         # 오늘의 유니버스 종목 조회
@@ -332,11 +336,66 @@ class PriceService:
                 price_movement=actual_movement,
                 change_percent=change_percent,
                 prediction_outcome=prediction_outcome,
+                prediction_id=None,
+                base_price_source="previous_close",
             )
 
         except Exception as e:
             raise ServiceException(
                 f"Failed to compare prediction for {symbol}: {str(e)}"
+            )
+
+    async def compare_prediction_with_outcome_by_id(
+        self, prediction_id: int
+    ) -> PriceComparisonResult:
+        """특정 예측 ID를 기준으로 스냅샷 가격 대비 EOD 결과를 비교합니다."""
+        try:
+            pred = self.pred_repo.get_by_id(prediction_id)
+            if pred is None:
+                raise NotFoundError(f"Prediction not found: {prediction_id}")
+
+            # EOD 가격 조회
+            eod_price = await self.get_eod_price(pred.symbol, pred.trading_day)
+
+            # 기준 가격: 스냅샷 우선, 없으면 전일 종가
+            snap = getattr(pred, "prediction_price", None)
+            if snap is not None:
+                base_price: Decimal = cast(Decimal, snap)
+                base_src = "snapshot"
+            else:
+                base_price = eod_price.previous_close
+                base_src = "previous_close"
+
+            # 실제 가격 움직임 계산 (정산 종가 vs 기준가)
+            actual_movement = self._calculate_price_movement(
+                eod_price.close_price, base_price
+            )
+
+            # 예측 결과 판정
+            prediction_outcome = (
+                "CORRECT"
+                if pred.choice.value.upper() == actual_movement
+                else "INCORRECT"
+            )
+
+            change_percent = self._calculate_change_percent(
+                eod_price.close_price, base_price
+            )
+
+            return PriceComparisonResult(
+                symbol=pred.symbol,
+                trading_date=pred.trading_day.strftime("%Y-%m-%d"),
+                current_price=eod_price.close_price,
+                previous_price=base_price,
+                price_movement=actual_movement,
+                change_percent=change_percent,
+                prediction_outcome=prediction_outcome,
+                prediction_id=pred.id,
+                base_price_source=base_src,
+            )
+        except Exception as e:
+            raise ServiceException(
+                f"Failed to compare prediction by id {prediction_id}: {str(e)}"
             )
 
     # Private helper methods

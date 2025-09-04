@@ -7,7 +7,7 @@
 **핵심 가치제안:**
 
 - **간단한 참여**: 매일 100개 종목에 대한 단순한 O/X 선택
-- **공정한 정산**: EOD(장 마감) 가격 기준 자동 정산
+- **공정한 정산**: 예측 시점 스냅샷 가격 대비 EOD(장 마감) 기준 자동 정산
 - **보상 시스템**: 예측 성공 시 포인트 지급, 리워드 교환 가능
 - **성장 요소**: 광고 시청을 통한 추가 예측 기회 제공
 
@@ -175,13 +175,13 @@ graph TD
 취소 정책
 - 취소는 `PENDING` 상태에서만 허용되며, 서비스 정책에 따른 시간 제한 내에서만 가능(기본 5분 제안).
 
-#### 4.3 정산 및 보상 플로우
+#### 4.3 정산 및 보상 플로우 (업데이트: 예측시점 가격 대비)
 
 ```mermaid
 graph TD
     A[23:59 KST 예측 마감] --> B[06:00 KST EOD 데이터 수집, EOD DB 저장]
     B --> C[정산 로직 실행]
-    C --> D{예측 결과}
+    C --> D{예측 결과 (예측시점가격 ↔ 장마감)}
     D -->|정답| E[50포인트 지급]
     D -->|오답| F[포인트 없음]
 
@@ -206,7 +206,7 @@ graph TD
 
 | 플로우 단계        | API 엔드포인트                                  | 파일 위치                | 상태        |
 | ------------------ | ----------------------------------------------- | ------------------------ | ----------- |
-| 자동 정산          | POST /admin/settlement/settle-day/{trading_day} | settlement_router.py:18  | ✅ 완벽     |
+| 자동 정산          | POST /admin/settlement/settle-day/{trading_day} | settlement_router.py:18  | ✅ 업데이트 |
 | 정산 요약          | GET /admin/settlement/summary/{trading_day}     | settlement_router.py:48  | ✅ 완벽     |
 | 수동 정산          | POST /admin/settlement/manual-settle            | settlement_router.py:78  | ✅ 완벽     |
 | **정산 상태 조회** | GET /settlement/status/{trading_day}            | settlement_router.py:120 | ✅ **신규** |
@@ -222,6 +222,24 @@ graph TD
 | **배치 긴급중단**  | POST /batch/emergency-stop                      | batch_router.py:501      | ✅ **신규** |
 
 ### 5. 시스템 배치 및 자동화 플로우
+
+#### 4.3.1 정산 기준 상세 (업데이트)
+
+- 기준 가격: 각 예측이 제출될 때의 "예측 시점 스냅샷 가격"을 저장하고, 정산 시 EOD 종가와 비교합니다.
+- 저장 컬럼 (predictions):
+  - `prediction_price` (Numeric(10,4), nullable)
+  - `prediction_price_at` (timestamptz, nullable)
+  - `prediction_price_source` (varchar, nullable; 예: `universe`)
+- 비교 로직:
+  - movement = UP if `EOD.close > prediction_price`
+  - movement = DOWN if `EOD.close < prediction_price`
+  - movement = FLAT if `EOD.close == prediction_price` → 정책(ALL_CORRECT/ALL_WRONG/VOID) 적용
+- 호환성: 스냅샷이 없는 과거 데이터(`prediction_price IS NULL`)는 기존대로 `previous_close`를 기준으로 비교합니다.
+
+구현 위치
+- 스냅샷 저장: `myapi/services/prediction_service.py`
+- 정산 비교: `myapi/services/settlement_service.py`
+- 스키마/모델: `myapi/models/prediction.py`, `myapi/schemas/prediction.py`
 
 #### 5.0 KST 기준 거래일 정의 (중요)
 
@@ -545,5 +563,3 @@ OAuth 로그인 → JWT 토큰 발급 → 신규 가입자 1000포인트 보너�
 #
 
 **1 예측 시 available_predict 가 1씩 줄어들어야함**
-
-

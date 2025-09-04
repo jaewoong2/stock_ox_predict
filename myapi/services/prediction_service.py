@@ -151,6 +151,16 @@ class PredictionService:
         model: Optional[PredictionModel] = None
         try:
 
+            # Try to snapshot current price from today's universe (sync and reliable)
+            uni_item = self.universe_repo.get_universe_item_model(trading_day, symbol)
+            snap_price = None
+            snap_at = None
+            price_source = None
+            if uni_item and getattr(uni_item, "current_price", None) is not None:
+                snap_price = uni_item.current_price
+                snap_at = getattr(uni_item, "last_price_updated", None) or now
+                price_source = "universe"
+
             def _create():
                 instance = PredictionModel(
                     user_id=user_id,
@@ -160,6 +170,9 @@ class PredictionService:
                     status=StatusEnum.PENDING,
                     submitted_at=now,
                     points_earned=0,
+                    prediction_price=snap_price,
+                    prediction_price_at=snap_at,
+                    prediction_price_source=price_source,
                 )
                 self.db.add(instance)
                 return instance

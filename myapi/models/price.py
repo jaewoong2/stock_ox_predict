@@ -26,6 +26,7 @@ class EODPrice(Base, TimestampMixin):
     """
 
     __tablename__ = "eod_prices"
+    __table_args__ = {"schema": "crypto"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -34,10 +35,18 @@ class EODPrice(Base, TimestampMixin):
     trading_date: Mapped[date] = mapped_column(Date, nullable=False, comment="거래일")
 
     # 가격 정보
-    open_price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="시가")
-    high_price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="고가")
-    low_price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="저가")
-    close_price: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, comment="종가")
+    open_price: Mapped[Decimal] = mapped_column(
+        Numeric(10, 4), nullable=False, comment="시가"
+    )
+    high_price: Mapped[Decimal] = mapped_column(
+        Numeric(10, 4), nullable=False, comment="고가"
+    )
+    low_price: Mapped[Decimal] = mapped_column(
+        Numeric(10, 4), nullable=False, comment="저가"
+    )
+    close_price: Mapped[Decimal] = mapped_column(
+        Numeric(10, 4), nullable=False, comment="종가"
+    )
     adjusted_close: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(10, 4), nullable=True, comment="수정 종가"
     )
@@ -72,6 +81,7 @@ class EODPrice(Base, TimestampMixin):
         Index("ix_eod_prices_trading_date", "trading_date"),
         # 최신 데이터 조회용
         Index("ix_eod_prices_fetched_at", "fetched_at"),
+        {"schema": "crypto"},
     )
 
     def __repr__(self):

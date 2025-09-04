@@ -8,6 +8,8 @@ from sqlalchemy import (
     SmallInteger,
     ForeignKey,
     Integer,
+    Numeric,
+    String,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import UniqueConstraint, PrimaryKeyConstraint
@@ -46,6 +48,11 @@ class Prediction(BaseModel):
     updated_at = Column(DateTime(timezone=True))
     locked_at = Column(DateTime(timezone=True))
     points_earned = Column(Integer, default=0)
+
+    # Snapshot of price at prediction time (for fair settlement)
+    prediction_price = Column(Numeric(10, 4), nullable=True)
+    prediction_price_at = Column(DateTime(timezone=True), nullable=True)
+    prediction_price_source = Column(String(50), nullable=True)
 
 
 class UserDailyStats(BaseModel):

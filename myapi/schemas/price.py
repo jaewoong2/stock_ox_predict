@@ -43,6 +43,11 @@ class PriceComparisonResult(BaseModel):
     price_movement: str = Field(..., description="가격 움직임 (UP/DOWN/FLAT)")
     change_percent: Decimal = Field(..., description="변동률 (%)")
     prediction_outcome: str = Field(..., description="예측 결과 (CORRECT/INCORRECT)")
+    # Optional: additional context
+    prediction_id: Optional[int] = Field(None, description="예측 ID")
+    base_price_source: Optional[str] = Field(
+        None, description="기준 가격 소스 (snapshot/previous_close)"
+    )
     
 
 class UniversePriceResponse(BaseModel):

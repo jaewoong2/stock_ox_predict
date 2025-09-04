@@ -177,6 +177,29 @@ async def compare_prediction_with_outcome(
         )
 
 
+@router.post("/admin/compare-prediction/by-id", response_model=BaseResponse)
+@inject
+async def compare_prediction_with_outcome_by_id(
+    prediction_id: int,
+    _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
+    price_service: PriceService = Depends(get_price_service),
+) -> Any:
+    """특정 예측 ID를 기준으로 스냅샷 가격 대비 결과를 비교합니다. (관리자 전용)"""
+    try:
+        async with price_service as service:
+            comparison = await service.compare_prediction_with_outcome_by_id(
+                prediction_id
+            )
+            return BaseResponse(
+                success=True, data={"comparison": comparison.model_dump()}
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to compare prediction by id: {str(e)}",
+        )
+
+
 @router.post("/collect-eod/{trading_day}", response_model=BaseResponse)
 @inject
 async def collect_eod_data(
