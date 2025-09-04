@@ -24,6 +24,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def get_universe_for_date(self, trading_day: date) -> List[UniverseItem]:
         """특정 날짜의 유니버스 조회 (seq 순서대로)"""
+        self._ensure_clean_session()
         model_instances = (
             self.db.query(self.model_class)
             .filter(self.model_class.trading_day == trading_day)
@@ -37,6 +38,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
         self, trading_day: date
     ) -> List[ActiveUniverseModel]:
         """특정 날짜의 유니버스 Raw 모델 조회 (가격 포함)"""
+        self._ensure_clean_session()
         return (
             self.db.query(self.model_class)
             .filter(self.model_class.trading_day == trading_day)
@@ -48,6 +50,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
         self, trading_day: date, symbol: str
     ) -> Optional[ActiveUniverseModel]:
         """특정 날짜+심볼의 Raw 모델 조회"""
+        self._ensure_clean_session()
         return (
             self.db.query(self.model_class)
             .filter(
@@ -64,6 +67,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
     ) -> bool:
         """유니버스 항목에 현재가 정보를 저장/업데이트"""
         try:
+            self._ensure_clean_session()
             instance = self.get_universe_item_model(trading_day, symbol)
             if not instance:
                 return False
@@ -89,6 +93,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def get_current_universe(self) -> List[UniverseItem]:
         """현재(가장 최근) 유니버스 조회"""
+        self._ensure_clean_session()
         # 가장 최근 거래일 찾기
         latest_date = (
             self.db.query(self.model_class.trading_day)
@@ -103,6 +108,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def get_universe_response(self, trading_day: date) -> UniverseResponse:
         """API 응답용 유니버스 정보 조회"""
+        self._ensure_clean_session()
         universe_items = self.get_universe_for_date(trading_day)
 
         return UniverseResponse(
@@ -115,7 +121,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
         self, trading_day: date, universe_items: List[UniverseItem]
     ):
         """유니버스 항목 없는 애들 조회"""
-
+        self._ensure_clean_session()
         return (
             self.db.query(self.model_class)
             .filter(
@@ -142,6 +148,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
             dict: {"added": int, "updated": int, "removed": int}
         """
         try:
+            self._ensure_clean_session()
             # 현재 DB 상태 조회 (심볼 -> 모델)
             existing_models = (
                 self.db.query(self.model_class)
@@ -212,6 +219,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
     ) -> UniverseItem:
         """유니버스에 심볼 추가"""
         try:
+            self._ensure_clean_session()
             # 중복 확인
             if self.symbol_exists_in_universe(trading_day, symbol):
                 raise ValueError(
@@ -242,6 +250,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
     def remove_symbol_from_universe(self, trading_day: date, symbol: str) -> bool:
         """유니버스에서 심볼 제거"""
         try:
+            self._ensure_clean_session()
             deleted_count = (
                 self.db.query(self.model_class)
                 .filter(
@@ -262,6 +271,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def symbol_exists_in_universe(self, trading_day: date, symbol: str) -> bool:
         """특정 날짜 유니버스에서 심볼 존재 여부 확인"""
+        self._ensure_clean_session()
         return (
             self.db.query(self.model_class)
             .filter(
@@ -276,6 +286,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def sequence_exists_in_universe(self, trading_day: date, seq: int) -> bool:
         """특정 날짜 유니버스에서 시퀀스 존재 여부 확인"""
+        self._ensure_clean_session()
         return (
             self.db.query(self.model_class)
             .filter(
@@ -290,6 +301,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def get_symbol_by_sequence(self, trading_day: date, seq: int) -> Optional[str]:
         """시퀀스 번호로 심볼 조회"""
+        self._ensure_clean_session()
         model_instance = (
             self.db.query(self.model_class)
             .filter(
@@ -305,6 +317,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def get_sequence_by_symbol(self, trading_day: date, symbol: str) -> Optional[int]:
         """심볼로 시퀀스 번호 조회"""
+        self._ensure_clean_session()
         model_instance = (
             self.db.query(self.model_class)
             .filter(
@@ -320,6 +333,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def get_universe_stats(self, trading_day: date) -> UniverseStats:
         """유니버스 통계 조회"""
+        self._ensure_clean_session()
         total_symbols = (
             self.db.query(self.model_class)
             .filter(self.model_class.trading_day == trading_day)
@@ -340,6 +354,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def get_available_dates(self, limit: int = 30) -> List[date]:
         """유니버스가 설정된 날짜 목록 조회 (최신순)"""
+        self._ensure_clean_session()
         dates = (
             self.db.query(self.model_class.trading_day)
             .distinct()
@@ -352,6 +367,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def universe_exists_for_date(self, trading_day: date) -> bool:
         """특정 날짜의 유니버스 존재 여부 확인"""
+        self._ensure_clean_session()
         return (
             self.db.query(self.model_class)
             .filter(self.model_class.trading_day == trading_day)
@@ -361,6 +377,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
 
     def get_universe_count_for_date(self, trading_day: date) -> int:
         """특정 날짜의 유니버스 심볼 개수 조회"""
+        self._ensure_clean_session()
         return (
             self.db.query(self.model_class)
             .filter(self.model_class.trading_day == trading_day)
@@ -370,6 +387,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
     def clear_universe_for_date(self, trading_day: date) -> int:
         """특정 날짜의 유니버스 전체 삭제"""
         try:
+            self._ensure_clean_session()
             deleted_count = (
                 self.db.query(self.model_class)
                 .filter(self.model_class.trading_day == trading_day)

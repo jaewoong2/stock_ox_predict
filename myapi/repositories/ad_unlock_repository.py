@@ -88,6 +88,7 @@ class AdUnlockRepository(BaseRepository[AdUnlockModel, AdUnlockResponse]):
         Returns:
             해당 날짜의 모든 광고 해제 기록 리스트
         """
+        self._ensure_clean_session()
         records = (
             self.db.query(AdUnlockModel)
             .filter(
@@ -122,6 +123,7 @@ class AdUnlockRepository(BaseRepository[AdUnlockModel, AdUnlockResponse]):
         Returns:
             사용자의 광고 해제 히스토리 리스트
         """
+        self._ensure_clean_session()
         query = (
             self.db.query(AdUnlockModel)
             .filter(AdUnlockModel.user_id == user_id)
@@ -155,6 +157,7 @@ class AdUnlockRepository(BaseRepository[AdUnlockModel, AdUnlockResponse]):
         Returns:
             해제된 슬롯의 총 개수
         """
+        self._ensure_clean_session()
         result = (
             self.db.query(func.sum(AdUnlockModel.unlocked_slots))
             .filter(
@@ -180,6 +183,7 @@ class AdUnlockRepository(BaseRepository[AdUnlockModel, AdUnlockResponse]):
         Returns:
             해제된 슬롯의 총 개수
         """
+        self._ensure_clean_session()
         result = (
             self.db.query(func.sum(AdUnlockModel.unlocked_slots))
             .filter(
@@ -207,6 +211,7 @@ class AdUnlockRepository(BaseRepository[AdUnlockModel, AdUnlockResponse]):
         Returns:
             가장 최근 해제 기록 또는 None
         """
+        self._ensure_clean_session()
         record = (
             self.db.query(AdUnlockModel)
             .filter(
@@ -233,6 +238,7 @@ class AdUnlockRepository(BaseRepository[AdUnlockModel, AdUnlockResponse]):
             통계 딕셔너리 (총 해제 수, 사용자 수, 방법별 통계)
         """
         # 총 해제 수
+        self._ensure_clean_session()
         total_unlocks = (
             self.db.query(func.sum(AdUnlockModel.unlocked_slots))
             .filter(AdUnlockModel.trading_day == trading_day)

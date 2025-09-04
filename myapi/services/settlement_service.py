@@ -50,7 +50,14 @@ class SettlementService:
 
     async def validate_and_settle_day(self, trading_day: date) -> DailySettlementResult:
         """특정 거래일의 예측을 검증하고 정산합니다."""
-        settlement_results: List[SymbolSettlementResult] = []  # 초기화를 try 블록 밖으로 이동
+        # 시작 전에 세션 상태를 확실히 정상화 (이전 실패 잔여 상태 제거)
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
+        settlement_results: List[SymbolSettlementResult] = (
+            []
+        )  # 초기화를 try 블록 밖으로 이동
         try:
             # 1. 해당 날짜의 정산용 가격 데이터 수집 및 검증
             async with self.price_service as price_svc:
@@ -83,13 +90,30 @@ class SettlementService:
                         )
                     )
                 else:
-                    # 정상 정산 처리
-                    result = await self._settle_predictions_for_symbol(
-                        trading_day, price_data
-                    )
-                    settlement_results.append(result)
-                    total_processed += result.processed_count
-                    total_correct += result.correct_count
+                    # 정상 정산 처리 (심볼 단위 격리 및 예외 방지)
+                    try:
+                        result = await self._settle_predictions_for_symbol(
+                            trading_day, price_data
+                        )
+                        settlement_results.append(result)
+                        total_processed += result.processed_count
+                        total_correct += result.correct_count
+                    except Exception as sym_err:
+                        # 해당 심볼 처리 실패 시 롤백 후 계속 진행
+                        try:
+                            self.db.rollback()
+                        except Exception:
+                            pass
+                        settlement_results.append(
+                            SymbolSettlementResult(
+                                symbol=price_data.symbol,
+                                status="FAILED",
+                                processed_count=0,
+                                correct_count=0,
+                                reason=str(sym_err),
+                            )
+                        )
+                        continue
 
             # 3. 전체 정산 통계 반환
             return DailySettlementResult(
@@ -110,10 +134,9 @@ class SettlementService:
                 for result in settlement_results
                 if result.status == "FAILED"
             ]
-            # 트랜잭션이 중단된 경우 로깅 전에 세션 정리
+            # 로깅 전에 항상 세션 롤백으로 트랜잭션 상태 정리 (안전)
             try:
-                if hasattr(self.db, "is_active") and not self.db.is_active:  # type: ignore[attr-defined]
-                    self.db.rollback()
+                self.db.rollback()
             except Exception:
                 pass
             self.error_log_service.log_settlement_error(
@@ -129,6 +152,11 @@ class SettlementService:
         self, trading_day: date, price_data: SettlementPriceData
     ) -> SymbolSettlementResult:
         """특정 종목의 예측들을 정산합니다."""
+        # 심볼 단위 처리 전 세션 상태 정리 (보수적)
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
         symbol = price_data.symbol
 
         # 해당 종목의 대기 중인 예측들 조회
@@ -197,6 +225,10 @@ class SettlementService:
         self, trading_day: date, symbol: str, void_reason: Optional[str]
     ) -> None:
         """유효하지 않은 가격으로 인한 예측 무효 처리"""
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
         pending_predictions = self.pred_repo.get_predictions_by_symbol_and_date(
             symbol, trading_day, status_filter=StatusEnum.PENDING
         )

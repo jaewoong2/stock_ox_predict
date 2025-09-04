@@ -59,9 +59,28 @@ class BaseRepository(Generic[T, SchemaType], ABC):
     def _ensure_clean_session(self) -> None:
         """보류중/실패한 트랜잭션이 있으면 롤백하여 세션을 정상화"""
         try:
-            if hasattr(self.db, "is_active") and not self.db.is_active:  # type: ignore[attr-defined]
+            # 1) 세션 레벨 실패 상태 감지
+            is_active = getattr(self.db, "is_active", True)
+            if not is_active:
                 self.db.rollback()
+                return
+
+            # 2) 트랜잭션 객체 상태 감지 (활성 아님 = 실패/종료 상태)
+            get_tx = getattr(self.db, "get_transaction", None)
+            if callable(get_tx):
+                tx = get_tx()
+                tx_is_active = getattr(tx, "is_active", None)
+                if tx is not None and tx_is_active is not None and not tx_is_active:
+                    self.db.rollback()
+                    return
+
+            # 3) 트랜잭션이 열려 있다면 방어적으로 롤백 (잉여 실패 상태 방지)
+            in_tx = getattr(self.db, "in_transaction", None)
+            if callable(in_tx) and in_tx():
+                self.db.rollback()
+                return
         except Exception:
+            # 세션/트랜잭션 점검 중 예외는 무시 (안전 우선)
             pass
 
     def get_by_id(self, id: Any) -> Optional[SchemaType]:
@@ -132,7 +151,9 @@ class BaseRepository(Generic[T, SchemaType], ABC):
             raise
         return self._to_schema(instance)
 
-    def update(self, instance_id: Any, commit: bool = True, **kwargs) -> Optional[SchemaType]:
+    def update(
+        self, instance_id: Any, commit: bool = True, **kwargs
+    ) -> Optional[SchemaType]:
         """레코드 업데이트 - Pydantic 스키마 반환"""
         self._ensure_clean_session()
         instance = (

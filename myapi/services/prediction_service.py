@@ -4,6 +4,11 @@ from datetime import date, datetime, timezone
 from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
+from myapi.models.prediction import (
+    Prediction as PredictionModel,
+    UserDailyStats as UserDailyStatsModel,
+)
+from sqlalchemy import and_, func
 
 from myapi.core.exceptions import (
     ValidationError,
@@ -58,22 +63,25 @@ class PredictionService:
 
     def _safe_transaction(self, operation):
         """
-        안전한 트랜잭션 실행을 위한 헬퍼 메서드
-        이미 트랜잭션이 시작된 경우와 그렇지 않은 경우를 모두 처리
+        안전한 트랜잭션 실행을 위한 헬퍼 메서드 (간단/안전 버전)
+
+        과거 in_transaction 체크로 인해 커밋이 누락될 수 있어,
+        항상 operation 실행 후 명시적으로 commit/rollback 처리합니다.
         """
         try:
+            result = operation()
+            # 항상 명시적 커밋 (autobegin 환경 포함)
             if self.db.in_transaction():
-                # 이미 트랜잭션 내부라면 commit/rollback 없이 실행
-                return operation()
+                self.db.flush()
+                self.db.commit()
             else:
-                # 새로운 트랜잭션 시작
-                with self.db.begin():
-                    return operation()
-        except Exception as e:
-            # 트랜잭션 관련 에러 처리
-            if "transaction is already begun" in str(e).lower():
-                # 이미 시작된 트랜잭션이 있는 경우, 그냥 실행
-                return operation()
+                # 일부 드라이버에서는 flush/commit 전에 자동으로 트랜잭션 시작
+                self.db.flush()
+                self.db.commit()
+            return result
+        except Exception:
+            if self.db.in_transaction():
+                self.db.rollback()
             raise
 
     # 제출/수정/취소
@@ -112,50 +120,39 @@ class PredictionService:
                 details={"remaining": remaining},
             )
 
-        # 생성 + 슬롯 소모를 하나의 트랜잭션으로 처리
+        # 간단/안전한 커밋 흐름으로 변경
+        # 1) 슬롯 차감 (원자적 UPDATE + 커밋) → 실패 시 RateLimitError
+        stats_before = self.stats_repo.get_or_create_user_daily_stats(
+            user_id, trading_day
+        )
+
+        if stats_before.available_predictions <= 0:
+            raise RateLimitError(
+                message="Daily prediction limit reached",
+                details={"remaining": 0},
+            )
+
+        stats_after = self.stats_repo.consume_available_prediction(
+            user_id, trading_day, amount=1
+        )
+        if stats_after.available_predictions != max(
+            0, stats_before.available_predictions - 1
+        ):
+            # 경합 등으로 소비 실패한 경우
+            remaining = self.stats_repo.get_remaining_predictions(user_id, trading_day)
+            raise RateLimitError(
+                message="Daily prediction limit reached",
+                details={"remaining": remaining},
+            )
+
+        # 2) 예측 생성 (커밋 포함). 실패 시 슬롯 환불(compensating) 후 에러 전파
         choice = ChoiceEnum(payload.choice.value)
         now = datetime.now(timezone.utc)
-        from myapi.models.prediction import (
-            Prediction as PredictionModel,
-            UserDailyStats as UserDailyStatsModel,
-        )
-        from sqlalchemy import and_, func
-
+        model: Optional[PredictionModel] = None
         try:
 
-            def _create_prediction_transaction():
-                # 1) 단일 UPDATE로 가용 슬롯 차감(+사용량 증가). 영향 행 수 0이면 제한 초과
-                updated = (
-                    self.db.query(UserDailyStatsModel)
-                    .filter(
-                        and_(
-                            UserDailyStatsModel.user_id == user_id,
-                            UserDailyStatsModel.trading_day == trading_day,
-                            UserDailyStatsModel.available_predictions > 0,
-                        )
-                    )
-                    .update(
-                        {
-                            "available_predictions": UserDailyStatsModel.available_predictions - 1,
-                            "predictions_made": UserDailyStatsModel.predictions_made + 1,
-                            "updated_at": func.now(),
-                        },
-                        synchronize_session=False,
-                    )
-                )
-
-                if updated == 0:
-                    raise RateLimitError(
-                        message="Daily prediction limit reached",
-                        details={
-                            "remaining": self.stats_repo.get_remaining_predictions(
-                                user_id, trading_day
-                            )
-                        },
-                    )
-
-                # 2) 예측 생성
-                model = PredictionModel(
+            def _create():
+                instance = PredictionModel(
                     user_id=user_id,
                     trading_day=trading_day,
                     symbol=symbol,
@@ -164,31 +161,38 @@ class PredictionService:
                     submitted_at=now,
                     points_earned=0,
                 )
-                self.db.add(model)
-                self.db.flush()
-                self.db.refresh(model)
-                return model
+                self.db.add(instance)
+                return instance
 
-            # 안전한 트랜잭션 실행
-            model = self._safe_transaction(_create_prediction_transaction)
-
-            # 트랜잭션 성공 시 Pydantic 스키마로 변환
-            created = self.pred_repo._to_schema(model)
+            model = self._safe_transaction(_create)
         except Exception as e:
+            # 슬롯 환불 시도
+            try:
+                self.stats_repo.refund_prediction(user_id, trading_day, amount=1)
+            except Exception as refund_err:
+                # 환불 실패도 로깅
+                self.error_log_service.log_prediction_error(
+                    user_id=user_id,
+                    trading_day=trading_day,
+                    symbol=symbol,
+                    error_message=f"Slot refund failed after prediction create error: {str(refund_err)}",
+                    prediction_details={"choice": payload.choice.value},
+                )
+
             # 에러 로깅 후 전파
             self.error_log_service.log_prediction_error(
                 user_id=user_id,
                 trading_day=trading_day,
                 symbol=symbol,
-                error_message=f"Failed to create prediction atomically: {str(e)}",
-                prediction_details={
-                    "choice": payload.choice.value,
-                    "fee_charged": self.PREDICTION_FEE_POINTS,
-                },
+                error_message=f"Failed to create prediction: {str(e)}",
+                prediction_details={"choice": payload.choice.value},
             )
             raise
 
-        # 자동 쿨다운 트리거 (동기적으로 처리, 실패해도 예측 성공)
+        # 트랜잭션 성공 시 Pydantic 스키마로 변환
+        created = self.pred_repo._to_schema(model)
+
+        # 자동 쿨다운 트리거
         try:
             # 동기적으로 쿨다운 체크 및 트리거
             self._check_and_trigger_cooldown_sync(user_id, trading_day)
@@ -355,9 +359,7 @@ class PredictionService:
         # 서비스 단위 원자 트랜잭션으로 취소 + 슬롯 환불 처리
         try:
             with self.db.begin():
-                canceled = self.pred_repo.cancel_prediction(
-                    prediction_id, commit=False
-                )
+                canceled = self.pred_repo.cancel_prediction(prediction_id, commit=False)
                 if not canceled:
                     raise ValidationError("Failed to cancel prediction")
 

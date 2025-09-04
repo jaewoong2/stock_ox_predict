@@ -28,7 +28,27 @@ class ErrorLogService:
 
     def __init__(self, db: Session):
         self.db = db
+        # 주 비즈니스 트랜잭션과 분리된 세션으로 로깅하기 위한 준비
         self.repo = ErrorLogRepository(db)
+
+    # 내부 헬퍼: 항상 독립 트랜잭션으로 에러 로그를 기록
+    def _create_error_log_isolated(self, check_type: str, trading_day, details):
+        try:
+            # 지연 임포트로 순환 참조 회피
+            from myapi.database.connection import SessionLocal
+            isolated = SessionLocal()
+            try:
+                repo = ErrorLogRepository(isolated)
+                return repo.create_error_log(
+                    check_type=check_type, trading_day=trading_day, details=details
+                )
+            finally:
+                isolated.close()
+        except Exception:
+            # 최후 방어: 기존 세션으로라도 시도 (실패해도 상위에서 안전 처리됨)
+            return self.repo.create_error_log(
+                check_type=check_type, trading_day=trading_day, details=details
+            )
 
     # ============================================================================
     # 에러 로그 생성 메서드들 (타입별로 편의 메서드 제공)
@@ -48,7 +68,7 @@ class ErrorLogService:
         ).model_dump()
         details["error_message"] = error_message
 
-        return self.repo.create_error_log(
+        return self._create_error_log_isolated(
             check_type=ErrorTypeEnum.SETTLEMENT_FAILED.value,
             trading_day=trading_day,
             details=details,
@@ -72,7 +92,7 @@ class ErrorLogService:
         ).model_dump()
         details["error_message"] = error_message
 
-        return self.repo.create_error_log(
+        return self._create_error_log_isolated(
             check_type=ErrorTypeEnum.EOD_FETCH_FAILED.value,
             trading_day=trading_day,
             details=details,
@@ -96,7 +116,7 @@ class ErrorLogService:
         ).model_dump()
         details["error_message"] = error_message
 
-        return self.repo.create_error_log(
+        return self._create_error_log_isolated(
             check_type=ErrorTypeEnum.BATCH_FAILED.value,
             trading_day=trading_day,
             details=details,
@@ -120,7 +140,7 @@ class ErrorLogService:
         ).model_dump()
         details["error_message"] = error_message
 
-        return self.repo.create_error_log(
+        return self._create_error_log_isolated(
             check_type=ErrorTypeEnum.EXTERNAL_API_ERROR.value,
             trading_day=trading_day,
             details=details,
@@ -142,7 +162,7 @@ class ErrorLogService:
             "error_message": error_message,
         }
 
-        return self.repo.create_error_log(
+        return self._create_error_log_isolated(
             check_type=ErrorTypeEnum.DATABASE_ERROR.value,
             trading_day=trading_day,
             details=details,
@@ -164,7 +184,7 @@ class ErrorLogService:
             "error_message": error_message,
         }
 
-        return self.repo.create_error_log(
+        return self._create_error_log_isolated(
             check_type=ErrorTypeEnum.PREDICTION_FAILED.value,
             trading_day=trading_day,
             details=details,
@@ -188,7 +208,7 @@ class ErrorLogService:
             "error_message": error_message,
         }
 
-        return self.repo.create_error_log(
+        return self._create_error_log_isolated(
             check_type=ErrorTypeEnum.POINT_TRANSACTION_FAILED.value,
             trading_day=trading_day,
             details=details,
@@ -212,7 +232,7 @@ class ErrorLogService:
             "error_message": error_message,
         }
 
-        return self.repo.create_error_log(
+        return self._create_error_log_isolated(
             check_type=ErrorTypeEnum.REWARD_REDEMPTION_FAILED.value,
             trading_day=trading_day,
             details=details,
@@ -229,7 +249,7 @@ class ErrorLogService:
         error_details = details.copy()
         error_details["error_message"] = error_message
 
-        return self.repo.create_error_log(
+        return self._create_error_log_isolated(
             check_type=check_type.value, trading_day=trading_day, details=error_details
         )
 

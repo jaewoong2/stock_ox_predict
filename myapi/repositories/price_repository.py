@@ -77,6 +77,7 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
             저장된 EOD 가격 스키마 또는 None
         """
         try:
+            self._ensure_clean_session()
             # float를 Decimal로 변환하여 계산 정확도 보장
             close_price_d = Decimal(str(close_price))
             previous_close_d = Decimal(str(previous_close))
@@ -145,6 +146,7 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
         Returns:
             EOD 가격 스키마 또는 None
         """
+        self._ensure_clean_session()
         model_instance = self.db.query(self.model_class).filter(
             and_(
                 self.model_class.symbol == symbol,
@@ -164,6 +166,7 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
         Returns:
             EOD 가격 스키마 리스트
         """
+        self._ensure_clean_session()
         model_instances = self.db.query(self.model_class).filter(
             self.model_class.trading_date == trading_date
         ).order_by(self.model_class.symbol).all()
@@ -185,6 +188,7 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
         Returns:
             EOD 가격 스키마 리스트
         """
+        self._ensure_clean_session()
         model_instances = self.db.query(self.model_class).filter(
             and_(
                 self.model_class.symbol.in_(symbols),
@@ -204,6 +208,7 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
         Returns:
             EOD 가격 스키마 리스트
         """
+        self._ensure_clean_session()
         model_instances = self.db.query(self.model_class).order_by(
             desc(self.model_class.trading_date),
             self.model_class.symbol
@@ -222,6 +227,7 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
         Returns:
             존재 여부
         """
+        self._ensure_clean_session()
         count = self.db.query(func.count(self.model_class.id)).filter(
             and_(
                 self.model_class.symbol == symbol,
@@ -246,6 +252,7 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
         Returns:
             EOD 데이터가 없는 종목 심볼 리스트
         """
+        self._ensure_clean_session()
         existing_symbols = self.db.query(self.model_class.symbol).filter(
             and_(
                 self.model_class.symbol.in_(symbols),
@@ -267,6 +274,7 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
             삭제된 레코드 수
         """
         try:
+            self._ensure_clean_session()
             count = self.db.query(self.model_class).filter(
                 self.model_class.trading_date == trading_date
             ).delete()

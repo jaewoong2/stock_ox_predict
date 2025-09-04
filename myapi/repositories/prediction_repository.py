@@ -142,6 +142,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
 
     def lock_predictions_for_settlement(self, trading_day: date) -> int:
         """정산을 위한 예측 잠금 (수정 불가)"""
+        self._ensure_clean_session()
         locked_count = (
             self.db.query(self.model_class)
             .filter(
@@ -184,6 +185,7 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         points_per_correct: int = 10,
     ) -> Tuple[int, int]:
         """대량 예측 상태 업데이트 (정산용)"""
+        self._ensure_clean_session()
         # 정답 예측들 업데이트
         correct_count = (
             self.db.query(self.model_class)

@@ -42,6 +42,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
         현재 활성 세션 조회 (가장 최근 거래일)
         """
         try:
+            self._ensure_clean_session()
             model_instance = (
                 self.db.query(self.model_class)
                 .order_by(desc(self.model_class.trading_day))
@@ -64,6 +65,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
         특정 날짜의 세션 조회
         """
         try:
+            self._ensure_clean_session()
             model_instance = (
                 self.db.query(self.model_class)
                 .filter(self.model_class.trading_day == trading_day)
@@ -84,6 +86,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
     def get_today_session_info(self, trading_day: date) -> Optional[SessionToday]:
         """오늘의 세션 정보 조회 (API 응답용)"""
         try:
+            self._ensure_clean_session()
             model_instance = (
                 self.db.query(self.model_class)
                 .filter(self.model_class.trading_day == trading_day)
@@ -121,6 +124,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
     ) -> SessionStatus:
         """새 세션 생성"""
         try:
+            self._ensure_clean_session()
             model_instance = self.model_class(
                 trading_day=trading_day,
                 phase=phase,
@@ -142,6 +146,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
         """세션 페이즈 업데이트"""
         try:
             from datetime import timezone
+            self._ensure_clean_session()
 
             model_instance = (
                 self.db.query(self.model_class)
@@ -212,6 +217,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
         self, start_date: date, end_date: date, phase_filter: PhaseEnum
     ) -> List[SessionStatus]:
         """날짜 범위의 세션 조회"""
+        self._ensure_clean_session()
         query = self.db.query(self.model_class).filter(
             self.model_class.trading_day.between(start_date, end_date)
         )
@@ -224,6 +230,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
 
     def get_open_sessions(self) -> List[SessionStatus]:
         """예측 접수 중인 세션들 조회"""
+        self._ensure_clean_session()
         model_instances = (
             self.db.query(self.model_class)
             .filter(self.model_class.phase == PhaseEnum.OPEN)
@@ -235,6 +242,7 @@ class SessionRepository(BaseRepository[SessionControlModel, SessionStatus]):
 
     def get_settling_sessions(self) -> List[SessionStatus]:
         """정산 중인 세션들 조회"""
+        self._ensure_clean_session()
         model_instances = (
             self.db.query(self.model_class)
             .filter(self.model_class.phase == PhaseEnum.SETTLING)
