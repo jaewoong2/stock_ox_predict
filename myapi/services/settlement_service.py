@@ -181,19 +181,46 @@ class SettlementService:
             # 예측 방향과 실제 결과 비교
             predicted_direction = prediction.choice.value.upper()  # UP or DOWN
 
-            # 기준 가격: 예측 시점 스냅샷이 있으면 그 값을, 없으면 reference_price 사용
-            base_price = None
-            if getattr(prediction, "prediction_price", None) is not None:
-                try:
-                    base_price = Decimal(str(prediction.prediction_price))
-                except Exception:
-                    base_price = None
-            if base_price is None:
-                base_price = price_data.reference_price
+            # 기준 가격: 반드시 예측 시점 스냅샷 가격을 사용 (요건 강화)
+            if getattr(prediction, "prediction_price", None) is None:
+                # 스냅샷이 없으면 VOID 처리
+                await self._void_prediction(
+                    prediction.id,
+                    prediction.user_id,
+                    trading_day,
+                    symbol,
+                    "Missing snapshot price at prediction time",
+                )
+                processed_count -= 1
+                continue
+
+            # 스냅샷 값이 비정상(<=0)인 경우도 VOID 처리
+            try:
+                base_price = Decimal(str(prediction.prediction_price))
+            except Exception:
+                await self._void_prediction(
+                    prediction.id,
+                    prediction.user_id,
+                    trading_day,
+                    symbol,
+                    "Invalid snapshot price format",
+                )
+                processed_count -= 1
+                continue
+            if base_price <= 0:
+                await self._void_prediction(
+                    prediction.id,
+                    prediction.user_id,
+                    trading_day,
+                    symbol,
+                    "Invalid snapshot price (<= 0)",
+                )
+                processed_count -= 1
+                continue
 
             # 정산 가격 대비 움직임 계산 (예측시점 → 정산시점)
             try:
-                actual_movement = self.price_service._calculate_price_movement(  # type: ignore
+                actual_movement = self.price_service._calculate_price_movement(
                     price_data.settlement_price, base_price
                 )
             except Exception:

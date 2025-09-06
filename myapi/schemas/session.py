@@ -60,3 +60,9 @@ class PredictionTimeStatus(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CutoffRequest(BaseModel):
+    trading_day: Optional[str] = Field(
+        None, description="Cutoff predictions for this trading day (YYYY-MM-DD)"
+    )

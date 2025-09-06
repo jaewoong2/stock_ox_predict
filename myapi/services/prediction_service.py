@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import os
 from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
+import yfinance as yf
+from decimal import Decimal
 from myapi.models.prediction import (
     Prediction as PredictionModel,
     UserDailyStats as UserDailyStatsModel,
@@ -160,6 +163,26 @@ class PredictionService:
                 snap_price = uni_item.current_price
                 snap_at = getattr(uni_item, "last_price_updated", None) or now
                 price_source = "universe"
+            else:
+                # Configure yfinance caches with Lambda/MPLCONFIGDIR aware fallback
+                try:
+                    from myapi.utils.yf_cache import configure_yfinance_cache
+
+                    configure_yfinance_cache()
+                except Exception:
+                    pass
+
+                # Fallback: fetch from Yahoo Finance synchronously to guarantee a snapshot
+                try:
+                    ticker = yf.Ticker(symbol)
+                    info = ticker.info
+                    if info and "regularMarketPrice" in info:
+                        snap_price = Decimal(str(info["regularMarketPrice"]))
+                        snap_at = now
+                        price_source = "yfinance"
+                except Exception:
+                    # If fetching fails, leave snapshot as None; settlement will VOID such predictions
+                    pass
 
             def _create():
                 instance = PredictionModel(

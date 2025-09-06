@@ -53,8 +53,8 @@ def execute_all_jobs(
     from myapi.utils.market_hours import USMarketHours
 
     today_kst = now.date()
-    today_trading_day = USMarketHours.get_kst_trading_day()
-    yesterday_trading_day = USMarketHours.get_prev_trading_day(today_trading_day)
+    # today_trading_day = USMarketHours.get_kst_trading_day()
+    yesterday_trading_day = USMarketHours.get_prev_trading_day(today_kst)
     current_hour = now.hour
     current_minute = now.minute
     current_total_minutes = current_hour * 60 + current_minute
@@ -97,7 +97,7 @@ def execute_all_jobs(
 
     # 3. 세션 시작 작업 (정산 후 실행)
     # flip-to-predict는 오늘의 거래일이 미국 거래일일 때만 수행
-    if USMarketHours.is_us_trading_day(today_trading_day):
+    if USMarketHours.is_us_trading_day(today_kst):
         all_jobs.append(
             {
                 "path": "api/v1/session/flip-to-predict",
@@ -105,30 +105,29 @@ def execute_all_jobs(
                 "body": {},
                 "group_id": "daily-morning-batch",
                 "description": (
-                    f"Start new prediction session for {today_trading_day.isoformat()}"
+                    f"Start new prediction session for {today_kst.isoformat()}"
                 ),
-                "deduplication_id": f"session-start-{today_trading_day.strftime('%Y%m%d')}",
+                "deduplication_id": f"session-start-{today_kst.strftime('%Y%m%d')}",
                 "sequence": 3,
             }
         )
 
     # 4. 유니버스 설정 작업 (세션 시작 후 실행)
     # 유니버스 upsert도 오늘 거래일이 미국 거래일일 때만 수행
-    if USMarketHours.is_us_trading_day(today_trading_day):
-        tickers = get_default_tickers()
+    if USMarketHours.is_us_trading_day(today_kst):
         all_jobs.append(
             {
                 "path": "api/v1/universe/upsert",
                 "method": "POST",
                 "body": {
-                    "trading_day": today_trading_day.isoformat(),
-                    "symbols": tickers,
+                    "trading_day": today_kst.isoformat(),
+                    "symbols": [],
                 },
                 "group_id": "daily-morning-batch",
                 "description": (
-                    f"Setup universe for {today_trading_day.isoformat()} with {len(tickers)} symbols"
+                    f"Setup universe for {today_kst.isoformat()} with symbols"
                 ),
-                "deduplication_id": f"universe-setup-{today_trading_day.strftime('%Y%m%d')}",
+                "deduplication_id": f"universe-setup-{today_kst.strftime('%Y%m%d')}",
                 "sequence": 4,
             }
         )
@@ -140,7 +139,9 @@ def execute_all_jobs(
             {
                 "path": "api/v1/session/cutoff",
                 "method": "POST",
-                "body": {},
+                "body": {
+                    "trading_day": today_kst.isoformat(),
+                },
                 "group_id": "daily-evening-batch",
                 "description": "Close prediction session",
                 "deduplication_id": f"session-close-{today_kst.strftime('%Y%m%d')}",
@@ -210,7 +211,7 @@ def execute_all_jobs(
     return BatchQueueResponse(
         message=(
             f"Daily batch jobs queued for {current_hour:02d}:{current_minute:02d} KST. "
-            f"today_trading_day={today_trading_day}, yesterday_trading_day={yesterday_trading_day}. "
+            f"today_trading_day={today_kst}, yesterday_trading_day={yesterday_trading_day}. "
             f"Success: {len(successful_jobs)}, Failed: {len(failed_jobs)}"
         ),
         current_time=f"{current_hour:02d}:{current_minute:02d} KST",

@@ -13,7 +13,6 @@ from myapi.services.reward_service import RewardService
 from myapi.services.point_service import PointService
 from myapi.services.ad_unlock_service import AdUnlockService
 from myapi.config import Settings
-from myapi.repositories.oauth_state_repository import OAuthStateRepository
 from myapi.services.cooldown_service import CooldownService
 
 

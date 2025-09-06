@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timezone, timedelta
+import os
 from decimal import Decimal
 from typing import List, Optional, cast
 
@@ -14,6 +15,7 @@ from myapi.repositories.active_universe_repository import ActiveUniverseReposito
 from myapi.repositories.price_repository import PriceRepository
 from myapi.repositories.session_repository import SessionRepository
 from myapi.repositories.prediction_repository import PredictionRepository
+from myapi.models.prediction import StatusEnum as PredictionStatusEnum
 from myapi.schemas.price import (
     StockPrice,
     EODPrice,
@@ -24,6 +26,7 @@ from myapi.schemas.price import (
     EODCollectionDetail,
 )
 from myapi.services.error_log_service import ErrorLogService
+from myapi.utils.yf_cache import configure_yfinance_cache
 
 
 class PriceService:
@@ -39,6 +42,8 @@ class PriceService:
         self.current_price_cache = {}
         self.eod_price_cache = {}
         self.cache_ttl = timedelta(seconds=60)  # 60초 TTL
+        # Configure yfinance caches with Lambda/ MPLCONFIGDIR aware fallback
+        configure_yfinance_cache()
 
     async def __aenter__(self):
         return self
@@ -272,7 +277,12 @@ class PriceService:
     async def validate_settlement_prices(
         self, trading_day: date
     ) -> List[SettlementPriceData]:
-        """정산을 위한 가격 검증을 수행합니다."""
+        """
+        정산을 위한 가격 검증을 수행합니다.
+
+        - 예측 시점 스냅샷 가격(snapshot)과 EOD 종가를 비교 가능한지 여부를 추가로 검증합니다.
+          (스냅샷 가격이 있는 경우 0보다 커야 하며, 없다면 전일 종가로 비교 가능해야 함)
+        """
         eod_prices = await self.get_universe_eod_prices(trading_day)
         settlement_data = []
 
@@ -287,8 +297,10 @@ class PriceService:
                 eod_price.close_price, eod_price.previous_close
             )
 
-            # 정산 유효성 검증
+            # 1차: EOD 데이터 자체 유효성 검증
             is_valid, void_reason = self._validate_price_for_settlement(eod_price)
+
+            # 스냅샷 존재/품질에 대한 판단은 예측별로 Settlement 단계에서 처리 (심볼 전체 VOID 방지)
 
             settlement_data.append(
                 SettlementPriceData(

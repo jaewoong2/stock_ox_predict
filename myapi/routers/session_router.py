@@ -2,6 +2,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from dependency_injector.wiring import inject
+from datetime import date
 
 from myapi.deps import get_session_service
 from myapi.core.auth_middleware import (
@@ -9,8 +10,8 @@ from myapi.core.auth_middleware import (
     get_current_active_user,
 )
 from myapi.schemas.user import User as UserSchema
-from myapi.schemas.auth import BaseResponse, Error, ErrorCode
-from myapi.schemas.session import SessionToday
+from myapi.schemas.auth import BaseResponse
+from myapi.schemas.session import CutoffRequest
 from myapi.services.session_service import SessionService
 from myapi.utils.market_hours import USMarketHours
 import logging
@@ -121,11 +122,17 @@ def flip_to_predict(
 @router.post("/cutoff", response_model=BaseResponse)
 @inject
 def cutoff_predictions(
+    request: CutoffRequest,
     _current_user: UserSchema = Depends(get_current_active_user),
     service: SessionService = Depends(get_session_service),
-) -> Any:
+):
+    target_date = None
+
+    if request.trading_day:
+        target_date = date.fromisoformat(request.trading_day)
+
     try:
-        status_obj = service.close_predictions()
+        status_obj = service.close_predictions(target_date)
         return BaseResponse(
             success=True,
             data={"status": status_obj.model_dump() if status_obj else None},

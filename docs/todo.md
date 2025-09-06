@@ -258,6 +258,29 @@
 - [ ] 운영 메트릭 추가: 일별 타이머 생성/완료/취소 카운트, 평균 회복 시간
 - [ ] 장애 복구 가이드: EventBridge 실패 시 재시도/보정 절차 문서화
 
+## 최근 완료 작업 (2025-09-05) ✅
+
+### 1. 정산 기준을 "예측시점 스냅샷 가격 vs EOD 종가"로 강제
+
+- [x] SettlementService: 스냅샷 가격이 없는 예측은 무조건 VOID 처리로 변경 (기존 previous_close 대체 비교 제거)
+- [x] SettlementService: 스냅샷 가격이 0 이하이거나 파싱 불가한 경우 VOID 처리 (사유 기록)
+- [x] PriceService.validate_settlement_prices: 심볼 단위 스냅샷 무효화 로직 제거 → 예측 단위로 처리되도록 수정
+
+### 2. 예측 제출 시 스냅샷 가격 보장
+
+- [x] PredictionService.submit_prediction: 유니버스에 `current_price`가 없을 때 yfinance로 동기 조회하여 스냅샷 저장(`prediction_price`, `prediction_price_at`, `prediction_price_source='yfinance'`)
+- [x] 스냅샷 확보 실패 시에는 NULL 허용, 정산 단계에서 VOID 처리되도록 일관성 유지
+
+### 3. 문서/흐름 정합성
+
+- [x] `docs/service_flow.md`의 정산 기준(스냅샷 우선)과 실제 코드 일치화 (fallback 제거)
+
+### 후속 TODO
+
+- [ ] PredictionService: 스냅샷 보장 강화를 위해 유니버스 가격 동기화 실패 시 재시도/백오프 추가
+- [ ] yfinance 호출 레이트 리밋 대비: 간단 캐시/스로틀 도입 검토
+- [ ] 운영 메트릭: 스냅샷 NULL로 VOID된 예측 카운트 집계 및 대시보드 노출
+
 #### 3.4 **prediction_repository.py** (5곳 수정)
 
 - `lock_predictions_for_settlement()`: flush → commit 변경
