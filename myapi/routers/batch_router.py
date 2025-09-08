@@ -3,6 +3,7 @@ import json
 import pytz
 from typing import Literal, cast
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 from dependency_injector.wiring import inject, Provide
 
 from myapi.containers import Container
@@ -18,6 +19,8 @@ from myapi.core.auth_middleware import require_admin
 from myapi.config import Settings
 from myapi.core.tickers import get_default_tickers
 from myapi.utils.market_hours import USMarketHours
+from myapi.database.session import get_db
+from myapi.repositories.active_universe_repository import ActiveUniverseRepository
 
 router = APIRouter(
     prefix="/batch",
@@ -121,6 +124,7 @@ def _dispatch_job(
 def enqueue_universe_refresh_prices(
     aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
     settings: Settings = Depends(Provide[Container.config.config]),
+    db: Session = Depends(get_db),
 ):
     """
     오늘의 거래일 기준으로 유니버스 현재가 강제 갱신 작업을 큐잉합니다. (관리자 전용)
@@ -131,6 +135,27 @@ def enqueue_universe_refresh_prices(
         kst = pytz.timezone("Asia/Seoul")
         now = dt.datetime.now(kst)
         trading_day = USMarketHours.get_kst_trading_day()
+
+        # Preflight: ensure universe exists for the target trading day
+        uni_repo = ActiveUniverseRepository(db)
+
+        if len(uni_repo.get_universe_for_date(trading_day)) == 0:
+            # Return graceful error to avoid noisy 404s during refresh
+            return BatchQueueResponse(
+                message=(
+                    f"No universe found for {trading_day.isoformat()}. Skip refresh."
+                ),
+                details=[
+                    BatchJobResult(
+                        job="Universe refresh (30m)",
+                        status="failed",
+                        response={
+                            "reason": "UNIVERSE_NOT_FOUND",
+                            "trading_day": trading_day.isoformat(),
+                        },
+                    )
+                ],
+            )
 
         job = {
             "path": f"api/v1/universe/refresh-prices?trading_day={trading_day.isoformat()}&interval=30m",
