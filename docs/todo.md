@@ -131,6 +131,87 @@
    - 비즈니스 로직 구현
    - 트랜잭션 관리
 
+---
+
+## 🚀 Performance Investigation (2025-09-08)
+
+### Findings
+
+- Uvicorn single worker in container limits concurrency severely.
+  - `Dockerfile.fastapi:29` uses `--workers 1`. Increase workers or switch to Gunicorn+Uvicorn workers for production.
+- Blocking sleeps inside DB retry path can stall threadpool workers.
+  - `myapi/repositories/prediction_repository.py:681` and `myapi/repositories/prediction_repository.py:688` call `time.sleep(...)` in retry loops.
+- Blocking AWS SDK and `requests` calls in request path.
+  - `myapi/services/aws_service.py:515` uses `requests.request(...)`; all boto3 calls are synchronous. These run inside API request handlers (e.g., batch/cooldown) and consume threadpool slots.
+- Low DB pool sizing may cause connection waits under load.
+  - `myapi/config.py:33` sets small defaults (`DB_POOL_SIZE=5`, `DB_MAX_OVERFLOW=10`). With concurrent traffic, requests may wait on pool.
+- BaseHTTPMiddleware introduces extra per‑request overhead.
+  - `myapi/core/logging_middleware.py` subclasses `BaseHTTPMiddleware`. Starlette recommends ASGI middleware for performance.
+- Price fan‑out to yfinance can be heavy if DB snapshot is missing.
+  - `myapi/services/price_service.py` properly offloads to threadpool, but `get_universe_current_prices()` can spawn many concurrent calls when cache/DB miss occurs.
+- Missing helpful DB indexes for frequent predicates.
+  - Predictions often filter by `(user_id, trading_day)` and `(trading_day, status)` but there is no explicit index. EOD price indices exist.
+
+### Action Items
+
+- Container/runtime
+  - Increase workers: change `Dockerfile.fastapi:29` to `--workers ${WEB_CONCURRENCY:-2}` and consider `--loop uvloop --http httptools`.
+  - Optionally switch to: `gunicorn -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-2} myapi.main:app`.
+  - Expose `WEB_CONCURRENCY` via ECS task env; start with 2–4 and tune.
+
+- Remove blocking sleeps in repository
+  - Replace `time.sleep(...)` with non‑blocking strategy or fail‑fast and retry at higher layer.
+    - File: `myapi/repositories/prediction_repository.py:681`
+    - File: `myapi/repositories/prediction_repository.py:688`
+  - Preferred: keep short `lock_timeout/statement_timeout`, drop sleeps, return current stats; caller can retry (idempotent).
+
+- Isolate/blocking AWS I/O from request path
+  - For endpoints invoking AWS (batch, cooldown): ensure sync routes are used or offload to background tasks.
+  - Where used in async routes, wrap boto3/requests with `await asyncio.to_thread(...)` or move to a Celery/worker context.
+    - `myapi/services/aws_service.py:515` (`requests.request`) → use httpx AsyncClient when feasible for Function URL.
+    - Consider `aioboto3` for SQS/Events where latency matters.
+
+- DB pool tuning
+  - In `myapi/config.py`, raise production defaults: `DB_POOL_SIZE=10–20`, `DB_MAX_OVERFLOW=20–40`, add `pool_timeout=10` in `create_engine()`.
+    - File: `myapi/database/connection.py:6` (engine creation) — add `pool_timeout=settings.DB_POOL_TIMEOUT`.
+    - Add `DB_POOL_TIMEOUT` to `Settings` with a sensible default (e.g., 10s).
+
+- Convert LoggingMiddleware to ASGI middleware
+  - Replace `BaseHTTPMiddleware` with a lightweight ASGI middleware to reduce overhead and allow streaming.
+    - File: `myapi/core/logging_middleware.py`.
+
+- PriceService safeguards
+  - Gate fan‑out: add `asyncio.Semaphore` to cap concurrent yfinance calls (e.g., 5–10) in `get_universe_current_prices()` and refresh paths.
+  - Prefer DB snapshot on user‑facing reads; ensure batch refresh (`refresh_universe_prices`) runs periodically to keep DB hot.
+
+- Response compression and caching
+  - Add `GZipMiddleware` with threshold (e.g., 1KB) to reduce payload for list endpoints.
+  - For GETs with acceptable staleness (e.g., universe prices), add `Cache-Control: max-age=30`.
+
+- Add helpful DB indexes (SQL migration)
+  - Predictions: composite indexes to match hot queries
+    - `(user_id, trading_day)` — speeds per‑user/day reads.
+    - `(trading_day, status)` — speeds settlement scans.
+  - Prepare migration SQL and apply in off‑peak.
+
+### Quick Wins Checklist
+
+- [ ] Bump Uvicorn workers in `Dockerfile.fastapi:29` and deploy.
+- [ ] Remove `time.sleep` in `prediction_repository.refill_by_cooldown()` and adopt fail‑fast retry.
+- [ ] Cap concurrency for yfinance fan‑out with a semaphore.
+- [ ] Add GZip middleware in `myapi/main.py`.
+- [ ] Increase DB pool size/overflow; add `pool_timeout`.
+- [ ] Add `(user_id, trading_day)` and `(trading_day, status)` indexes to `predictions`.
+- [ ] (Nice to have) Convert logging middleware to ASGI style.
+
+### Verification
+
+- Collect p95/p99 latencies before/after via ALB/CloudWatch.
+- Track DB `wait_event = ClientRead/ClientWrite` spikes during load to validate pool tuning.
+- Monitor threadpool saturation (long queue) after removing sleeps and increasing workers.
+
+---
+
 ## 주요 고려사항
 
 - ✅ 모든 Request/Response는 Pydantic BaseModel 사용

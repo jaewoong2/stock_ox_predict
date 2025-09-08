@@ -44,6 +44,7 @@ from myapi.schemas.prediction import (
 )
 from myapi.services.error_log_service import ErrorLogService
 from myapi.utils.date_utils import to_date
+from myapi.schemas.universe import ActiveUniverseSnapshot
 
 
 class PredictionService:
@@ -159,10 +160,12 @@ class PredictionService:
             snap_price = None
             snap_at = None
             price_source = None
-            if uni_item and getattr(uni_item, "current_price", None) is not None:
-                snap_price = uni_item.current_price
-                snap_at = getattr(uni_item, "last_price_updated", None) or now
-                price_source = "universe"
+            if uni_item:
+                snap = ActiveUniverseSnapshot.model_validate(uni_item)
+                if snap.current_price is not None:
+                    snap_price = snap.current_price
+                    snap_at = snap.last_price_updated or now
+                    price_source = "universe"
             else:
                 # Configure yfinance caches with Lambda/MPLCONFIGDIR aware fallback
                 try:
@@ -423,7 +426,7 @@ class PredictionService:
                 refund_result = self.point_service.add_points(
                     user_id=user_id,
                     request=refund_request,
-                    trading_day=getattr(model, "trading_day", date.today()),
+                    trading_day=to_date(model.trading_day) or date.today(),
                 )
 
                 if refund_result.success:
@@ -438,7 +441,7 @@ class PredictionService:
                         amount=self.PREDICTION_FEE_POINTS,
                         error_message=refund_result.message,
                         ref_id=f"cancel_refund_{prediction_id}",
-                        trading_day=getattr(model, "trading_day", date.today()),
+                        trading_day=to_date(model.trading_day) or date.today(),
                     )
                     print(
                         f"❌ Failed to refund points for canceled prediction {prediction_id}: {refund_result.message}"
@@ -451,7 +454,7 @@ class PredictionService:
                     amount=self.PREDICTION_FEE_POINTS,
                     error_message=str(e),
                     ref_id=f"cancel_refund_{prediction_id}",
-                    trading_day=getattr(model, "trading_day", date.today()),
+                    trading_day=to_date(model.trading_day) or date.today(),
                 )
                 print(
                     f"❌ Error refunding points for canceled prediction {prediction_id}: {str(e)}"

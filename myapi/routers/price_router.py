@@ -6,6 +6,7 @@ from dependency_injector.wiring import inject
 from myapi.core.auth_middleware import get_current_active_user, require_admin
 from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
+from myapi.schemas.price import SettlementPriceData
 from myapi.services.price_service import PriceService
 from myapi.deps import get_price_service
 from myapi.core.exceptions import NotFoundError
@@ -18,52 +19,34 @@ router = APIRouter(prefix="/prices", tags=["prices"])
 @inject
 async def get_current_stock_price(
     symbol: str = Path(..., pattern=r"^[A-Z]{1,5}$"),
-    _current_user: UserSchema = Depends(
-        get_current_active_user
-    ),  # Authentication required
+    _current_user: UserSchema = Depends(get_current_active_user),
     price_service: PriceService = Depends(get_price_service),
 ) -> Any:
-    """특정 종목의 현재 가격을 조회합니다."""
-    try:
-        async with price_service as service:
-            price = await service.get_current_price(symbol.upper())
-            return BaseResponse(success=True, data={"price": price.model_dump()})
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch current price for {symbol}: {str(e)}",
-        )
+    """특정 종목의 현재 가격을 스냅샷(DB)에서 조회합니다."""
+    price = price_service.get_current_price_snapshot(symbol.upper())
+    return BaseResponse(success=True, data={"price": price.model_dump()})
 
 
 @router.get("/universe/{trading_day}", response_model=BaseResponse)
 @inject
 async def get_universe_current_prices(
     trading_day: str,
-    _current_user: UserSchema = Depends(
-        get_current_active_user
-    ),  # Authentication required
+    _current_user: UserSchema = Depends(get_current_active_user),
     price_service: PriceService = Depends(get_price_service),
 ) -> Any:
-    """오늘의 유니버스 모든 종목의 현재 가격을 조회합니다."""
+    """유니버스 현재 가격을 스냅샷(DB)에서 조회합니다."""
     try:
         day = date.fromisoformat(trading_day)
-        async with price_service as service:
-            universe_prices = await service.get_universe_current_prices(day)
-            return BaseResponse(
-                success=True, data={"universe_prices": universe_prices.model_dump()}
-            )
+        universe_prices = price_service.get_universe_current_prices_snapshot(day)
+        return BaseResponse(
+            success=True, data={"universe_prices": universe_prices.model_dump()}
+        )
     except ValueError:
         return BaseResponse(
             success=False,
             error=Error(
                 code=ErrorCode.INVALID_CREDENTIALS, message="Invalid date format"
             ),
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch universe prices: {str(e)}",
         )
 
 
@@ -72,30 +55,20 @@ async def get_universe_current_prices(
 async def get_eod_price(
     symbol: str = Path(..., pattern=r"^[A-Z]{1,5}$"),
     trading_day: str = Path(...),
-    _current_user: UserSchema = Depends(
-        get_current_active_user
-    ),  # Authentication required
+    _current_user: UserSchema = Depends(get_current_active_user),
     price_service: PriceService = Depends(get_price_service),
 ) -> Any:
-    """특정 종목의 EOD(장 마감) 가격을 조회합니다."""
+    """특정 종목의 EOD(장 마감) 가격을 스냅샷(DB)에서 조회합니다."""
     try:
         day = date.fromisoformat(trading_day)
-        async with price_service as service:
-            eod_price = await service.get_eod_price(symbol.upper(), day)
-            return BaseResponse(
-                success=True, data={"eod_price": eod_price.model_dump()}
-            )
+        eod_price = price_service.get_eod_price_snapshot(symbol.upper(), day)
+        return BaseResponse(success=True, data={"eod_price": eod_price.model_dump()})
     except ValueError:
         return BaseResponse(
             success=False,
             error=Error(
                 code=ErrorCode.INVALID_CREDENTIALS, message="Invalid date format"
             ),
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch EOD price: {str(e)}",
         )
 
 
@@ -103,33 +76,41 @@ async def get_eod_price(
 @inject
 async def validate_settlement_prices(
     trading_day: str,
-    _current_user: UserSchema = Depends(
-        get_current_active_user
-    ),  # Admin authentication required
+    _current_user: UserSchema = Depends(get_current_active_user),
     price_service: PriceService = Depends(get_price_service),
 ) -> Any:
-    """정산을 위한 가격 검증을 수행합니다. (관리자 전용)"""
+    """정산을 위한 가격 검증을 수행합니다. (관리자 전용, 스냅샷만 사용)"""
     try:
         day = date.fromisoformat(trading_day)
-        async with price_service as service:
-            settlement_data = await service.validate_settlement_prices(day)
-            return BaseResponse(
-                success=True,
-                data={
-                    "settlement_data": [data.model_dump() for data in settlement_data]
-                },
+        eod_prices = price_service.get_universe_eod_prices_snapshot(day)
+        # Reuse existing transformation logic on snapshot data
+        settlement_data = []
+        for e in eod_prices:
+            price_movement = price_service._calculate_price_movement(e.close_price, e.previous_close)
+            change_percent = price_service._calculate_change_percent(e.close_price, e.previous_close)
+            is_valid, void_reason = price_service._validate_price_for_settlement(e)
+            settlement_data.append(
+                SettlementPriceData(
+                    symbol=e.symbol,
+                    trading_date=e.trading_date,
+                    settlement_price=e.close_price,
+                    reference_price=e.previous_close,
+                    price_movement=price_movement,
+                    change_percent=change_percent,
+                    is_valid_settlement=is_valid,
+                    void_reason=void_reason,
+                )
             )
+        return BaseResponse(
+            success=True,
+            data={"settlement_data": [data.model_dump() for data in settlement_data]},
+        )
     except ValueError:
         return BaseResponse(
             success=False,
             error=Error(
                 code=ErrorCode.INVALID_CREDENTIALS, message="Invalid date format"
             ),
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to validate settlement prices: {str(e)}",
         )
 
 

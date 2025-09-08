@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import List
-from datetime import date
+from typing import List, Optional
+from datetime import date, datetime
+from decimal import Decimal
 
 
 class UniverseItem(BaseModel):
@@ -78,3 +79,20 @@ class UniverseWithPricesResponse(BaseModel):
     symbols: List[UniverseItemWithPrice]
     total_count: int
     last_updated: str = Field(..., description="Last price update timestamp")
+
+
+class ActiveUniverseSnapshot(BaseModel):
+    """ActiveUniverse ORM -> typed snapshot DTO (Pydantic)"""
+
+    symbol: str
+    seq: int
+    current_price: Optional[Decimal] = None
+    previous_close: Optional[Decimal] = None
+    change_amount: Optional[Decimal] = None
+    change_percent: Optional[Decimal] = None
+    volume: Optional[int] = None
+    market_status: Optional[str] = None
+    last_price_updated: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

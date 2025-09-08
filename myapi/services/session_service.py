@@ -78,7 +78,7 @@ class SessionService:
             trading_day=trading_day,
             predict_open_at=start_time,
             predict_cutoff_at=end_time,
-            phase=PhaseEnum.CLOSED,  # 생성 시 기본 상태는 CLOSED
+            phase=PhaseEnum.OPEN,  # 생성 시 기본 상태는 CLOSED
         )
 
     def open_predictions(
@@ -110,9 +110,7 @@ class SessionService:
         # 세션을 OPEN 상태로 변경
         opened = self.repo.open_predictions(target_date)
         if opened:
-            logger.info(
-                f"Session opened for {target_date}: phase={opened.phase.value}"
-            )
+            logger.info(f"Session opened for {target_date}: phase={opened.phase.value}")
         else:
             logger.warning(f"Failed to open session for {target_date}")
         return opened

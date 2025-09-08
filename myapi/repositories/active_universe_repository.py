@@ -162,27 +162,11 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
             existing_symbols = set(existing_by_symbol.keys())
             desired_symbols = set(desired_by_symbol.keys())
 
-            to_delete = existing_symbols - desired_symbols
             to_insert = desired_symbols - existing_symbols
             to_consider_update = existing_symbols & desired_symbols
 
             created_items: List[UniverseItem] = []
             updated_count = 0
-            removed_count = 0
-
-            # 삭제
-            if to_delete:
-                (
-                    self.db.query(self.model_class)
-                    .filter(
-                        and_(
-                            self.model_class.trading_day == trading_day,
-                            self.model_class.symbol.in_(list(to_delete)),
-                        )
-                    )
-                    .delete(synchronize_session=False)
-                )
-                removed_count = len(to_delete)
 
             # 삽입
             for symbol in to_insert:
@@ -207,7 +191,6 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
             return {
                 "added": len(created_items),
                 "updated": updated_count,
-                "removed": removed_count,
             }
 
         except Exception as e:

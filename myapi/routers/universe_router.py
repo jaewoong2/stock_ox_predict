@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -56,27 +57,14 @@ async def get_today_universe_with_prices(
     service: UniverseService = Depends(get_universe_service),
 ) -> Any:
     """
-    오늘의 유니버스(종목 리스트)를 현재 가격 정보와 함께 조회합니다.
-    사용자가 예측하기 전에 시장 상황을 파악할 수 있도록 가격과 변동률을 제공합니다.
-
-    Args:
-        _user (Optional[UserSchema]): 현재 사용자 정보 (인증되지 않아도 접근 가능)
-        service (UniverseService): 유니버스 서비스
-
-    Returns:
-        BaseResponse: 가격 정보가 포함된 오늘의 유니버스 정보
+    오늘의 유니버스(종목 리스트)를 현재 가격 스냅샷과 함께 조회합니다.
+    스냅샷이 없는 경우 서비스에서 오류를 발생시키며, 전역 예외 핸들러가 응답 형식을 표준화합니다.
     """
-    try:
-        res = await service.get_today_universe_with_prices()
-        return BaseResponse(
-            success=True,
-            data={"universe": res.model_dump()} if res else {"universe": None},
-        )
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Fetch universe with prices failed",
-        )
+    res = await service.get_today_universe_with_prices()
+    return BaseResponse(
+        success=True,
+        data={"universe": res.model_dump()} if res else {"universe": None},
+    )
 
 
 @router.post("/upsert", response_model=BaseResponse)
@@ -109,6 +97,7 @@ def upsert_universe(
             day = None
             if trg_day:
                 from datetime import date as _date
+
                 day = _date.fromisoformat(trg_day)
         except Exception:
             # FastAPI validation이 잡겠지만 방어
@@ -144,3 +133,59 @@ def upsert_universe(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Upsert universe failed",
         )
+
+
+@router.post("/refresh-prices", response_model=BaseResponse)
+@inject
+async def refresh_today_universe_prices(
+    trading_day: str,
+    interval: Optional[str] = "realtime",  # realtime, 30m, 1h 등
+    _current_user: UserSchema = Depends(
+        get_current_active_user
+    ),  # or require_admin if stricter
+    service: UniverseService = Depends(get_universe_service),
+) -> Any:
+    """
+    오늘의 유니버스 종목들에 대한 가격을 수집하고 DB에 반영합니다.
+    interval에 따라 실시간 또는 봉 데이터를 선택할 수 있습니다.
+    
+    Args:
+        trading_day: 거래일 (YYYY-MM-DD)
+        interval: 가격 조회 방식
+            - "realtime": 실시간 가격 조회 (기존 방식)
+            - "30m", "1h" 등: intraday 봉 데이터 조회 (배치용)
+    """
+    try:
+        if interval == "realtime":
+            res = await service.refresh_today_prices(
+                trading_day=date.fromisoformat(trading_day)
+            )
+        else:
+            res = await service.refresh_today_prices_intraday(
+                trading_day=date.fromisoformat(trading_day),
+                interval=interval or "30m"  # None인 경우 기본값 사용
+            )
+        return BaseResponse(
+            success=True,
+            data={"universe_prices": res.model_dump() if res else None},
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Refresh universe prices failed with interval {interval}",
+        )
+
+
+@router.get("/snapshot/status", response_model=BaseResponse)
+@inject
+def get_universe_snapshot_status(
+    trading_day: Optional[str] = None,
+    _user: Optional[UserSchema] = Depends(get_current_user_optional),
+    service: UniverseService = Depends(get_universe_service),
+) -> Any:
+    """유니버스 스냅샷 상태 요약 (누락 카운트, 최근 갱신 시각)."""
+    day = None
+    if trading_day:
+        day = date.fromisoformat(trading_day)
+    status_data = service.get_universe_snapshot_status(day)
+    return BaseResponse(success=True, data={"snapshot_status": status_data})

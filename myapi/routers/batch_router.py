@@ -16,6 +16,7 @@ from myapi.schemas.batch import (
 from myapi.core.auth_middleware import require_admin
 from myapi.config import Settings
 from myapi.core.tickers import get_default_tickers
+from myapi.utils.market_hours import USMarketHours
 
 router = APIRouter(
     prefix="/batch",
@@ -23,9 +24,143 @@ router = APIRouter(
 )
 
 
+# Optional per-path dispatch policy.
+# Key = API path (as placed in job['path']), Value in {"SQS", "LAMBDA_INVOKE", "LAMBDA_URL"}
+# Leave empty to use global default or per-job overrides.
+DISPATCH_POLICY: dict[str, str] = {
+    # Example usage:
+    # "api/v1/universe/refresh-prices": "LAMBDA_URL",
+    # "api/v1/admin/settlement/settle-day/{date}": "LAMBDA_INVOKE",
+}
+
+
+def _resolve_dispatch_mode(path: str, explicit: str | None, settings: Settings) -> str:
+    if explicit:
+        return explicit.upper()
+    # Exact match first
+    if path in DISPATCH_POLICY:
+        return DISPATCH_POLICY[path].upper()
+    # Startswith match support for simple grouping
+    for key, val in DISPATCH_POLICY.items():
+        if key.endswith("*"):
+            prefix = key[:-1]
+            if path.startswith(prefix):
+                return val.upper()
+    return (settings.BATCH_DISPATCH_MODE or "SQS").upper()
+
+
+def _dispatch_job(
+    *,
+    aws_service: AwsService,
+    settings: Settings,
+    path: str,
+    method: str,
+    body: dict,
+    group_id: str,
+    deduplication_id: str,
+    dispatch_mode: str | None = None,
+):
+    """Dispatch a job via SQS, direct Lambda invoke, or Lambda Function URL based on settings."""
+    # Prepare proxy event payload for Lambda-based handlers
+    message_body = aws_service.generate_queue_message_http(
+        path=path,
+        method=method,  # type: ignore[arg-type]
+        body=json.dumps(body),
+        auth_token=settings.AUTH_TOKEN,
+    )
+
+    # Priority: explicit per-job -> per-path policy -> global default
+    mode = _resolve_dispatch_mode(path, dispatch_mode, settings)
+    if mode == "SQS":
+        queue_url = settings.SQS_MAIN_QUEUE_URL
+        return aws_service.send_sqs_fifo_message(
+            queue_url=queue_url,
+            message_body=json.dumps(message_body.model_dump()),
+            message_group_id=group_id,
+            message_deduplication_id=deduplication_id,
+        )
+    elif mode == "LAMBDA_INVOKE":
+        fn_name = settings.LAMBDA_FUNCTION_NAME_DIRECT or settings.LAMBDA_FUNCTION_NAME
+        return aws_service.invoke_lambda(
+            function_name=fn_name,
+            payload=message_body.model_dump(),
+            asynchronous=True,
+        )
+    elif mode == "LAMBDA_URL":
+        if not settings.LAMBDA_FUNCTION_URL:
+            raise HTTPException(status_code=500, detail="LAMBDA_FUNCTION_URL is not configured")
+        return aws_service.invoke_lambda_function_url(
+            function_url=settings.LAMBDA_FUNCTION_URL,
+            path=path,
+            method=method,  # type: ignore[arg-type]
+            body=json.dumps(body),
+            internal_auth_bearer=settings.AUTH_TOKEN,
+            timeout_sec=settings.LAMBDA_URL_TIMEOUT_SEC,
+        )
+    else:
+        raise HTTPException(status_code=500, detail=f"Unsupported BATCH_DISPATCH_MODE: {settings.BATCH_DISPATCH_MODE}")
+
+
 # ====================================================================================
 # 예측 시스템 스케줄링 엔드포인트 - AWS EventBridge로 호출됨
 # ====================================================================================
+
+
+@router.post(
+    "/universe-refresh-prices",
+    dependencies=[Depends(require_admin)],
+    response_model=BatchQueueResponse,
+)
+@inject
+def enqueue_universe_refresh_prices(
+    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
+    settings: Settings = Depends(Provide[Container.config.config]),
+):
+    """
+    오늘의 거래일 기준으로 유니버스 현재가 강제 갱신 작업을 큐잉합니다. (관리자 전용)
+    30분 주기 스케줄러가 호출하도록 설계되었습니다.
+    """
+    try:
+        # 현재 시간 (KST)과 거래일 계산
+        kst = pytz.timezone("Asia/Seoul")
+        now = dt.datetime.now(kst)
+        trading_day = USMarketHours.get_kst_trading_day()
+
+        job = {
+            "path": f"api/v1/universe/refresh-prices?trading_day={trading_day.isoformat()}&interval=30m",
+            "method": "POST",
+            "body": {},
+            "group_id": "universe-prices-refresh",
+            "description": f"Refresh 30m candle prices for {trading_day.isoformat()}",
+            "deduplication_id": f"universe-refresh-{trading_day.strftime('%Y%m%d')}-{now.strftime('%H%M')}",
+            "dispatch": "SQS",
+        }
+
+        response = _dispatch_job(
+            aws_service=aws_service,
+            settings=settings,
+            path=job["path"],
+            method=job["method"],
+            body=job["body"],
+            group_id=job["group_id"],
+            deduplication_id=job["deduplication_id"],
+            dispatch_mode=job.get("dispatch"),
+        )
+
+        return BatchQueueResponse(
+            message=(
+                f"Universe price refresh queued for {trading_day.isoformat()} at {now.strftime('%H:%M')} KST."
+            ),
+            details=[
+                BatchJobResult(
+                    job=job["description"], status="queued", response=response
+                )
+            ],
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to queue refresh job: {str(e)}"
+        )
 
 
 @router.post(
@@ -43,7 +178,7 @@ def execute_all_jobs(
     각 작업은 지정된 시간대(±30분 오차 허용) 내에만 실행됩니다.
     06:00 KST 작업들은 의존성 순서대로 순차 실행됩니다.
     """
-    queue_url = settings.SQS_MAIN_QUEUE_URL
+    # queue_url only needed for SQS mode; dispatch helper handles selection
 
     # 현재 시간 (한국 시간 KST, UTC+9)
     kst = pytz.timezone("Asia/Seoul")
@@ -79,6 +214,7 @@ def execute_all_jobs(
             "description": f"Collect EOD data for {yesterday_trading_day.isoformat()}",
             "deduplication_id": f"eod-collection-{yesterday_trading_day.strftime('%Y%m%d')}",
             "sequence": 1,
+            "dispatch": "SQS",
         }
     )
 
@@ -92,6 +228,7 @@ def execute_all_jobs(
             "description": f"Settlement for {yesterday_trading_day.isoformat()}",
             "deduplication_id": f"settlement-{yesterday_trading_day.strftime('%Y%m%d')}",
             "sequence": 2,
+            "dispatch": "SQS",
         }
     )
 
@@ -109,6 +246,7 @@ def execute_all_jobs(
                 ),
                 "deduplication_id": f"session-start-{today_kst.strftime('%Y%m%d')}",
                 "sequence": 3,
+                "dispatch": "SQS",
             }
         )
 
@@ -129,6 +267,7 @@ def execute_all_jobs(
                 ),
                 "deduplication_id": f"universe-setup-{today_kst.strftime('%Y%m%d')}",
                 "sequence": 4,
+                "dispatch": "SQS",
             }
         )
 
@@ -146,6 +285,7 @@ def execute_all_jobs(
                 "description": "Close prediction session",
                 "deduplication_id": f"session-close-{today_kst.strftime('%Y%m%d')}",
                 "sequence": 1,
+                "dispatch": "SQS",
             }
         )
 
@@ -166,17 +306,15 @@ def execute_all_jobs(
     responses = []
     for job in sorted_jobs:
         try:
-            message_body = aws_service.generate_queue_message_http(
+            response = _dispatch_job(
+                aws_service=aws_service,
+                settings=settings,
                 path=job["path"],
                 method=job["method"],
-                body=json.dumps(job["body"]),
-                auth_token=settings.AUTH_TOKEN,
-            )
-            response = aws_service.send_sqs_fifo_message(
-                queue_url=queue_url,
-                message_body=json.dumps(message_body.model_dump()),
-                message_group_id=job["group_id"],
-                message_deduplication_id=job["deduplication_id"],
+                body=job["body"],
+                group_id=job["group_id"],
+                deduplication_id=job["deduplication_id"],
+                dispatch_mode=job.get("dispatch"),
             )
             responses.append(
                 BatchJobResult(
@@ -233,7 +371,7 @@ def execute_prediction_settlement(
     전날 예측 결과 정산 및 포인트 지급 (06:00 실행)
     AWS EventBridge에서 매일 06:00에 호출되어 전날 예측을 정산하고 포인트를 지급합니다.
     """
-    queue_url = settings.SQS_MAIN_QUEUE_URL
+    # queue_url only needed for SQS mode; dispatch helper handles selection
     yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
     today_str = dt.date.today().strftime("%Y%m%d")
 
@@ -245,26 +383,23 @@ def execute_prediction_settlement(
             "body": {},
             "group_id": "settlement",
             "description": f"Settlement for {yesterday}",
+            "dispatch": "SQS",
         }
     ]
 
     responses = []
     for job in jobs:
         try:
-            message_body = aws_service.generate_queue_message_http(
+            deduplication_id = f"settlement-{yesterday}-{today_str}"
+            response = _dispatch_job(
+                aws_service=aws_service,
+                settings=settings,
                 path=job["path"],
                 method=job["method"],
-                body=json.dumps(job["body"]),
-                auth_token=settings.AUTH_TOKEN,
-            )
-
-            deduplication_id = f"settlement-{yesterday}-{today_str}"
-
-            response = aws_service.send_sqs_fifo_message(
-                queue_url=queue_url,
-                message_body=json.dumps(message_body.model_dump()),
-                message_group_id=job["group_id"],
-                message_deduplication_id=deduplication_id,
+                body=job["body"],
+                group_id=job["group_id"],
+                deduplication_id=deduplication_id,
+                dispatch_mode=job.get("dispatch"),
             )
             responses.append(
                 BatchJobResult(
@@ -296,7 +431,7 @@ def execute_session_start(
     새로운 예측 세션 시작 (06:00 실행)
     AWS EventBridge에서 매일 06:00에 호출되어 새로운 예측 세션을 시작합니다.
     """
-    queue_url = settings.SQS_MAIN_QUEUE_URL
+    # queue_url only needed for SQS mode; dispatch helper handles selection
     today_str = dt.date.today().strftime("%Y%m%d")
 
     jobs = [
@@ -306,26 +441,23 @@ def execute_session_start(
             "body": {},
             "group_id": "session",
             "description": "Start new prediction session",
+            "dispatch": "SQS",
         }
     ]
 
     responses = []
     for job in jobs:
         try:
-            message_body = aws_service.generate_queue_message_http(
+            deduplication_id = f"session-start-{today_str}"
+            response = _dispatch_job(
+                aws_service=aws_service,
+                settings=settings,
                 path=job["path"],
                 method=job["method"],
-                body=json.dumps(job["body"]),
-                auth_token=settings.AUTH_TOKEN,
-            )
-
-            deduplication_id = f"session-start-{today_str}"
-
-            response = aws_service.send_sqs_fifo_message(
-                queue_url=queue_url,
-                message_body=json.dumps(message_body.model_dump()),
-                message_group_id=job["group_id"],
-                message_deduplication_id=deduplication_id,
+                body=job["body"],
+                group_id=job["group_id"],
+                deduplication_id=deduplication_id,
+                dispatch_mode=job.get("dispatch"),
             )
             responses.append(
                 BatchJobResult(
@@ -357,7 +489,7 @@ def execute_universe_setup(
     AWS EventBridge에서 매일 06:00에 호출되어 오늘의 종목 유니버스를 설정합니다.
     기본 100개 종목으로 설정됩니다.
     """
-    queue_url = settings.SQS_MAIN_QUEUE_URL
+    # queue_url only needed for SQS mode; dispatch helper handles selection
     today = dt.date.today().isoformat()
     today_str = dt.date.today().strftime("%Y%m%d")
 
@@ -371,26 +503,23 @@ def execute_universe_setup(
             "body": {"trading_day": today, "symbols": default_symbols},
             "group_id": "universe",
             "description": f"Setup universe for {today} with {len(default_symbols)} symbols",
+            "dispatch": "SQS",
         }
     ]
 
     responses = []
     for job in jobs:
         try:
-            message_body = aws_service.generate_queue_message_http(
+            deduplication_id = f"universe-setup-{today_str}"
+            response = _dispatch_job(
+                aws_service=aws_service,
+                settings=settings,
                 path=job["path"],
                 method=job["method"],
-                body=json.dumps(job["body"]),
-                auth_token=settings.AUTH_TOKEN,
-            )
-
-            deduplication_id = f"universe-setup-{today_str}"
-
-            response = aws_service.send_sqs_fifo_message(
-                queue_url=queue_url,
-                message_body=json.dumps(message_body.model_dump()),
-                message_group_id=job["group_id"],
-                message_deduplication_id=deduplication_id,
+                body=job["body"],
+                group_id=job["group_id"],
+                deduplication_id=deduplication_id,
+                dispatch_mode=job.get("dispatch"),
             )
             responses.append(
                 BatchJobResult(
@@ -421,7 +550,7 @@ def execute_session_close(
     예측 마감 및 세션 종료 (23:59 실행)
     AWS EventBridge에서 매일 23:59에 호출되어 예측을 마감하고 세션을 종료합니다.
     """
-    queue_url = settings.SQS_MAIN_QUEUE_URL
+    # queue_url only needed for SQS mode; dispatch helper handles selection
     today_str = dt.date.today().strftime("%Y%m%d")
 
     jobs = [
@@ -431,26 +560,22 @@ def execute_session_close(
             "body": {},
             "group_id": "session",
             "description": "Close prediction session",
+            "dispatch": "SQS",
         }
     ]
 
     responses = []
     for job in jobs:
         try:
-            message_body = aws_service.generate_queue_message_http(
+            deduplication_id = f"session-close-{today_str}"
+            response = _dispatch_job(
+                aws_service=aws_service,
+                settings=settings,
                 path=job["path"],
                 method=job["method"],
-                body=json.dumps(job["body"]),
-                auth_token=settings.AUTH_TOKEN,
-            )
-
-            deduplication_id = f"session-close-{today_str}"
-
-            response = aws_service.send_sqs_fifo_message(
-                queue_url=queue_url,
-                message_body=json.dumps(message_body.model_dump()),
-                message_group_id=job["group_id"],
-                message_deduplication_id=deduplication_id,
+                body=job["body"],
+                group_id=job["group_id"],
+                deduplication_id=deduplication_id,
             )
             responses.append(
                 BatchJobResult(

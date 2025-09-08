@@ -457,6 +457,60 @@ graph TD
 
 ---
 
+## (2025-09-08) Snapshot-only Price Reads + Error Standardization
+
+### Goals
+
+- Production reads are fast and predictable: all price reads come from DB snapshots.
+- External fetch (yfinance) is isolated to explicit refresh/collect endpoints.
+- Errors are standardized for missing snapshots.
+
+### Changes
+
+- Snapshot-only endpoints
+  - `GET /api/v1/universe/today/with-prices` → uses `ActiveUniverse` snapshots only. No yfinance.
+  - `GET /api/v1/prices/current/{symbol}` → snapshot only.
+  - `GET /api/v1/prices/universe/{trading_day}` → snapshot only.
+  - `GET /api/v1/prices/eod/{symbol}/{trading_day}` → snapshot only.
+  - `GET /api/v1/prices/admin/validate-settlement/{trading_day}` → snapshot only.
+
+- Refresh/collect endpoints (only places that call yfinance)
+  - `POST /api/v1/universe/refresh-prices?trading_day=YYYY-MM-DD` (current prices refresh)
+  - `POST /api/v1/prices/collect-eod/{trading_day}` (EOD collection)
+
+- Standardized error for missing snapshots
+  - HTTP status: 404
+  - Error code: `NOT_FOUND_001`
+  - Message: `SNAPSHOT_NOT_AVAILABLE`
+  - Details: `{ resource, symbol?, trading_day, missing_count? }`
+
+- Snapshot status endpoint
+  - `GET /api/v1/universe/snapshot/status` (optional `trading_day` query)
+  - Returns: `{ trading_day, total_symbols, snapshots_present, missing_count, last_updated_max, last_updated_min }`
+
+### Operational Pattern
+
+- Refresh cadence: call `refresh-prices` every 30 minutes. Read endpoints never touch yfinance.
+- If a read fails with `SNAPSHOT_NOT_AVAILABLE`, trigger refresh and retry.
+
+### Files
+
+- `myapi/services/universe_service.py`
+  - `get_today_universe_with_prices()` → snapshot only; raises `SNAPSHOT_NOT_AVAILABLE` when missing
+  - `get_universe_snapshot_status()` → status summary for monitoring
+
+- `myapi/services/price_service.py`
+  - `get_current_price_snapshot()`, `get_universe_current_prices_snapshot()`
+  - `get_eod_price_snapshot()`, `get_universe_eod_prices_snapshot()`
+  - All raise `SNAPSHOT_NOT_AVAILABLE` with contextual details when data is missing
+
+- `myapi/routers/universe_router.py`
+  - `/today/with-prices` simplified; `/snapshot/status` added
+
+- `myapi/routers/price_router.py`
+  - Read endpoints switched to snapshot-only helpers
+
+
 ## 📋 **아키텍처 분석 결과** (2025-08-27)
 
 ### ✅ **완벽하게 구현된 아키텍처**

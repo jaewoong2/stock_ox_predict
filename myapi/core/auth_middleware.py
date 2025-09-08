@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import HTTPException, Depends, status
+from fastapi import HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -14,38 +14,71 @@ from myapi.core.exceptions import AuthenticationError
 security = HTTPBearer(auto_error=False)
 
 
+def _extract_bearer_from_internal_header(request: Request) -> Optional[str]:
+    """Extract JWT from an internal header used behind AWS Function URL.
+
+    We cannot use the standard Authorization header when calling Lambda Function URL
+    with IAM auth (SigV4), so callers can send JWT via `settings.INTERNAL_AUTH_HEADER`.
+    Expected format: `Bearer <token>`.
+    """
+    hdr_name = settings.INTERNAL_AUTH_HEADER.lower()
+    raw = request.headers.get(hdr_name)
+    if not raw:
+        return None
+    try:
+        parts = raw.split(" ", 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1].strip():
+            return parts[1].strip()
+    except Exception:
+        pass
+    return None
+
+
 def get_current_user_optional(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
 ) -> Optional[UserSchema]:
     """선택적 사용자 인증 - 토큰이 없거나 유효하지 않아도 None 반환"""
-    if not credentials:
+    token: Optional[str] = None
+    # 1) Prefer internal header (used when Function URL IAM auth occupies Authorization)
+    internal_token = _extract_bearer_from_internal_header(request)
+    if internal_token:
+        token = internal_token
+    elif credentials:
+        token = credentials.credentials
+    else:
         return None
 
     auth_service = AuthService(db, settings=settings)
     try:
-        user = auth_service.get_current_user(credentials.credentials)
+        user = auth_service.get_current_user(token)
         return user
     except Exception:
         return None
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> UserSchema:
     """필수 사용자 인증 - 유효한 토큰이 필요함"""
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    # 1) Prefer internal header (used when Function URL IAM auth occupies Authorization)
+    token: Optional[str] = _extract_bearer_from_internal_header(request)
+    if not token:
+        if not credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        token = credentials.credentials
 
     auth_service = AuthService(db, settings=settings)
 
     try:
-        user = auth_service.get_current_user(credentials.credentials)
+        user = auth_service.get_current_user(token)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

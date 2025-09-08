@@ -18,6 +18,8 @@ from myapi.schemas.rewards import (
     RewardsRedemptionResponse as RedemptionDetailResponse,
     InventorySummary,
     RedemptionStats,
+    RewardsInventorySnapshot,
+    RewardsRedemptionSnapshot,
 )
 from myapi.repositories.base import BaseRepository
 
@@ -35,22 +37,18 @@ class RewardsRepository(
         if model_instance is None:
             return None
 
-        # SQLAlchemy 모델의 속성들을 안전하게 추출
-        stock = getattr(model_instance, "stock", 0)
-        reserved = getattr(model_instance, "reserved", 0)
-        available_stock = stock - reserved
-
-        data = {
-            "sku": getattr(model_instance, "sku", ""),
-            "title": getattr(model_instance, "title", ""),
-            "cost_points": getattr(model_instance, "cost_points", 0),
-            "stock": stock,
-            "vendor": getattr(model_instance, "vendor", ""),
-            "is_available": available_stock > 0,
-            "description": None,  # 모델에 description이 없어서 None
-            "image_url": None,  # 모델에 image_url이 없어서 None
-        }
-        return RewardItem(**data)
+        snap = RewardsInventorySnapshot.model_validate(model_instance)
+        available_stock = max(0, (snap.stock or 0) - (snap.reserved or 0))
+        return RewardItem(
+            sku=snap.sku,
+            title=snap.title,
+            cost_points=snap.cost_points,
+            stock=snap.stock,
+            vendor=snap.vendor,
+            is_available=available_stock > 0,
+            description=None,
+            image_url=None,
+        )
 
     def _to_inventory_response(
         self, model_instance: RewardsInventoryModel
@@ -59,31 +57,19 @@ class RewardsRepository(
         if model_instance is None:
             return None
 
-        # SQLAlchemy 모델의 속성들을 안전하게 추출
-        stock = getattr(model_instance, "stock", 0)
-        reserved = getattr(model_instance, "reserved", 0)
-        available_stock = stock - reserved
-
-        data = {
-            "sku": getattr(model_instance, "sku", ""),
-            "title": getattr(model_instance, "title", ""),
-            "cost_points": getattr(model_instance, "cost_points", 0),
-            "stock": stock,
-            "reserved": reserved,
-            "vendor": getattr(model_instance, "vendor", ""),
-            "available_stock": available_stock,
-            "created_at": (
-                model_instance.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                if model_instance.created_at
-                else None
-            ),
-            "updated_at": (
-                model_instance.updated_at.strftime("%Y-%m-%d %H:%M:%S")
-                if model_instance.updated_at
-                else None
-            ),
-        }
-        return RewardsInventoryResponse(**data)
+        snap = RewardsInventorySnapshot.model_validate(model_instance)
+        available_stock = max(0, (snap.stock or 0) - (snap.reserved or 0))
+        return RewardsInventoryResponse(
+            sku=snap.sku,
+            title=snap.title,
+            cost_points=snap.cost_points,
+            stock=snap.stock,
+            reserved=snap.reserved,
+            vendor=snap.vendor,
+            available_stock=available_stock,
+            created_at=(snap.created_at.strftime("%Y-%m-%d %H:%M:%S") if snap.created_at else None),
+            updated_at=(snap.updated_at.strftime("%Y-%m-%d %H:%M:%S") if snap.updated_at else None),
+        )
 
     def _to_redemption_response(
         self, model_instance: RewardsRedemptionModel
@@ -92,26 +78,20 @@ class RewardsRepository(
         if model_instance is None:
             return None
 
-        # SQLAlchemy 모델의 속성들을 안전하게 추출
-        data = {
-            "id": getattr(model_instance, "id", 0),
-            "user_id": getattr(model_instance, "user_id", 0),
-            "sku": getattr(model_instance, "sku", ""),
-            "cost_points": getattr(model_instance, "cost_points", 0),
-            "status": model_instance.status.value,
-            "vendor_code": getattr(model_instance, "vendor_code", None),
-            "created_at": (
-                model_instance.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                if model_instance.created_at
-                else None
-            ),
-            "updated_at": (
-                model_instance.updated_at.strftime("%Y-%m-%d %H:%M:%S")
-                if model_instance.updated_at
-                else None
-            ),
-        }
-        return RedemptionDetailResponse(**data)
+        snap = RewardsRedemptionSnapshot.model_validate(model_instance)
+        status_str = (
+            snap.status.value if hasattr(snap.status, "value") else str(snap.status)
+        )
+        return RedemptionDetailResponse(
+            id=snap.id,
+            user_id=snap.user_id,
+            sku=snap.sku,
+            cost_points=snap.cost_points,
+            status=status_str,
+            vendor_code=snap.vendor_code,
+            created_at=(snap.created_at.strftime("%Y-%m-%d %H:%M:%S") if snap.created_at else None),
+            updated_at=(snap.updated_at.strftime("%Y-%m-%d %H:%M:%S") if snap.updated_at else None),
+        )
 
     def get_reward_catalog(self, available_only: bool = True) -> RewardCatalogResponse:
         """리워드 카탈로그 조회"""

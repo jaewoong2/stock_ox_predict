@@ -120,5 +120,15 @@ class Settings(BaseSettings):
     )
     SCHEDULER_GROUP_NAME: str = "default"
 
+    # Batch dispatch mode: SQS | LAMBDA_INVOKE | LAMBDA_URL
+    BATCH_DISPATCH_MODE: str = "SQS"
+    # For LAMBDA_INVOKE mode
+    LAMBDA_FUNCTION_NAME_DIRECT: str = "ox-universe-lambda"
+    # For LAMBDA_URL mode (use IAM auth)
+    LAMBDA_FUNCTION_URL: str | None = None
+    LAMBDA_URL_TIMEOUT_SEC: int = 15
+    # Internal auth forwarding when using Function URL (avoid clobbering AWS SigV4 Authorization header)
+    INTERNAL_AUTH_HEADER: str = "x-internal-authorization"
+
 
 settings = Settings()

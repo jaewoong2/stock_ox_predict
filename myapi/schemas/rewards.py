@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 
 
 class RewardItem(BaseModel):
@@ -165,6 +166,38 @@ class RedemptionStats(BaseModel):
 class AdminRewardsStatsResponse(BaseModel):
     inventory: InventorySummary
     redemptions: RedemptionStats
+
+    class Config:
+        from_attributes = True
+
+
+class RewardsInventorySnapshot(BaseModel):
+    """RewardsInventory ORM -> typed snapshot DTO"""
+
+    sku: str
+    title: str
+    cost_points: int
+    stock: int
+    reserved: int
+    vendor: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RewardsRedemptionSnapshot(BaseModel):
+    """RewardsRedemption ORM -> typed snapshot DTO"""
+
+    id: int
+    user_id: int
+    sku: str
+    cost_points: int
+    status: Any = None  # Enum in ORM; mapped to str at use sites
+    vendor_code: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

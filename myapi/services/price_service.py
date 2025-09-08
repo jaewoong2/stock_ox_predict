@@ -26,6 +26,7 @@ from myapi.schemas.price import (
     EODCollectionDetail,
 )
 from myapi.services.error_log_service import ErrorLogService
+from myapi.schemas.universe import ActiveUniverseSnapshot
 from myapi.utils.yf_cache import configure_yfinance_cache
 
 
@@ -39,11 +40,10 @@ class PriceService:
         self.session_repo = SessionRepository(db)
         self.pred_repo = PredictionRepository(db)
         self.error_log_service = ErrorLogService(db)
-        self.current_price_cache = {}
-        self.eod_price_cache = {}
-        self.cache_ttl = timedelta(seconds=60)  # 60초 TTL
         # Configure yfinance caches with Lambda/ MPLCONFIGDIR aware fallback
         configure_yfinance_cache()
+        # Limit concurrent outbound yfinance calls (avoid saturation)
+        self._yf_semaphore = asyncio.Semaphore(5)
 
     async def __aenter__(self):
         return self
@@ -56,12 +56,7 @@ class PriceService:
         """특정 종목의 현재 가격을 조회합니다.
         우선순위: 메모리 캐시 → DB(universe) → yfinance 초기 수집 후 DB 저장.
         """
-        # 캐시 확인
         now = datetime.now(timezone.utc)
-        if symbol in self.current_price_cache:
-            cached_data, timestamp = self.current_price_cache[symbol]
-            if now - timestamp < self.cache_ttl:
-                return cached_data
 
         # DB(universe)에서 시도: 오늘(현재 세션) 유니버스에 가격이 있으면 그걸 사용
         try:
@@ -97,8 +92,6 @@ class PriceService:
                     ),
                     last_updated=uni_item.last_price_updated if uni_item.last_price_updated is not None else now,  # type: ignore
                 )
-                # 캐시에 저장 후 반환
-                self.current_price_cache[symbol] = (price_data, now)
                 return price_data
         except Exception:
             # DB 조회 실패해도 이후 단계 진행
@@ -121,8 +114,6 @@ class PriceService:
                 # 저장 실패는 무시하고 계속 진행
                 pass
 
-            # 캐시에 저장 후 반환
-            self.current_price_cache[symbol] = (price_data, now)
             return price_data
         except Exception as e:
             # 실시간 가격 조회 실패 에러 로깅
@@ -135,55 +126,145 @@ class PriceService:
                 f"Failed to fetch current price for {symbol}: {str(e)}"
             )
 
-    async def get_universe_current_prices(
-        self, trading_day: Optional[date] = None
-    ) -> UniversePriceResponse:
-        """오늘의 유니버스 모든 종목의 현재 가격을 조회합니다."""
-        if not trading_day:
-            # 현재 세션의 거래일을 우선 사용 (KST 일관성)
+    # Note: Universe current-price reads are handled by snapshot-only helpers.
+
+    async def refresh_symbol_price(
+        self, symbol: str, trading_day: Optional[date] = None
+    ) -> StockPrice:
+        """
+        단일 심볼의 현재가를 yfinance로 강제 갱신하고 DB(universe)에 반영합니다.
+        읽기는 최소화하고, 업데이트 목적의 경량 경로로 사용합니다.
+        """
+        # 거래일 결정
+        if trading_day is None:
             try:
                 session = self.session_repo.get_current_session()
-                if session:
-                    trading_day = session.trading_day
-                else:
-                    # 세션이 없으면 KST 기준 오늘의 거래일 사용
-                    from myapi.utils.market_hours import USMarketHours
-
-                    trading_day = USMarketHours.get_kst_trading_day()
+                trading_day = session.trading_day if session else date.today()
             except Exception:
                 from myapi.utils.market_hours import USMarketHours
 
                 trading_day = USMarketHours.get_kst_trading_day()
 
-        # 오늘의 유니버스 종목 조회
+        # yfinance로 강제 조회
+        ticker = yf.Ticker(symbol)
+        price_data = await self._get_current_price_with_yf(ticker, symbol)
+
+        # 유니버스에 존재할 때만 저장
+        try:
+            if self.universe_repo.symbol_exists_in_universe(trading_day, symbol):
+                self.universe_repo.update_symbol_price(trading_day, symbol, price_data)
+        except Exception:
+            # 저장 실패는 무시 (다음 주기에서 재시도)
+            pass
+
+        return price_data
+
+    async def get_intraday_price(
+        self, 
+        symbol: str, 
+        interval: str = "30m",
+        period: str = "1d"
+    ) -> StockPrice:
+        """
+        특정 종목의 intraday 가격을 조회합니다 (30분봉 등).
+        
+        Args:
+            symbol: 종목 코드
+            interval: 봉 간격 (1m, 5m, 15m, 30m, 1h, 1d)
+            period: 조회 기간 (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
+        """
+        ticker = yf.Ticker(symbol)
+        price_data = await self._get_intraday_price_with_yf(ticker, symbol, interval, period)
+        
+        # 유니버스에 존재할 때만 저장
+        try:
+            session = self.session_repo.get_current_session()
+            trading_day = session.trading_day if session else date.today()
+            if self.universe_repo.symbol_exists_in_universe(trading_day, symbol):
+                self.universe_repo.update_symbol_price(trading_day, symbol, price_data)
+        except Exception:
+            # 저장 실패는 무시 (다음 주기에서 재시도)
+            pass
+        
+        return price_data
+
+    async def refresh_universe_prices(
+        self, trading_day: Optional[date] = None
+    ) -> UniversePriceResponse:
+        """
+        유니버스 전체에 대해 현재가를 yfinance로 강제 갱신하고 DB에 반영합니다.
+        배치/관리자 갱신용 경로.
+        """
+        # 거래일 결정
+        if trading_day is None:
+            try:
+                session = self.session_repo.get_current_session()
+                trading_day = session.trading_day if session else date.today()
+            except Exception:
+                from myapi.utils.market_hours import USMarketHours
+
+                trading_day = USMarketHours.get_kst_trading_day()
+
         universe_symbols = self.universe_repo.get_universe_for_date(trading_day)
+
         if not universe_symbols:
             raise NotFoundError(f"No universe found for {trading_day}")
 
-        # 병렬로 모든 종목 가격 조회
-        tasks = [self.get_current_price(symbol.symbol) for symbol in universe_symbols]
-        prices = await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [
+            self.refresh_symbol_price(item.symbol, trading_day)
+            for item in universe_symbols
+        ]
 
-        # 예외 발생한 항목들 필터링
-        valid_prices = [price for price in prices if isinstance(price, StockPrice)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        if not valid_prices:
-            # 유니버스 전체 가격 조회 실패 에러 로깅
-            failed_symbols = [
-                universe_item.symbol for universe_item in universe_symbols
-            ]
-            self.error_log_service.log_eod_fetch_error(
-                trading_day=trading_day,
-                provider="yfinance",
-                failed_symbols=failed_symbols,
-                error_message="Failed to fetch any valid current prices for universe",
-                retry_count=0,
-            )
-            raise ServiceException("Failed to fetch any valid prices")
+        valid = [r for r in results if isinstance(r, StockPrice)]
+
+        if not valid:
+            raise ServiceException("Failed to refresh any prices for universe")
 
         return UniversePriceResponse(
             trading_day=trading_day.strftime("%Y-%m-%d"),
-            prices=valid_prices,
+            prices=valid,
+            last_updated=datetime.now(timezone.utc),
+        )
+
+    async def refresh_universe_prices_intraday(
+        self, 
+        trading_day: Optional[date] = None,
+        interval: str = "30m"
+    ) -> UniversePriceResponse:
+        """
+        유니버스 전체에 대해 intraday 가격(30분봉 등)을 갱신합니다.
+        30분 주기 배치용 경로.
+        """
+        # 거래일 결정
+        if trading_day is None:
+            try:
+                session = self.session_repo.get_current_session()
+                trading_day = session.trading_day if session else date.today()
+            except Exception:
+                from myapi.utils.market_hours import USMarketHours
+                trading_day = USMarketHours.get_kst_trading_day()
+
+        universe_symbols = self.universe_repo.get_universe_for_date(trading_day)
+
+        if not universe_symbols:
+            raise NotFoundError(f"No universe found for {trading_day}")
+
+        tasks = [
+            self.get_intraday_price(item.symbol, interval=interval)
+            for item in universe_symbols
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        valid = [r for r in results if isinstance(r, StockPrice)]
+
+        if not valid:
+            raise ServiceException(f"Failed to refresh any intraday prices for universe with interval {interval}")
+
+        return UniversePriceResponse(
+            trading_day=trading_day.strftime("%Y-%m-%d"),
+            prices=valid,
             last_updated=datetime.now(timezone.utc),
         )
 
@@ -194,29 +275,19 @@ class PriceService:
         2. DB에서 조회 (이미 수집된 데이터 우선 사용)
         3. 없으면 Yahoo Finance API 호출
         """
-        # 1. 캐시 확인 (EOD 데이터는 날짜별로 불변)
-        cache_key = (symbol, trading_day)
-        if cache_key in self.eod_price_cache:
-            return self.eod_price_cache[cache_key]
-
-        # 2. DB에서 이미 수집된 데이터 확인 (우선순위)
+        # 1. DB에서 이미 수집된 데이터 확인 (우선순위)
         try:
             db_price = self.price_repo.get_eod_price(symbol, trading_day)
             if db_price:
-                # 캐시에 저장
-                self.eod_price_cache[cache_key] = db_price
                 return db_price
         except Exception:
             # DB 조회 실패해도 API 호출로 fallback
             pass
 
-        # 3. DB에 없으면 Yahoo Finance API 호출
+        # 2. DB에 없으면 Yahoo Finance API 호출
         try:
             ticker = yf.Ticker(symbol)
             price_data = await self._get_eod_price_with_yf(ticker, symbol, trading_day)
-
-            # 캐시에 저장
-            self.eod_price_cache[cache_key] = price_data
             return price_data
         except Exception as e:
             # EOD 가격 조회 실패 에러 로깅
@@ -422,7 +493,9 @@ class PriceService:
             info = ticker.info
             return info
 
-        info = await loop.run_in_executor(None, fetch_info)
+        # Offload blocking call with concurrency guard
+        async with self._yf_semaphore:
+            info = await loop.run_in_executor(None, fetch_info)
 
         if not info or "regularMarketPrice" not in info:
             raise ValidationError(f"No current price data available for {symbol}")
@@ -445,6 +518,161 @@ class PriceService:
             last_updated=datetime.now(timezone.utc),
         )
 
+    # Snapshot-only helpers (no yfinance)
+    def get_current_price_snapshot(
+        self, symbol: str, trading_day: Optional[date] = None
+    ) -> StockPrice:
+        """ActiveUniverse snapshot only. Raises NotFoundError if missing."""
+        if trading_day is None:
+            try:
+                session = self.session_repo.get_current_session()
+                trading_day = session.trading_day if session else date.today()
+            except Exception:
+                from myapi.utils.market_hours import USMarketHours
+
+                trading_day = USMarketHours.get_kst_trading_day()
+
+        uni_item = self.universe_repo.get_universe_item_model(trading_day, symbol)
+        if (
+            not uni_item
+            or uni_item.current_price is None
+            or uni_item.previous_close is None
+        ):
+            raise NotFoundError(
+                message="SNAPSHOT_NOT_AVAILABLE",
+                details={
+                    "resource": "current_price",
+                    "symbol": symbol,
+                    "trading_day": str(trading_day),
+                },
+            )
+        return StockPrice(
+            symbol=symbol,
+            current_price=Decimal(str(uni_item.current_price)),
+            previous_close=Decimal(str(uni_item.previous_close)),
+            change=(
+                Decimal(str(uni_item.change_amount))
+                if uni_item.change_amount is not None
+                else Decimal("0")
+            ),
+            change_percent=(
+                Decimal(str(uni_item.change_percent))
+                if uni_item.change_percent is not None
+                else Decimal("0")
+            ),
+            volume=uni_item.volume if uni_item.volume is not None else None,  # type: ignore
+            market_status=(
+                str(uni_item.market_status)
+                if uni_item.market_status is not None
+                else "UNKNOWN"
+            ),
+            last_updated=uni_item.last_price_updated if uni_item.last_price_updated is not None else datetime.now(timezone.utc),  # type: ignore
+        )
+
+    def get_universe_current_prices_snapshot(
+        self, trading_day: Optional[date] = None
+    ) -> UniversePriceResponse:
+        """ActiveUniverse snapshots only. Raises NotFoundError if any missing."""
+        if trading_day is None:
+            try:
+                session = self.session_repo.get_current_session()
+                trading_day = session.trading_day if session else date.today()
+            except Exception:
+                from myapi.utils.market_hours import USMarketHours
+
+                trading_day = USMarketHours.get_kst_trading_day()
+
+        universe_models = self.universe_repo.get_universe_models_for_date(trading_day)
+        if not universe_models:
+            raise NotFoundError(
+                message="SNAPSHOT_NOT_AVAILABLE",
+                details={"resource": "universe", "trading_day": str(trading_day)},
+            )
+
+        prices: list[StockPrice] = []
+        missing: list[str] = []
+        for m in universe_models:
+            snap = ActiveUniverseSnapshot.model_validate(m)
+            if snap.current_price is None or snap.previous_close is None:
+                missing.append(snap.symbol)
+                continue
+            prices.append(
+                StockPrice(
+                    symbol=snap.symbol,
+                    current_price=Decimal(str(snap.current_price)),
+                    previous_close=Decimal(str(snap.previous_close)),
+                    change=(
+                        Decimal(str(snap.change_amount))
+                        if snap.change_amount is not None
+                        else Decimal("0")
+                    ),
+                    change_percent=(
+                        Decimal(str(snap.change_percent))
+                        if snap.change_percent is not None
+                        else Decimal("0")
+                    ),
+                    volume=snap.volume if snap.volume is not None else None,  # type: ignore
+                    market_status=(
+                        snap.market_status
+                        if snap.market_status is not None
+                        else "UNKNOWN"
+                    ),
+                    last_updated=snap.last_price_updated if snap.last_price_updated is not None else datetime.now(timezone.utc),  # type: ignore
+                )
+            )
+
+        if missing:
+            raise NotFoundError(
+                message="SNAPSHOT_NOT_AVAILABLE",
+                details={
+                    "resource": "current_price",
+                    "trading_day": str(trading_day),
+                    "missing_count": len(missing),
+                },
+            )
+
+        return UniversePriceResponse(
+            trading_day=trading_day.strftime("%Y-%m-%d"),
+            prices=prices,
+            last_updated=datetime.now(timezone.utc),
+        )
+
+    def get_eod_price_snapshot(self, symbol: str, trading_day: date) -> EODPrice:
+        """EOD from DB only. Raises NotFoundError if missing."""
+        db_price = self.price_repo.get_eod_price(symbol, trading_day)
+        if not db_price:
+            raise NotFoundError(
+                message="SNAPSHOT_NOT_AVAILABLE",
+                details={
+                    "resource": "eod_price",
+                    "symbol": symbol,
+                    "trading_day": str(trading_day),
+                },
+            )
+        return db_price
+
+    def get_universe_eod_prices_snapshot(self, trading_day: date) -> list[EODPrice]:
+        """Universe EOD from DB only. Raises NotFoundError if missing."""
+        universe_symbols = self.universe_repo.get_universe_for_date(trading_day)
+        if not universe_symbols:
+            raise NotFoundError(
+                message="SNAPSHOT_NOT_AVAILABLE",
+                details={"resource": "universe", "trading_day": str(trading_day)},
+            )
+        symbols = [s.symbol for s in universe_symbols]
+        prices = self.price_repo.get_eod_prices_for_symbols(symbols, trading_day)
+        if not prices or len(prices) < len(symbols):
+            raise NotFoundError(
+                message="SNAPSHOT_NOT_AVAILABLE",
+                details={
+                    "resource": "eod_price",
+                    "trading_day": str(trading_day),
+                    "expected": len(symbols),
+                    "found": len(prices),
+                },
+            )
+        return prices
+
     async def _get_eod_price_with_yf(
         self, ticker: yf.Ticker, symbol: str, trading_day: date
     ) -> EODPrice:
@@ -452,13 +680,15 @@ class PriceService:
         loop = asyncio.get_event_loop()
 
         # 안정적인 전일 종가 확보를 위해 5일치 데이터 조회
-        start_date = trading_day - timedelta(days=5)
+        start_date = trading_day - timedelta(days=2)
         end_date = trading_day + timedelta(days=1)
 
         def fetch_history() -> pd.DataFrame:
             return ticker.history(start=start_date, end=end_date, interval="1d")
 
-        hist: pd.DataFrame = await loop.run_in_executor(None, fetch_history)
+        # Offload blocking call with concurrency guard
+        async with self._yf_semaphore:
+            hist: pd.DataFrame = await loop.run_in_executor(None, fetch_history)
 
         if hist.empty:
             raise ValidationError(
@@ -512,6 +742,46 @@ class PriceService:
             open_price=open_price,
             volume=volume,
             fetched_at=datetime.now(timezone.utc),
+        )
+
+    async def _get_intraday_price_with_yf(
+        self, 
+        ticker: yf.Ticker, 
+        symbol: str,
+        interval: str = "30m",
+        period: str = "1d"
+    ) -> StockPrice:
+        """yfinance를 사용해 intraday 가격 조회 (30분봉 등)"""
+        loop = asyncio.get_event_loop()
+        
+        def fetch_intraday() -> pd.DataFrame:
+            return ticker.history(period=period, interval=interval)
+        
+        # Offload blocking call with concurrency guard
+        async with self._yf_semaphore:
+            hist: pd.DataFrame = await loop.run_in_executor(None, fetch_intraday)
+        
+        if hist.empty:
+            raise ValidationError(f"No intraday data available for {symbol} with interval {interval}")
+        
+        # 가장 최근 봉 데이터 사용
+        latest_row = hist.iloc[-1]
+        previous_row = hist.iloc[-2] if len(hist) > 1 else latest_row
+        
+        current_price = Decimal(str(latest_row["Close"]))
+        previous_close = Decimal(str(previous_row["Close"]))
+        change = current_price - previous_close
+        change_percent = (change / previous_close) * 100 if previous_close else Decimal("0")
+        
+        return StockPrice(
+            symbol=symbol,
+            current_price=current_price,
+            previous_close=previous_close,
+            change=change,
+            change_percent=change_percent,
+            volume=latest_row.get("Volume"),
+            market_status="INTRADAY",
+            last_updated=datetime.now(timezone.utc),
         )
 
     def _calculate_price_movement(self, current: Decimal, previous: Decimal) -> str:

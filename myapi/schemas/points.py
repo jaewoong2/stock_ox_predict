@@ -27,6 +27,21 @@ class PointsLedgerEntry(BaseModel):
         from_attributes = True
 
 
+class PointsLedgerSnapshot(BaseModel):
+    """PointsLedger ORM -> typed snapshot DTO"""
+
+    id: int
+    user_id: int
+    delta_points: int
+    balance_after: int
+    reason: str
+    ref_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class PointsLedgerResponse(BaseModel):
     """포인트 원장 조회 응답"""
 

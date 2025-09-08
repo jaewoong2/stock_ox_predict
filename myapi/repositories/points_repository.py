@@ -27,6 +27,7 @@ from myapi.schemas.points import (
     PointsLedgerResponse,
     PointsTransactionResponse,
     PointsIntegrityCheckResponse,
+    PointsLedgerSnapshot,
 )
 from myapi.repositories.base import BaseRepository
 
@@ -62,24 +63,17 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
         if model_instance is None:
             return None
 
-        # SQLAlchemy 모델의 속성들을 안전하게 추출
-        delta_points = getattr(model_instance, "delta_points", 0)
-        transaction_type = "CREDIT" if delta_points > 0 else "DEBIT"
-
-        data = {
-            "id": getattr(model_instance, "id", 0),
-            "transaction_type": transaction_type,
-            "delta_points": delta_points,
-            "balance_after": getattr(model_instance, "balance_after", 0),
-            "reason": getattr(model_instance, "reason", ""),
-            "ref_id": getattr(model_instance, "ref_id", ""),
-            "created_at": (
-                model_instance.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                if model_instance.created_at
-                else ""
-            ),
-        }
-        return PointsLedgerEntry(**data)
+        snap = PointsLedgerSnapshot.model_validate(model_instance)
+        transaction_type = "CREDIT" if (snap.delta_points or 0) > 0 else "DEBIT"
+        return PointsLedgerEntry(
+            id=snap.id,
+            transaction_type=transaction_type,
+            delta_points=snap.delta_points,
+            balance_after=snap.balance_after,
+            reason=snap.reason,
+            ref_id=snap.ref_id,
+            created_at=(snap.created_at.strftime("%Y-%m-%d %H:%M:%S") if snap.created_at else ""),
+        )
 
     def get_user_balance(self, user_id: int) -> int:
         """

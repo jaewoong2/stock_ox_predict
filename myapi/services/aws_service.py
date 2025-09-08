@@ -7,6 +7,10 @@ from fastapi import HTTPException
 
 from myapi.config import Settings
 from pydantic import BaseModel
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
+import requests
+import json as _json
 
 
 class SecretPayload(BaseModel):
@@ -41,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 class AwsService:
     def __init__(self, settings: Settings):
-
+        self.settings = settings
         self.aws_access_key_id = settings.AWS_SQS_ACCESS_KEY_ID
         self.aws_secret_access_key = settings.AWS_SQS_SECRET_ACCESS_KEY
         self.region_name = settings.AWS_SQS_REGION
@@ -254,9 +258,7 @@ class AwsService:
         if scheduled_time.second > 0 or scheduled_time.microsecond > 0:
             rounded = rounded + timedelta(minutes=1)
         # cron(M H D M ? Y) — UTC 기준
-        schedule_expression = (
-            f"cron({rounded.minute} {rounded.hour} {rounded.day} {rounded.month} ? {rounded.year})"
-        )
+        schedule_expression = f"cron({rounded.minute} {rounded.hour} {rounded.day} {rounded.month} ? {rounded.year})"
 
         # 고유한 규칙 이름 생성
         rule_name = f"{rule_name_prefix}-{uuid.uuid4().hex[:8]}"
@@ -441,5 +443,98 @@ class AwsService:
             logger.info(f"Deleted Scheduler schedule: {group}/{name}")
             return True
         except Exception as e:
-            logger.warning(f"Failed to delete Scheduler schedule {schedule_arn}: {str(e)}")
+            logger.warning(
+                f"Failed to delete Scheduler schedule {schedule_arn}: {str(e)}"
+            )
             return False
+
+    # -------------------------------
+    # Direct Lambda invocation helpers
+    # -------------------------------
+    def invoke_lambda(
+        self, *, function_name: str, payload: dict, asynchronous: bool = True
+    ) -> Dict[str, Any]:
+        """Invoke Lambda directly using AWS SDK.
+
+        Sends the API Gateway proxy-like payload used throughout this app.
+        When `asynchronous` is True, uses InvocationType='Event' (fire-and-forget).
+        """
+        client = self._client("lambda")
+        try:
+            invocation_type = "Event" if asynchronous else "RequestResponse"
+            resp = client.invoke(
+                FunctionName=function_name,
+                InvocationType=invocation_type,
+                Payload=_json.dumps(payload).encode("utf-8"),
+            )
+            return {
+                "StatusCode": resp.get("StatusCode"),
+                "RequestId": resp.get("ResponseMetadata", {}).get("RequestId"),
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Lambda invoke failed: {str(e)}"
+            )
+
+    def invoke_lambda_function_url(
+        self,
+        *,
+        function_url: str,
+        path: str,
+        method: Literal["GET", "POST", "PUT", "DELETE"],
+        body: Optional[str] = None,
+        internal_auth_bearer: Optional[str] = None,
+        timeout_sec: int = 15,
+    ) -> Dict[str, Any]:
+        """Invoke Lambda Function URL with IAM SigV4 auth.
+
+        Note: Do NOT place user/service JWT in the standard Authorization header;
+        it is reserved for AWS SigV4. Instead, pass it via settings.INTERNAL_AUTH_HEADER.
+        """
+        full_url = f"{function_url.rstrip('/')}/{path.lstrip('/')}"
+        headers: Dict[str, str] = {
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json",
+        }
+        if internal_auth_bearer:
+            headers[self.settings.INTERNAL_AUTH_HEADER] = (
+                f"Bearer {internal_auth_bearer}"
+            )
+
+        data_bytes = body.encode("utf-8") if (body and method != "GET") else None
+
+        # Prepare and sign request
+        session = boto3.Session(
+            aws_access_key_id=self.aws_access_key_id,
+            aws_secret_access_key=self.aws_secret_access_key,
+            region_name=self.region_name,
+        )
+        creds = session.get_credentials()
+        if not creds:
+            raise HTTPException(
+                status_code=500, detail="AWS credentials not available for SigV4"
+            )
+        frozen = creds.get_frozen_credentials()
+
+        aws_request = AWSRequest(
+            method=method, url=full_url, data=data_bytes, headers=headers
+        )
+        SigV4Auth(frozen, "lambda", self.region_name).add_auth(aws_request)
+
+        try:
+            resp = requests.request(
+                method=method,
+                url=full_url,
+                headers=dict(aws_request.headers.items()),
+                data=data_bytes,
+                timeout=timeout_sec,
+            )
+            return {
+                "status_code": resp.status_code,
+                "ok": resp.ok,
+                "text": resp.text,
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Function URL request failed: {str(e)}"
+            )

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Optional
+from typing import List, Optional, Any, cast
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,7 @@ from myapi.schemas.universe import (
 from myapi.schemas.universe import (
     UniverseWithPricesResponse,
     UniverseItemWithPrice,
+    ActiveUniverseSnapshot,
 )
 from datetime import datetime, timezone
 
@@ -78,67 +80,133 @@ class UniverseService:
         self,
     ) -> Optional[UniverseWithPricesResponse]:
         """
-        오늘의 유니버스를 가격 정보와 함께 조회합니다.
-        사용자가 예측하기 전에 현재 가격과 변동률을 확인할 수 있도록 합니다.
+        오늘의 유니버스를 '스냅샷 가격'과 함께 조회합니다.
+
+        - yfinance 호출 없이 ActiveUniverse 테이블의 저장된 필드만 사용
+        - 가격 갱신은 `/universe/refresh-prices` 배치(또는 수동)에서 수행
+        - 응답은 스냅샷이 존재하는 심볼만 포함 (필드가 없으면 제외)
         """
 
         # 현재 세션 조회
         session = self.session_repo.get_current_session()
-
         if not session:
             return None
 
-        # 오늘의 유니버스 조회
-        universe_response = self.repo.get_universe_response(session.trading_day)
-
-        if not universe_response:
+        # 유니버스 Raw 모델 조회 (가격 스냅샷 포함)
+        models = self.repo.get_universe_models_for_date(session.trading_day)
+        if not models:
             return None
 
-        # PriceService를 통해 현재 가격 정보 조회
-        price_service = self.price_service
+        items: list[UniverseItemWithPrice] = []
+        missing: list[str] = []
+        for m in models:
+            snap = ActiveUniverseSnapshot.model_validate(m)
+            if snap.current_price is None or snap.previous_close is None:
+                missing.append(snap.symbol)
+                continue
+            # 변동 방향
+            change_dir = "FLAT"
+            if snap.change_amount is not None and snap.change_amount > Decimal("0"):
+                change_dir = "UP"
+            elif snap.change_amount is not None and snap.change_amount < Decimal("0"):
+                change_dir = "DOWN"
 
-        try:
-            async with price_service as service:
-                universe_prices = await service.get_universe_current_prices(
-                    session.trading_day
+            # 포맷된 변동률
+            cp = float(snap.change_percent) if snap.change_percent is not None else 0.0
+            formatted = f"{cp:+.2f}%"
+
+            items.append(
+                UniverseItemWithPrice(
+                    symbol=snap.symbol,
+                    seq=snap.seq,
+                    company_name=snap.symbol,  # TODO: 회사명 컬럼/소스 추가 시 교체
+                    current_price=float(snap.current_price),
+                    previous_close=float(snap.previous_close),
+                    change_percent=cp,
+                    change_direction=change_dir,
+                    formatted_change=formatted,
                 )
+            )
 
-                # 가격 정보와 유니버스 정보 매칭
-                symbols_with_prices = []
-                price_dict = {price.symbol: price for price in universe_prices.prices}
+        # If any symbol lacks a snapshot, fail fast with clear guidance
+        if missing:
+            from myapi.core.exceptions import NotFoundError
 
-                for symbol_item in universe_response.symbols:
-                    price_info = price_dict.get(symbol_item.symbol)
-                    if price_info:
-                        # 변동 방향 계산
-                        change_direction = "FLAT"
-                        if price_info.change > 0:
-                            change_direction = "UP"
-                        elif price_info.change < 0:
-                            change_direction = "DOWN"
+            raise NotFoundError(
+                message="SNAPSHOT_NOT_AVAILABLE",
+                details={
+                    "resource": "current_price",
+                    "trading_day": session.trading_day.isoformat(),
+                    "missing_count": len(missing),
+                },
+            )
 
-                        # 포맷된 변동률 문자열
-                        formatted_change = f"{'+' if price_info.change_percent >= 0 else ''}{price_info.change_percent:.2f}%"
+        return UniverseWithPricesResponse(
+            trading_day=session.trading_day.strftime("%Y-%m-%d"),
+            symbols=items,
+            total_count=len(items),
+            last_updated=datetime.now(timezone.utc).isoformat(),
+        )
 
-                        symbols_with_prices.append(
-                            UniverseItemWithPrice(
-                                symbol=symbol_item.symbol,
-                                seq=symbol_item.seq,
-                                company_name=price_info.symbol,  # TODO: 실제 회사명으로 교체 가능
-                                current_price=float(price_info.current_price),
-                                previous_close=float(price_info.previous_close),
-                                change_percent=float(price_info.change_percent),
-                                change_direction=change_direction,
-                                formatted_change=formatted_change,
-                            )
-                        )
+    def get_universe_snapshot_status(self, trading_day: Optional[date] = None) -> dict:
+        """유니버스 스냅샷 상태 요약 (누락 카운트, 최근 갱신 시각)."""
+        if trading_day is None:
+            session = self.session_repo.get_current_session()
+            if not session:
+                from myapi.core.exceptions import NotFoundError
 
-                return UniverseWithPricesResponse(
-                    trading_day=universe_response.trading_day,
-                    symbols=symbols_with_prices,
-                    total_count=len(symbols_with_prices),
-                    last_updated=datetime.now(timezone.utc).isoformat(),
+                raise NotFoundError(
+                    message="SNAPSHOT_NOT_AVAILABLE", details={"resource": "session"}
                 )
-        except Exception:
-            # 가격 조회 실패 시 None 반환 (기존 동작 유지)
-            return None
+            trading_day = session.trading_day
+
+        models = self.repo.get_universe_models_for_date(trading_day)
+        if not models:
+            from myapi.core.exceptions import NotFoundError
+
+            raise NotFoundError(
+                message="SNAPSHOT_NOT_AVAILABLE",
+                details={
+                    "resource": "universe",
+                    "trading_day": trading_day.isoformat(),
+                },
+            )
+
+        total = len(models)
+        missing: list[str] = []
+        updated_times: list[datetime] = []
+        for m in models:
+            snap = ActiveUniverseSnapshot.model_validate(m)
+            if snap.current_price is None or snap.previous_close is None:
+                missing.append(snap.symbol)
+            if snap.last_price_updated is not None:
+                updated_times.append(snap.last_price_updated)
+        last_updated_max = max(updated_times).isoformat() if updated_times else None
+        last_updated_min = min(updated_times).isoformat() if updated_times else None
+
+        return {
+            "trading_day": trading_day.strftime("%Y-%m-%d"),
+            "total_symbols": total,
+            "snapshots_present": total - len(missing),
+            "missing_count": len(missing),
+            "last_updated_max": last_updated_max,
+            "last_updated_min": last_updated_min,
+        }
+
+    async def refresh_today_prices(self, trading_day: date):
+        """
+        오늘의 유니버스 종목들에 대한 현재가를 수집하고 DB에 반영합니다.
+        PriceService.refresh_universe_prices를 사용해 강제 갱신하며,
+        내부적으로 ActiveUniverseRepository.update_symbol_price를 사용해 저장합니다.
+        """
+        async with self.price_service as service:
+            return await service.refresh_universe_prices(trading_day)
+
+    async def refresh_today_prices_intraday(self, trading_day: date, interval: str = "30m"):
+        """
+        오늘의 유니버스 종목들에 대한 intraday 가격(30분봉 등)을 수집하고 DB에 반영합니다.
+        PriceService.refresh_universe_prices_intraday를 사용해 봉 데이터 기반 갱신합니다.
+        30분 주기 배치에서 호출하기 위한 경로입니다.
+        """
+        async with self.price_service as service:
+            return await service.refresh_universe_prices_intraday(trading_day, interval)
