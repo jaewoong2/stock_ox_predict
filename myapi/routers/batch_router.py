@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 import pytz
+from typing import Literal, cast
 from fastapi import APIRouter, Depends, HTTPException
 from dependency_injector.wiring import inject, Provide
 
@@ -64,7 +65,7 @@ def _dispatch_job(
     # Prepare proxy event payload for Lambda-based handlers
     message_body = aws_service.generate_queue_message_http(
         path=path,
-        method=method,  # type: ignore[arg-type]
+        method=cast(Literal["GET", "POST", "PUT", "DELETE"], method.upper()),
         body=json.dumps(body),
         auth_token=settings.AUTH_TOKEN,
     )
@@ -88,17 +89,22 @@ def _dispatch_job(
         )
     elif mode == "LAMBDA_URL":
         if not settings.LAMBDA_FUNCTION_URL:
-            raise HTTPException(status_code=500, detail="LAMBDA_FUNCTION_URL is not configured")
+            raise HTTPException(
+                status_code=500, detail="LAMBDA_FUNCTION_URL is not configured"
+            )
         return aws_service.invoke_lambda_function_url(
             function_url=settings.LAMBDA_FUNCTION_URL,
             path=path,
-            method=method,  # type: ignore[arg-type]
+            method=cast(Literal["GET", "POST", "PUT", "DELETE"], method),
             body=json.dumps(body),
             internal_auth_bearer=settings.AUTH_TOKEN,
             timeout_sec=settings.LAMBDA_URL_TIMEOUT_SEC,
         )
     else:
-        raise HTTPException(status_code=500, detail=f"Unsupported BATCH_DISPATCH_MODE: {settings.BATCH_DISPATCH_MODE}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unsupported BATCH_DISPATCH_MODE: {settings.BATCH_DISPATCH_MODE}",
+        )
 
 
 # ====================================================================================
@@ -133,7 +139,7 @@ def enqueue_universe_refresh_prices(
             "group_id": "universe-prices-refresh",
             "description": f"Refresh 30m candle prices for {trading_day.isoformat()}",
             "deduplication_id": f"universe-refresh-{trading_day.strftime('%Y%m%d')}-{now.strftime('%H%M')}",
-            "dispatch": "SQS",
+            "dispatch": "LAMBDA_INVOKE",
         }
 
         response = _dispatch_job(
