@@ -148,13 +148,17 @@ async def refresh_today_universe_prices(
     """
     오늘의 유니버스 종목들에 대한 가격을 수집하고 DB에 반영합니다.
     interval에 따라 실시간 또는 봉 데이터를 선택할 수 있습니다.
-    
+
     Args:
         trading_day: 거래일 (YYYY-MM-DD)
         interval: 가격 조회 방식
             - "realtime": 실시간 가격 조회 (기존 방식)
             - "30m", "1h" 등: intraday 봉 데이터 조회 (배치용)
     """
+
+    default_trading_day = USMarketHours.get_kst_trading_day()
+    trading_day = trading_day or default_trading_day.isoformat()
+
     try:
         if interval == "realtime":
             res = await service.refresh_today_prices(
@@ -163,7 +167,7 @@ async def refresh_today_universe_prices(
         else:
             res = await service.refresh_today_prices_intraday(
                 trading_day=date.fromisoformat(trading_day),
-                interval=interval or "30m"  # None인 경우 기본값 사용
+                interval=interval or "30m",  # None인 경우 기본값 사용
             )
         return BaseResponse(
             success=True,
