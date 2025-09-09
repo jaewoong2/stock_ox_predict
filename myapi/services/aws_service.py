@@ -11,6 +11,7 @@ from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 import requests
 import json as _json
+import re
 
 
 class SecretPayload(BaseModel):
@@ -167,15 +168,27 @@ class AwsService:
         query_string_parameters: Optional[dict] = None,
         auth_token: Optional[str] = "",
     ) -> LambdaProxyMessage:
-        qsp = query_string_parameters or {}
+        # If the caller included a query string in `path`, split it out to avoid 404s in Mangum routing
+        from urllib.parse import urlsplit, parse_qs
+
+        supplied_qsp = query_string_parameters or {}
+        split = urlsplit(path)
+        # Build clean path without query
+        clean_path = split.path.lstrip("/") if split.path else path.lstrip("/")
+
+        # Merge parsed query from path and explicitly supplied params
+        parsed_qs = {k: v[0] if isinstance(v, list) and v else v for k, v in parse_qs(split.query).items()} if split.query else {}
+        # Explicit parameters override parsed ones
+        qsp = {**parsed_qs, **supplied_qsp} if parsed_qs or supplied_qsp else {}
+
         body_value: Optional[str | Dict[str, Any]] = None if method == "GET" else body
         return LambdaProxyMessage(
             body=body_value,
             resource="/{proxy+}",
-            path=f"/{path}",
+            path=f"/{clean_path}",
             httpMethod=method,
             isBase64Encoded=False,
-            pathParameters={"proxy": path},
+            pathParameters={"proxy": clean_path},
             queryStringParameters=qsp,
             headers={
                 "Content-Type": "application/json; charset=utf-8",
@@ -186,7 +199,7 @@ class AwsService:
                 "Authorization": f"Bearer {auth_token}",
             },
             requestContext={
-                "path": f"/{path}",
+                "path": f"/{clean_path}",
                 "resourcePath": "/{proxy+}",
                 "httpMethod": method,
             },
@@ -492,6 +505,10 @@ class AwsService:
         it is reserved for AWS SigV4. Instead, pass it via settings.INTERNAL_AUTH_HEADER.
         """
         full_url = f"{function_url.rstrip('/')}/{path.lstrip('/')}"
+        # Derive signing region from Function URL when possible to avoid SigV4 mismatch
+        # Example: https://abc123.lambda-url.ap-northeast-2.on.aws/
+        m = re.search(r"\.lambda-url\.([a-z0-9\-]+)\.on\.aws", function_url)
+        signing_region = m.group(1) if m else self.region_name
         headers: Dict[str, str] = {
             "Content-Type": "application/json; charset=utf-8",
             "Accept": "application/json",
@@ -507,7 +524,7 @@ class AwsService:
         session = boto3.Session(
             aws_access_key_id=self.aws_access_key_id,
             aws_secret_access_key=self.aws_secret_access_key,
-            region_name=self.region_name,
+            region_name=signing_region,
         )
         creds = session.get_credentials()
         if not creds:
@@ -519,7 +536,7 @@ class AwsService:
         aws_request = AWSRequest(
             method=method, url=full_url, data=data_bytes, headers=headers
         )
-        SigV4Auth(frozen, "lambda", self.region_name).add_auth(aws_request)
+        SigV4Auth(frozen, "lambda", signing_region).add_auth(aws_request)
 
         try:
             resp = requests.request(

@@ -160,22 +160,21 @@ class PriceService:
         return price_data
 
     async def get_intraday_price(
-        self, 
-        symbol: str, 
-        interval: str = "30m",
-        period: str = "1d"
+        self, symbol: str, interval: str = "15m", period: str = "1d"
     ) -> StockPrice:
         """
-        특정 종목의 intraday 가격을 조회합니다 (30분봉 등).
-        
+        특정 종목의 intraday 가격을 조회합니다 (15분봉 등).
+
         Args:
             symbol: 종목 코드
             interval: 봉 간격 (1m, 5m, 15m, 30m, 1h, 1d)
             period: 조회 기간 (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
         """
         ticker = yf.Ticker(symbol)
-        price_data = await self._get_intraday_price_with_yf(ticker, symbol, interval, period)
-        
+        price_data = await self._get_intraday_price_with_yf(
+            ticker, symbol, interval, period
+        )
+
         # 유니버스에 존재할 때만 저장
         try:
             session = self.session_repo.get_current_session()
@@ -185,7 +184,7 @@ class PriceService:
         except Exception:
             # 저장 실패는 무시 (다음 주기에서 재시도)
             pass
-        
+
         return price_data
 
     async def refresh_universe_prices(
@@ -229,13 +228,10 @@ class PriceService:
         )
 
     async def refresh_universe_prices_intraday(
-        self, 
-        trading_day: Optional[date] = None,
-        interval: str = "30m"
+        self, trading_day: Optional[date] = None, interval: str = "15m"
     ) -> UniversePriceResponse:
         """
-        유니버스 전체에 대해 intraday 가격(30분봉 등)을 갱신합니다.
-        30분 주기 배치용 경로.
+        유니버스 전체에 대해 intraday 가격(15분봉 등)을 갱신합니다.
         """
         # 거래일 결정
         if trading_day is None:
@@ -244,6 +240,7 @@ class PriceService:
                 trading_day = session.trading_day if session else date.today()
             except Exception:
                 from myapi.utils.market_hours import USMarketHours
+
                 trading_day = USMarketHours.get_kst_trading_day()
 
         universe_symbols = self.universe_repo.get_universe_for_date(trading_day)
@@ -260,7 +257,9 @@ class PriceService:
         valid = [r for r in results if isinstance(r, StockPrice)]
 
         if not valid:
-            raise ServiceException(f"Failed to refresh any intraday prices for universe with interval {interval}")
+            raise ServiceException(
+                f"Failed to refresh any intraday prices for universe with interval {interval}"
+            )
 
         return UniversePriceResponse(
             trading_day=trading_day.strftime("%Y-%m-%d"),
@@ -745,34 +744,59 @@ class PriceService:
         )
 
     async def _get_intraday_price_with_yf(
-        self, 
-        ticker: yf.Ticker, 
-        symbol: str,
-        interval: str = "30m",
-        period: str = "1d"
+        self, ticker: yf.Ticker, symbol: str, interval: str = "15m", period: str = "1d"
     ) -> StockPrice:
-        """yfinance를 사용해 intraday 가격 조회 (30분봉 등)"""
+        """
+        yfinance를 사용해 intraday 가격 조회 (15분봉 등)
+
+        봉(Candle) 개념:
+        - 현재 시간 10:35분, 30분봉 기준
+        - 10:00~10:30: 완료된 봉 (latest_row)
+        - 10:30~11:00: 진행 중인 봉 (보통 데이터에 포함 안됨)
+        - 09:30~10:00: 이전 완료된 봉 (previous_row)
+
+        비교 방식:
+        - current_price: 가장 최근 완료된 봉의 종가
+        - previous_close: 그 이전 봉의 종가
+        - 시간 흐름에 따른 연속적 가격 변화를 추적
+        """
         loop = asyncio.get_event_loop()
-        
+
         def fetch_intraday() -> pd.DataFrame:
-            return ticker.history(period=period, interval=interval)
-        
+            # prepost=True로 프리/애프터마켓 포함
+            return ticker.history(period=period, interval=interval, prepost=True)
+
         # Offload blocking call with concurrency guard
         async with self._yf_semaphore:
             hist: pd.DataFrame = await loop.run_in_executor(None, fetch_intraday)
-        
+
         if hist.empty:
-            raise ValidationError(f"No intraday data available for {symbol} with interval {interval}")
-        
-        # 가장 최근 봉 데이터 사용
+            raise ValidationError(
+                f"No intraday data available for {symbol} with interval {interval}"
+            )
+
+        # 최소 2개 이상의 봉이 필요 (현재 봉과 이전 봉 비교를 위해)
+        if len(hist) < 2:
+            raise ValidationError(
+                f"Insufficient intraday data for {symbol}: need at least 2 candles for comparison"
+            )
+
+        # 가장 최근 완료된 봉 (예: 10:00~10:30)
         latest_row = hist.iloc[-1]
-        previous_row = hist.iloc[-2] if len(hist) > 1 else latest_row
-        
+        # 그 이전 완료된 봉 (예: 09:30~10:00)
+        previous_row = hist.iloc[-2]
+
+        # 현재가: 최근 봉의 종가
         current_price = Decimal(str(latest_row["Close"]))
+        # 이전가: 이전 봉의 종가 (봉 간 연속성 추적)
         previous_close = Decimal(str(previous_row["Close"]))
+
+        # 봉 간 가격 변화 계산
         change = current_price - previous_close
-        change_percent = (change / previous_close) * 100 if previous_close else Decimal("0")
-        
+        change_percent = (
+            (change / previous_close) * 100 if previous_close else Decimal("0")
+        )
+
         return StockPrice(
             symbol=symbol,
             current_price=current_price,

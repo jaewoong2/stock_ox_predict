@@ -136,29 +136,8 @@ def enqueue_universe_refresh_prices(
         now = dt.datetime.now(kst)
         trading_day = USMarketHours.get_kst_trading_day()
 
-        # Preflight: ensure universe exists for the target trading day
-        uni_repo = ActiveUniverseRepository(db)
-
-        if len(uni_repo.get_universe_for_date(trading_day)) == 0:
-            # Return graceful error to avoid noisy 404s during refresh
-            return BatchQueueResponse(
-                message=(
-                    f"No universe found for {trading_day.isoformat()}. Skip refresh."
-                ),
-                details=[
-                    BatchJobResult(
-                        job="Universe refresh (30m)",
-                        status="failed",
-                        response={
-                            "reason": "UNIVERSE_NOT_FOUND",
-                            "trading_day": trading_day.isoformat(),
-                        },
-                    )
-                ],
-            )
-
         job = {
-            "path": f"api/v1/universe/refresh-prices?trading_day={trading_day.isoformat()}&interval=30m",
+            "path": f"api/v1/universe/refresh-prices?trading_day={trading_day.isoformat()}&interval=15m",
             "method": "POST",
             "body": {},
             "group_id": "universe-prices-refresh",
@@ -175,6 +154,7 @@ def enqueue_universe_refresh_prices(
             body=job["body"],
             group_id=job["group_id"],
             deduplication_id=job["deduplication_id"],
+            # Use the job's dispatch mode (default LAMBDA_INVOKE) to avoid URL timeouts
             dispatch_mode=job.get("dispatch"),
         )
 
