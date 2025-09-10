@@ -2,7 +2,7 @@ from typing import List, Optional, Tuple, cast
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, desc, asc, func, text
 from sqlalchemy import exc as sa_exc
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 
 from myapi.models.prediction import (
@@ -477,26 +477,31 @@ class UserDailyStatsRepository(
         )
 
         if not model_instance:
-            # 사용자 평생 광고 시청으로 획득한 보너스 슬롯 합계를 기반으로 일일 가용 슬롯 초기화
-            lifetime_bonus = (
-                self.db.query(func.coalesce(func.sum(AdUnlocksModel.unlocked_slots), 0))
+            # initial_available = settings.BASE_PREDICTION_SLOTS
+            # Add available = "전날" 예측 가능 수 - 3
+
+            # Get previous day's stats directly without calling get_remaining_predictions
+            prev_stats = (
+                self.db.query(self.model_class)
                 .filter(
                     and_(
-                        AdUnlocksModel.user_id == user_id,
-                        AdUnlocksModel.method == "AD",
+                        self.model_class.user_id == user_id,
+                        self.model_class.trading_day == trading_day - timedelta(days=1),
                     )
                 )
-                .scalar()
-            ) or 0
-
-            bonus_capped = min(settings.MAX_AD_SLOTS, int(lifetime_bonus))
-            initial_available = settings.BASE_PREDICTION_SLOTS + bonus_capped
+                .first()
+            )
+            
+            total_available = max(
+                prev_stats.available_predictions if prev_stats else settings.BASE_PREDICTION_SLOTS,
+                3,
+            )
 
             model_instance = self.model_class(
                 user_id=user_id,
                 trading_day=trading_day,
                 predictions_made=0,
-                available_predictions=initial_available,
+                available_predictions=total_available,
             )
             self.db.add(model_instance)
             self.db.flush()

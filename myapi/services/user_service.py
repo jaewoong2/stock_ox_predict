@@ -1,7 +1,11 @@
 from typing import Optional, List, Tuple
 from sqlalchemy.orm import Session
 from datetime import datetime
-
+from datetime import date
+from myapi.repositories.prediction_repository import (
+    UserDailyStatsRepository,
+)
+from myapi.utils.timezone_utils import get_current_kst_date
 from myapi.repositories.user_repository import UserRepository
 from myapi.core.exceptions import ValidationError, NotFoundError
 from myapi.services.point_service import PointService
@@ -105,20 +109,24 @@ class UserService:
             limit = 100
         return self.user_repo.get_active_users(limit=limit, offset=offset)
 
-    def get_active_users_paginated(self, limit: int = 20, offset: int = 0) -> Tuple[List[UserSchema], int, bool]:
+    def get_active_users_paginated(
+        self, limit: int = 20, offset: int = 0
+    ) -> Tuple[List[UserSchema], int, bool]:
         """활성 사용자 목록 조회 (페이지네이션 정보 포함)"""
         if limit > 100:  # 최대 제한
             limit = 100
-        
-        users = self.user_repo.get_active_users(limit=limit + 1, offset=offset)  # +1로 다음 페이지 존재 여부 확인
-        
+
+        users = self.user_repo.get_active_users(
+            limit=limit + 1, offset=offset
+        )  # +1로 다음 페이지 존재 여부 확인
+
         has_next = len(users) > limit
         if has_next:
             users = users[:limit]  # 실제 요청한 limit 만큼만 반환
-        
+
         # 전체 카운트는 별도 쿼리로 조회
         total_count = self.user_repo.count_active_users()
-        
+
         return users, total_count, has_next
 
     def get_oauth_users(self, provider: str = "") -> List[UserSchema]:
@@ -246,22 +254,23 @@ class UserService:
         if not self.check_user_exists(user_id):
             raise NotFoundError(f"User not found: {user_id}")
 
-        from datetime import date
-
         balance = self.get_user_points_balance(user_id)
-        today = date.today()
+        # KST 기준 거래일로 계산
+        today = get_current_kst_date()
 
         # 오늘 획득한 포인트
         points_earned_today = self.point_service.get_user_points_earned_today(
             user_id, today
         )
 
-        # TODO: 예측가능 여부는 Slot 관련임, point 기준이 아님.
+        # 예측 가능 여부는 가용 슬롯 기반으로 판단
+        stats_repo = UserDailyStatsRepository(self.db)
+        can_predict = stats_repo.can_make_prediction(user_id, today)
         return UserFinancialSummary(
             user_id=user_id,
             current_balance=balance.balance,
             points_earned_today=points_earned_today,
-            can_make_predictions=balance.balance >= 10,
+            can_make_predictions=can_predict,
             summary_date=today.isoformat(),
         )
 

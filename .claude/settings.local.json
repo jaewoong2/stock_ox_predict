@@ -20,7 +20,9 @@
       "mcp__serena__search_for_pattern",
       "mcp__serena__create_text_file",
       "Bash(cd:*)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "WebSearch",
+      "Bash(git add:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
