@@ -4,7 +4,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from dependency_injector.wiring import inject
-from myapi.core.auth_middleware import get_current_active_user
+from myapi.core.auth_middleware import get_current_active_user, require_admin
 from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.schemas.prediction import (
@@ -361,9 +361,7 @@ def increase_prediction_slots(
 @inject
 def lock_predictions_for_settlement(
     trading_day: str,
-    _current_user: UserSchema = Depends(
-        get_current_active_user
-    ),  # Admin authentication required
+    _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
     service: PredictionService = Depends(get_prediction_service),
 ) -> Any:
     """정산을 위해 예측을 잠금합니다. (관리자 전용)"""
@@ -392,9 +390,7 @@ def lock_predictions_for_settlement(
 @inject
 def get_pending_predictions_for_settlement(
     trading_day: str,
-    _current_user: UserSchema = Depends(
-        get_current_active_user
-    ),  # Admin authentication required
+    _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
     service: PredictionService = Depends(get_prediction_service),
 ) -> Any:
     """정산 대기 중인 예측을 조회합니다. (관리자 전용)"""
@@ -429,9 +425,7 @@ def bulk_update_predictions_status(
     symbol: str,
     correct_choice: PredictionChoice,
     points_per_correct: int = 10,
-    _current_user: UserSchema = Depends(
-        get_current_active_user
-    ),  # Admin authentication required
+    _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
     service: PredictionService = Depends(get_prediction_service),
 ) -> Any:
     """예측 상태를 일괄 업데이트합니다. (관리자 전용)"""

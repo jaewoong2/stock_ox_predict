@@ -76,7 +76,7 @@ async def get_eod_price(
 @inject
 async def validate_settlement_prices(
     trading_day: str,
-    _current_user: UserSchema = Depends(get_current_active_user),
+    _current_user: UserSchema = Depends(require_admin),
     price_service: PriceService = Depends(get_price_service),
 ) -> Any:
     """정산을 위한 가격 검증을 수행합니다. (관리자 전용, 스냅샷만 사용)"""
@@ -120,9 +120,7 @@ async def compare_prediction_with_outcome(
     symbol: str,
     trading_day: str,
     predicted_direction: str,
-    _current_user: UserSchema = Depends(
-        get_current_active_user
-    ),  # Admin authentication required
+    _current_user: UserSchema = Depends(require_admin),  # Admin authentication required
     price_service: PriceService = Depends(get_price_service),
 ) -> Any:
     """예측과 실제 결과를 비교합니다. (관리자 전용)"""
