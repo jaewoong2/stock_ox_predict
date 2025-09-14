@@ -15,7 +15,6 @@ from myapi.repositories.active_universe_repository import ActiveUniverseReposito
 from myapi.repositories.price_repository import PriceRepository
 from myapi.repositories.session_repository import SessionRepository
 from myapi.repositories.prediction_repository import PredictionRepository
-from myapi.models.prediction import StatusEnum as PredictionStatusEnum
 from myapi.schemas.price import (
     StockPrice,
     EODPrice,
