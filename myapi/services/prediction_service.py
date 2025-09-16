@@ -240,10 +240,8 @@ class PredictionService:
 
             # 쿨다운 트리거 정책
             # - 이미 활성 쿨다운이 있으면 아무 것도 하지 않음
-            # - 3 → 2 로 감소한 시점(즉, 현재 값이 2)에서만 타이머 시작
-            # - 2 → 1 은 시작 안 함 (이미 활성)
-            # - 회복 1 → 2 는 재시작, 2 → 3 은 재시작 안 함 (handle에서 처리)
-            if available_slots == self.settings.COOLDOWN_TRIGGER_THRESHOLD - 1:
+            # - 사용 가능한 슬롯이 임계값보다 적고 타이머가 없으면 자동 회복 시작
+            if available_slots < self.settings.COOLDOWN_TRIGGER_THRESHOLD:
                 from myapi.services.cooldown_service import CooldownService
 
                 cooldown_service = CooldownService(self.db, self.settings)
@@ -372,6 +370,8 @@ class PredictionService:
                 message="Prediction has been locked for settlement",
             )
 
+        trading_day = to_date(model.trading_day)
+
         # 서비스 단위 원자 트랜잭션으로 취소 + 슬롯 환불 처리
         try:
             with self.db.begin():
@@ -380,7 +380,6 @@ class PredictionService:
                     raise ValidationError("Failed to cancel prediction")
 
                 # 취소 성공 시 예측 환불 처리 (가용 +1, 사용량 -1)
-                trading_day = to_date(model.trading_day)
                 if trading_day:
                     self.stats_repo.refund_prediction(
                         user_id, trading_day, 1, commit=False
@@ -388,6 +387,19 @@ class PredictionService:
         except Exception:
             # 트랜잭션은 자동 롤백
             raise
+
+        # 취소로 즉시 슬롯이 복구되므로 활성 쿨다운이 있다면 중단
+        if trading_day:
+            try:
+                from myapi.services.cooldown_service import CooldownService
+
+                cooldown_service = CooldownService(self.db, self.settings)
+                cooldown_service.cancel_active_cooldown(user_id, trading_day)
+            except Exception as e:
+                # 쿨다운 취소 실패는 치명적이지 않으므로 로깅만 수행
+                print(
+                    f"Failed to cancel cooldown after prediction cancel for user {user_id}: {str(e)}"
+                )
 
         # 취소 시 수수료 환불 (비즈니스 규칙에 따라)
         if self.PREDICTION_CANCEL_REFUND:

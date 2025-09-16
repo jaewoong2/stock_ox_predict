@@ -97,11 +97,14 @@ async def oauth_callback_get(
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """Provider redirects here. Exchange code -> token, then redirect to client."""
+    oauth_state_repo = OAuthStateRepository(db)
+    client_redirect = None
+    
     try:
         # Resolve client redirect from stored state and clear it
-        oauth_state_repo = OAuthStateRepository(db)
         client_redirect = oauth_state_repo.pop(state)
         if not client_redirect:
+            # If we can't get client_redirect, we have no choice but to raise exception
             raise HTTPException(status_code=400, detail="Invalid or expired state")
 
         domain_name = request.url._url.split(request.url.path)[0]
@@ -121,7 +124,6 @@ async def oauth_callback_get(
         result = await auth_service.process_oauth_callback(callback_data)
 
         # Redirect back to client with token and user info
-
         qs = urlencode(
             {
                 "token": result.token,
@@ -135,17 +137,45 @@ async def oauth_callback_get(
             f"{client_redirect}{'&' if ('?' in client_redirect) else '?'}{qs}"
         )
         return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+        
     except OAuthError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        logger.error(f"OAuth error: {str(e)}")
+        if client_redirect:
+            # Redirect to frontend with error
+            qs = urlencode({
+                "error": "oauth_error",
+                "error_description": str(e),
+                "provider": provider
+            })
+            redirect_url = (
+                f"{client_redirect}{'&' if ('?' in client_redirect) else '?'}{qs}"
+            )
+            return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+        else:
+            # No client_redirect available, fallback to exception
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
     except Exception as e:
         logger.error(f"OAuth callback error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OAuth callback processing failed",
-        )
+        if client_redirect:
+            # Redirect to frontend with error
+            qs = urlencode({
+                "error": "server_error", 
+                "error_description": "OAuth callback processing failed",
+                "provider": provider
+            })
+            redirect_url = (
+                f"{client_redirect}{'&' if ('?' in client_redirect) else '?'}{qs}"
+            )
+            return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+        else:
+            # No client_redirect available, fallback to exception
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="OAuth callback processing failed",
+            )
 
 
 @router.post("/oauth/callback", response_model=BaseResponse)

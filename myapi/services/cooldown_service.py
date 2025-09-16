@@ -64,12 +64,14 @@ class CooldownService:
             scheduled_at = now + timedelta(minutes=settings.COOLDOWN_MINUTES)
 
             # 4. DB에 타이머 생성
+            slots_to_refill = max(1, threshold - current_slots)
+
             timer: Optional[CooldownTimerSchema] = (
                 self.cooldown_repo.create_cooldown_timer(
                     user_id=user_id,
                     trading_day=trading_day,
                     scheduled_at=scheduled_at,
-                    slots_to_refill=1,
+                    slots_to_refill=slots_to_refill,
                 )
             )
 
@@ -84,7 +86,7 @@ class CooldownService:
                 user_id=user_id,
                 timer_id=timer_id,
                 trading_day=trading_day.isoformat(),
-                slots_to_refill=1,
+                slots_to_refill=slots_to_refill,
             ).model_dump()
 
             http_message = self.aws_service.generate_queue_message_http(
@@ -109,7 +111,8 @@ class CooldownService:
 
             logger.info(
                 f"Started auto cooldown for user {user_id}, timer_id: {timer_id}, "
-                f"scheduled_at: {scheduled_at}, rule_arn: {rule_arn}"
+                f"scheduled_at: {scheduled_at}, slots_to_refill: {slots_to_refill}, "
+                f"rule_arn: {rule_arn}"
             )
 
             return True
@@ -144,12 +147,14 @@ class CooldownService:
             now = USMarketHours.get_current_kst_time()
             scheduled_at = now + timedelta(minutes=settings.COOLDOWN_MINUTES)
 
+            slots_to_refill = max(1, threshold - current_slots)
+
             timer: Optional[CooldownTimerSchema] = (
                 self.cooldown_repo.create_cooldown_timer(
                     user_id=user_id,
                     trading_day=trading_day,
                     scheduled_at=scheduled_at,
-                    slots_to_refill=1,
+                    slots_to_refill=slots_to_refill,
                 )
             )
 
@@ -163,7 +168,7 @@ class CooldownService:
                 user_id=user_id,
                 timer_id=timer_id,
                 trading_day=trading_day.isoformat(),
-                slots_to_refill=1,
+                slots_to_refill=slots_to_refill,
             ).model_dump()
             http_message = self.aws_service.generate_queue_message_http(
                 path="api/v1/cooldown/handle-slot-refill",
@@ -184,7 +189,8 @@ class CooldownService:
             self.cooldown_repo.update_timer_arn(timer_id, rule_arn)
 
             logger.info(
-                f"Started auto cooldown (sync) for user {user_id}, timer_id: {timer_id}, scheduled_at: {scheduled_at}"
+                f"Started auto cooldown (sync) for user {user_id}, timer_id: {timer_id}, "
+                f"scheduled_at: {scheduled_at}, slots_to_refill: {slots_to_refill}"
             )
             return True
         except Exception as e:
