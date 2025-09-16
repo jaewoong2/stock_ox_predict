@@ -1808,3 +1808,17 @@ Phase 4 — 비요청 컨텍스트에서의 세션 사용 점검
 - `myapi/routers/session_router.py:1`
 - `myapi/services/price_service.py:1`
 - `myapi/repositories/base.py:1`
+
+
+
+
+
+
+audit-logs
+eod-fetch-logs
+eod-price-olds
+integrity-checks
+rate-limits
+settlements
+settlements-jobs
+

@@ -37,7 +37,6 @@ def submit_prediction(
     service: PredictionService = Depends(get_prediction_service),
 ):
     try:
-        # 경로의 symbol과 body의 choice로 PredictionCreate 구성
         create_payload = PredictionCreate(symbol=symbol.upper(), choice=payload.choice)
 
         trading_day = date.today()

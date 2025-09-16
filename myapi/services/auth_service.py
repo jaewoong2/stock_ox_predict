@@ -34,7 +34,6 @@ class AuthService:
         self.kakao_oauth = KakaoOAuthProvider()
         self.settings = settings
 
-
     def get_oauth_auth_url(self, provider: str, redirect_uri: str, state: str) -> str:
         """OAuth 인증 URL 생성"""
         if provider == "google":
@@ -95,7 +94,9 @@ class AuthService:
                         counter = 1
                         while True:
                             # 같은 닉네임을 가진 다른 사용자가 있는지 확인
-                            conflict_users = self.user_repo.find_all(filters={"nickname": candidate})
+                            conflict_users = self.user_repo.find_all(
+                                filters={"nickname": candidate}
+                            )
                             conflict = any(u.id != user.id for u in conflict_users)
                             if not conflict:
                                 break
@@ -144,22 +145,29 @@ class AuthService:
                 # 신규 가입 보너스 포인트 지급
                 try:
                     from myapi.schemas.points import PointsTransactionRequest
-                    
+
                     bonus_request = PointsTransactionRequest(
                         amount=self.settings.SIGNUP_BONUS_POINTS,
                         reason="Welcome bonus for new OAuth user registration",
-                        ref_id=f"oauth_signup_bonus_{user.id}_{datetime.now().strftime('%Y%m%d')}"
+                        ref_id=f"oauth_signup_bonus_{user.id}_{datetime.now().strftime('%Y%m%d')}",
                     )
-                    
-                    bonus_result = self.point_service.add_points(user_id=user.id, request=bonus_request)
-                    
-                    if bonus_result.success:
-                        logger.info(f"✅ Awarded signup bonus to new OAuth user {user.id}: {self.settings.SIGNUP_BONUS_POINTS} points")
-                    else:
-                        logger.warning(f"❌ Failed to award signup bonus to new OAuth user {user.id}: {bonus_result.message}")
-                except Exception as e:
-                    logger.error(f"❌ Error awarding signup bonus to new OAuth user {user.id}: {str(e)}")
 
+                    bonus_result = self.point_service.add_points(
+                        user_id=user.id, request=bonus_request
+                    )
+
+                    if bonus_result.success:
+                        logger.info(
+                            f"✅ Awarded signup bonus to new OAuth user {user.id}: {self.settings.SIGNUP_BONUS_POINTS} points"
+                        )
+                    else:
+                        logger.warning(
+                            f"❌ Failed to award signup bonus to new OAuth user {user.id}: {bonus_result.message}"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"❌ Error awarding signup bonus to new OAuth user {user.id}: {str(e)}"
+                    )
 
             # 5. JWT 토큰 생성
             access_token = create_access_token(
@@ -210,10 +218,12 @@ class AuthService:
     def refresh_token(self, current_token: str) -> Optional[Token]:
         """토큰 갱신"""
         token_data = self.verify_token(current_token)
+
         if not token_data or token_data.email is None:
             return None
 
         user = self.user_repo.get_by_email(str(token_data.email))
+
         if not user or not user.is_active:
             return None
 

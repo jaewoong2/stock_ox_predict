@@ -480,15 +480,17 @@ class UserDailyStatsRepository(
             # initial_available = settings.BASE_PREDICTION_SLOTS
             # Add available = "전날" 예측 가능 수 - 3
 
-            # Get previous day's stats directly without calling get_remaining_predictions
+            # Find the nearest previous trading day stats for this user
+            # (max(trading_day) < target trading_day)
             prev_stats = (
                 self.db.query(self.model_class)
                 .filter(
                     and_(
                         self.model_class.user_id == user_id,
-                        self.model_class.trading_day == trading_day - timedelta(days=1),
+                        self.model_class.trading_day < trading_day,
                     )
                 )
+                .order_by(desc(self.model_class.trading_day))
                 .first()
             )
             

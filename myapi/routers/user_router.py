@@ -10,11 +10,7 @@ from myapi.core.auth_middleware import (
 from myapi.core.exceptions import NotFoundError, ValidationError
 from myapi.schemas.user import (
     User as UserSchema,
-    UserProfile,
-    UserStats,
     UserUpdate,
-    UserListResult,
-    UserSearchResult,
     AffordabilityCheck,
 )
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
@@ -238,6 +234,32 @@ def get_user_stats(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="User stats fetch failed",
+        )
+
+
+@router.get("/me/can-afford/{amount}", response_model=BaseResponse)
+@inject
+def check_my_affordability(
+    amount: int,
+    current_user: UserSchema = Depends(get_current_active_user),
+    user_service: UserService = Depends(get_user_service),
+) -> Any:
+    """특정 포인트 금액 지불 가능 여부 (편의 포함: 현재 잔액/부족분)"""
+    try:
+        can = user_service.can_user_afford(current_user.id, amount)
+        balance = user_service.get_user_points_balance(current_user.id).balance
+        payload = AffordabilityCheck(
+            amount=amount,
+            can_afford=can,
+            current_balance=balance,
+            shortfall=max(0, amount - balance) if not can else 0,
+        )
+        return BaseResponse(success=True, data=payload.model_dump())
+    except Exception as e:
+        logger.error(f"Affordability check error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Affordability check failed",
         )
 
 

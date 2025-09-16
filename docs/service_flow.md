@@ -219,7 +219,7 @@ graph TD
 | 리워드 교환        | POST /rewards/redeem                            | reward_router.py:72      | ✅ 완벽     |
 | 교환 내역          | GET /rewards/my-redemptions                     | reward_router.py:97      | ✅ 완벽     |
 | **배치 작업 상태** | GET /batch/jobs/status                          | batch_router.py:425      | ✅ **신규** |
-| **배치 긴급중단**  | POST /batch/emergency-stop                      | batch_router.py:501      | ✅ **신규** |
+| **배치 작업 상태** | GET /batch/jobs/status                          | batch_router.py:611      | ✅ 신규 |
 
 ### 5. 시스템 배치 및 자동화 플로우
 
@@ -555,8 +555,8 @@ OAuth 로그인 → JWT 토큰 발급 → 신규 가입자 1000포인트 보너�
 - `GET /universe/today` - 오늘의 종목 100개 조회
 - `GET /universe/today/with-prices` - 가격 정보 포함 종목 조회 (예측 지원)
 - `POST /predictions/{symbol}` - 예측 제출 (상승/하락)
-- `PUT /predictions/{symbol}` - 예측 수정
-- `DELETE /predictions/{symbol}` - 예측 취소
+- `PUT /predictions/{prediction_id}` - 예측 수정
+- `DELETE /predictions/{prediction_id}` - 예측 취소
 
 #### **4.3 광고 시청 및 슬롯 증가**
 
@@ -583,7 +583,7 @@ OAuth 로그인 → JWT 토큰 발급 → 신규 가입자 1000포인트 보너�
 - `GET /admin/settlement/summary/{trading_day}` - 정산 요약
 - `POST /admin/settlement/manual-settle` - 수동 정산
 - `GET /prices/eod/{symbol}/{trading_day}` - EOD 가격 조회
-- `GET /prices/current/{symbol}` - 실시간 가격 조회
+- `GET /prices/current/{symbol}` - 현재가 스냅샷 조회
 
 #### **4.5 포인트 및 리워드 경제**
 
@@ -593,11 +593,11 @@ OAuth 로그인 → JWT 토큰 발급 → 신규 가입자 1000포인트 보너�
 
 **API 엔드포인트:**
 
-- `GET /users/me/points/balance` - 포인트 잔액 조회
-- `GET /users/me/points/ledger` - 포인트 거래 내역
+- `GET /users/me/points/balance` - 포인트 잔액 조회 (BaseResponse)
+- `GET /users/me/points/ledger` - 포인트 거래 내역 (BaseResponse)
 - `GET /rewards/catalog` - 리워드 카탈로그 조회
 - `POST /rewards/redeem` - 포인트 교환 요청
-- `GET /rewards/history` - 교환 내역 조회
+- `GET /rewards/my-redemptions` - 내 교환 내역 조회
 
 #### **4.6 배치 및 자동화 시스템**
 
@@ -610,7 +610,12 @@ OAuth 로그인 → JWT 토큰 발급 → 신규 가입자 1000포인트 보너�
 - `POST /batch/universe/create` - 유니버스 생성 배치
 - `POST /batch/session/start` - 세션 시작 배치
 - `POST /batch/session/end` - 세션 종료 배치
-- `POST /batch/schedule/settlement` - 정산 스케줄링
+- `POST /batch/prediction-settlement` - 전날 정산 큐잉
+- `POST /batch/session-start` - 세션 시작 큐잉
+- `POST /batch/universe-setup` - 유니버스 설정 큐잉
+- `POST /batch/universe-refresh-prices` - 가격 스냅샷 갱신 큐잉
+- `POST /batch/session-close` - 세션 마감 큐잉
+- `POST /batch/all-jobs` - 시간대별 일괄 큐잉
 
 
 
