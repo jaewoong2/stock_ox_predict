@@ -305,7 +305,7 @@ class PredictionService:
                 message="Cannot modify another user's prediction",
             )
 
-        if str(model.status) != StatusEnum.PENDING:
+        if model.status != StatusEnum.PENDING:
             raise BusinessLogicError(
                 error_code="PREDICTION_LOCKED",
                 message="Only pending predictions can be updated",
@@ -338,7 +338,7 @@ class PredictionService:
                 message="Cannot cancel another user's prediction",
             )
 
-        if str(model.status) != StatusEnum.PENDING:
+        if model.status != StatusEnum.PENDING:
             raise BusinessLogicError(
                 error_code="PREDICTION_NOT_CANCELABLE",
                 message="Only pending predictions can be canceled",
