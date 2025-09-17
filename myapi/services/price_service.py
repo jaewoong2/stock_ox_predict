@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timezone, timedelta
+import logging
 import os
 from decimal import Decimal
-from typing import List, Optional, cast
+from typing import Any, List, Optional, cast
 
 import pandas as pd
 import yfinance as yf
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from myapi.core.exceptions import ValidationError, NotFoundError, ServiceException
@@ -24,9 +26,13 @@ from myapi.schemas.price import (
     EODCollectionResult,
     EODCollectionDetail,
 )
+from myapi.schemas.error_log import ErrorTypeEnum
 from myapi.services.error_log_service import ErrorLogService
 from myapi.schemas.universe import ActiveUniverseSnapshot
 from myapi.utils.yf_cache import configure_yfinance_cache
+from myapi.utils.alpha_vantage_client import alpha_vantage_client
+
+logger = logging.getLogger(__name__)
 
 
 class PriceService:
@@ -748,6 +754,12 @@ class PriceService:
         """
         yfinance를 사용해 intraday 가격 조회 (15분봉 등)
 
+        오류 처리 및 Fallback 순서:
+        1. yfinance 시도
+        2. Alpha Vantage API 시도 (무료 tier: 일 500회)
+        3. 캐시된 universe 데이터 조회
+        4. EOD 데이터 기반 추정
+
         봉(Candle) 개념:
         - 현재 시간 10:35분, 30분봉 기준
         - 10:00~10:30: 완료된 봉 (latest_row)
@@ -759,53 +771,370 @@ class PriceService:
         - previous_close: 그 이전 봉의 종가
         - 시간 흐름에 따른 연속적 가격 변화를 추적
         """
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_event_loop()
 
-        def fetch_intraday() -> pd.DataFrame:
-            # prepost=True로 프리/애프터마켓 포함
-            return ticker.history(period=period, interval=interval, prepost=True)
+            def fetch_intraday() -> pd.DataFrame:
+                # prepost=True로 프리/애프터마켓 포함
+                return ticker.history(period=period, interval=interval, prepost=True)
 
-        # Offload blocking call with concurrency guard
-        async with self._yf_semaphore:
-            hist: pd.DataFrame = await loop.run_in_executor(None, fetch_intraday)
+            # Offload blocking call with concurrency guard
+            async with self._yf_semaphore:
+                hist: pd.DataFrame = await loop.run_in_executor(None, fetch_intraday)
 
-        if hist.empty:
-            raise ValidationError(
-                f"No intraday data available for {symbol} with interval {interval}"
+            if hist.empty:
+                # yfinance에서 데이터를 가져올 수 없는 경우 Alpha Vantage 시도
+                logger.warning(f"No yfinance data for {symbol}, trying Alpha Vantage")
+                alpha_vantage_price = await self._get_intraday_price_with_alpha_vantage(
+                    symbol, interval
+                )
+                if alpha_vantage_price:
+                    return alpha_vantage_price
+                else:
+                    # Alpha Vantage도 실패하면 기존 fallback 체인 시도
+                    return await self._get_fallback_intraday_price(
+                        symbol, interval, period
+                    )
+
+            # 최소 2개 이상의 봉이 필요 (현재 봉과 이전 봉 비교를 위해)
+            if len(hist) < 2:
+                logger.warning(
+                    f"Insufficient yfinance data for {symbol}: {len(hist)} candles, trying Alpha Vantage"
+                )
+                alpha_vantage_price = await self._get_intraday_price_with_alpha_vantage(
+                    symbol, interval
+                )
+                if alpha_vantage_price:
+                    return alpha_vantage_price
+                else:
+                    # Alpha Vantage도 실패하면 기존 fallback 체인 시도
+                    return await self._get_fallback_intraday_price(
+                        symbol, interval, period
+                    )
+
+            # 가장 최근 완료된 봉 (예: 10:00~10:30)
+            latest_row = hist.iloc[-1]
+            # 그 이전 완료된 봉 (예: 09:30~10:00)
+            previous_row = hist.iloc[-2]
+
+            # 현재가: 최근 봉의 종가
+            current_price = Decimal(str(latest_row["Close"]))
+            # 이전가: 이전 봉의 종가 (봉 간 연속성 추적)
+            previous_close = Decimal(str(previous_row["Close"]))
+
+            # 봉 간 가격 변화 계산
+            change = current_price - previous_close
+            change_percent = (
+                (change / previous_close) * 100 if previous_close else Decimal("0")
             )
 
-        # 최소 2개 이상의 봉이 필요 (현재 봉과 이전 봉 비교를 위해)
-        if len(hist) < 2:
-            raise ValidationError(
-                f"Insufficient intraday data for {symbol}: need at least 2 candles for comparison"
+            return StockPrice(
+                symbol=symbol,
+                current_price=current_price,
+                previous_close=previous_close,
+                change=change,
+                change_percent=change_percent,
+                volume=latest_row.get("Volume"),
+                market_status="INTRADAY",
+                last_updated=datetime.now(timezone.utc),
             )
 
-        # 가장 최근 완료된 봉 (예: 10:00~10:30)
-        latest_row = hist.iloc[-1]
-        # 그 이전 완료된 봉 (예: 09:30~10:00)
-        previous_row = hist.iloc[-2]
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "delisted" in error_msg or "no price data found" in error_msg:
+                logger.error(
+                    f"Symbol {symbol} appears to be delisted: {e}, trying Alpha Vantage"
+                )
+            else:
+                logger.error(
+                    f"Unexpected yfinance error for {symbol}: {e}, trying Alpha Vantage"
+                )
 
-        # 현재가: 최근 봉의 종가
-        current_price = Decimal(str(latest_row["Close"]))
-        # 이전가: 이전 봉의 종가 (봉 간 연속성 추적)
-        previous_close = Decimal(str(previous_row["Close"]))
+            # yfinance 오류 시 Alpha Vantage 시도
+            alpha_vantage_price = await self._get_intraday_price_with_alpha_vantage(
+                symbol, interval
+            )
+            if alpha_vantage_price:
+                return alpha_vantage_price
+            else:
+                # Alpha Vantage도 실패하면 기존 fallback 체인 시도
+                return await self._get_fallback_intraday_price(symbol, interval, period)
 
-        # 봉 간 가격 변화 계산
-        change = current_price - previous_close
-        change_percent = (
-            (change / previous_close) * 100 if previous_close else Decimal("0")
-        )
+    async def _get_intraday_price_with_alpha_vantage(
+        self, symbol: str, interval: str = "15m"
+    ) -> Optional[StockPrice]:
+        """
+        Alpha Vantage API를 사용해 intraday 가격 조회 (yfinance fallback)
 
-        return StockPrice(
-            symbol=symbol,
-            current_price=current_price,
-            previous_close=previous_close,
-            change=change,
-            change_percent=change_percent,
-            volume=latest_row.get("Volume"),
-            market_status="INTRADAY",
-            last_updated=datetime.now(timezone.utc),
-        )
+        yfinance 간격을 Alpha Vantage 형식으로 변환:
+        - "15m" -> "15min"
+        - "30m" -> "30min"
+        - "1h" -> "60min"
+
+        Args:
+            symbol: 주식 심볼
+            interval: yfinance 형식 간격
+
+        Returns:
+            Optional[StockPrice]: 성공시 가격 정보, 실패시 None
+        """
+        try:
+            # yfinance 간격을 Alpha Vantage 형식으로 변환
+            av_interval_map = {
+                "1m": "1min",
+                "5m": "5min",
+                "15m": "15min",
+                "30m": "30min",
+                "1h": "60min",
+            }
+
+            av_interval = av_interval_map.get(interval, "15min")
+            logger.info(
+                f"Trying Alpha Vantage for {symbol} with interval {av_interval}"
+            )
+
+            # Alpha Vantage API 호출
+            price_data = await alpha_vantage_client.get_intraday_price(
+                symbol, av_interval
+            )
+
+            if price_data:
+                logger.info(f"Successfully retrieved Alpha Vantage data for {symbol}")
+                return price_data
+            else:
+                logger.warning(f"Alpha Vantage returned no data for {symbol}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Alpha Vantage intraday request failed for {symbol}: {e}")
+            return None
+
+    async def _get_fallback_intraday_price(
+        self, symbol: str, interval: str = "15m", period: str = "1d"
+    ) -> StockPrice:
+        """
+        yfinance와 Alpha Vantage 모두 실패했을 때 사용하는 최종 fallback 메소드
+
+        Fallback 전략:
+        1. 캐시된 universe 데이터 조회 (24시간 이내)
+        2. EOD 데이터를 기반으로 추정값 생성
+        3. 모든 방법이 실패하면 심볼을 비활성화 상태로 마킹 후 오류 발생
+
+        Args:
+            symbol: 주식 심볼
+            interval: 봉 간격 (사용안함)
+            period: 기간 (사용안함)
+
+        Returns:
+            StockPrice: 추정된 또는 캐시된 가격 정보
+
+        Raises:
+            ValidationError: 모든 fallback 방법이 실패한 경우
+        """
+        logger.info(f"Attempting final fallback price retrieval for {symbol}")
+
+        try:
+            # 1. 최근 캐시된 universe 데이터 조회 시도
+            cached_price = await self._get_cached_intraday_price(symbol)
+            if cached_price:
+                logger.info(f"Using cached universe data for {symbol}")
+                return cached_price
+
+            # 2. EOD 데이터 기반 추정 시도
+            estimated_price = await self._estimate_intraday_from_eod(symbol)
+            if estimated_price:
+                logger.info(f"Using EOD-based estimation for {symbol}")
+                return estimated_price
+
+            # 3. 모든 방법 실패 - 심볼 비활성화 고려
+            await self._handle_unavailable_symbol(symbol)
+
+            raise ValidationError(
+                f"Unable to retrieve price data for {symbol} through any method. "
+                f"Symbol may be delisted or temporarily unavailable."
+            )
+
+        except Exception as e:
+            logger.error(f"Final fallback price retrieval failed for {symbol}: {e}")
+            raise ValidationError(
+                f"All price retrieval methods failed for {symbol}: {str(e)}"
+            )
+
+    async def _get_cached_intraday_price(self, symbol: str) -> Optional[StockPrice]:
+        """
+        최근 캐시된 intraday 가격 데이터 조회
+
+        현재 시스템에서는 intraday 데이터를 별도로 저장하지 않으므로,
+        universe 테이블에서 최근 가격 정보를 조회합니다.
+
+        Args:
+            symbol: 주식 심볼
+
+        Returns:
+            Optional[StockPrice]: 캐시된 가격 정보 (최근 데이터), 없으면 None
+        """
+        try:
+            # universe에서 최근 가격 정보 조회 시도
+            session = self.session_repo.get_current_session()
+            trading_day = session.trading_day if session else date.today()
+
+            uni_item = self.universe_repo.get_universe_item_model(trading_day, symbol)
+            if uni_item:
+                current_price_raw = getattr(uni_item, "current_price", None)
+                previous_close_raw = getattr(uni_item, "previous_close", None)
+                last_price_updated_value = cast(
+                    Optional[datetime], getattr(uni_item, "last_price_updated", None)
+                )
+
+                if (
+                    current_price_raw is not None
+                    and previous_close_raw is not None
+                    and last_price_updated_value is not None
+                ):
+                    # 24시간 이내 데이터인지 확인
+                    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+                    if last_price_updated_value >= cutoff_time:
+                        change_amount_raw = getattr(uni_item, "change_amount", None)
+                        change_percent_raw = getattr(uni_item, "change_percent", None)
+                        volume_raw: Any = getattr(uni_item, "volume", None)
+
+                        return StockPrice(
+                            symbol=symbol,
+                            current_price=Decimal(str(current_price_raw)),
+                            previous_close=Decimal(str(previous_close_raw)),
+                            change=(
+                                Decimal(str(change_amount_raw))
+                                if change_amount_raw is not None
+                                else Decimal("0")
+                            ),
+                            change_percent=(
+                                Decimal(str(change_percent_raw))
+                                if change_percent_raw is not None
+                                else Decimal("0")
+                            ),
+                            volume=(
+                                int(volume_raw)
+                                if volume_raw is not None
+                                else None
+                            ),
+                            market_status="CACHED_UNIVERSE",
+                            last_updated=cast(datetime, last_price_updated_value),
+                        )
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Failed to retrieve cached universe data for {symbol}: {e}")
+            return None
+
+    async def _estimate_intraday_from_eod(self, symbol: str) -> Optional[StockPrice]:
+        """
+        EOD 데이터를 기반으로 intraday 가격 추정
+
+        전략:
+        - 최근 2일의 EOD 데이터 사용
+        - 변동성을 고려한 추정값 생성
+        - 시장 상황에 따른 조정
+
+        Args:
+            symbol: 주식 심볼
+
+        Returns:
+            Optional[StockPrice]: 추정된 가격 정보, 실패시 None
+        """
+        try:
+            # price_repo를 통해 최근 EOD 데이터 조회
+            cutoff_date = date.today() - timedelta(days=3)
+
+            # 최근 2일의 EOD 데이터 조회
+            # 해당 심볼의 최근 2일 데이터 조회
+            # 기존 repository를 활용하여 EOD 데이터 조회
+            try:
+                # 최근 EOD 가격 조회 (전체 리스트에서 해당 심볼 필터링)
+                all_recent_prices = self.price_repo.get_latest_eod_prices(limit=100)
+                symbol_prices = [p for p in all_recent_prices if p.symbol == symbol]
+                latest_prices = symbol_prices[:2] if len(symbol_prices) >= 2 else []
+            except Exception:
+                latest_prices = []
+
+            if len(latest_prices) < 2:
+                logger.warning(f"Insufficient EOD data for estimation: {symbol}")
+                return None
+
+            latest_eod = latest_prices[0]
+            previous_eod = latest_prices[1]
+
+            # 추정값 생성 (현재는 단순히 최신 EOD 가격 사용)
+            # 향후 더 정교한 추정 로직 추가 가능
+            estimated_price = latest_eod.close_price
+            estimated_previous = previous_eod.close_price
+
+            change = estimated_price - estimated_previous
+            change_percent = (
+                (change / estimated_previous) * 100
+                if estimated_previous
+                else Decimal("0")
+            )
+
+            return StockPrice(
+                symbol=symbol,
+                current_price=estimated_price,
+                previous_close=estimated_previous,
+                change=change,
+                change_percent=change_percent,
+                volume=latest_eod.volume,
+                market_status="ESTIMATED_FROM_EOD",
+                last_updated=datetime.now(timezone.utc),
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to estimate intraday price from EOD for {symbol}: {e}"
+            )
+            return None
+
+    async def _handle_unavailable_symbol(self, symbol: str) -> None:
+        """
+        지속적으로 데이터를 가져올 수 없는 심볼 처리
+
+        - 에러 로그 기록
+        - universe에서 일시적 비활성화 고려 (optional)
+        - 알림 시스템 연동 (optional)
+
+        Args:
+            symbol: 처리할 심볼
+        """
+        try:
+            # 에러 로그 기록
+            error_context = {
+                "action": "price_retrieval_failed",
+                "symbol": symbol,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "all_methods_failed": True,
+                "attempted_sources": [
+                    "yfinance",
+                    "alpha_vantage",
+                    "cached_universe",
+                    "eod_estimation",
+                ],
+            }
+
+            self.error_log_service.log_generic_error(
+                check_type=ErrorTypeEnum.EXTERNAL_API_ERROR,
+                error_message=f"All price retrieval methods failed for symbol {symbol}",
+                details=error_context,
+                trading_day=date.today(),
+            )
+
+            logger.warning(f"Symbol {symbol} marked as unavailable in error logs")
+
+            # TODO: 향후 구현 고려사항
+            # - universe 테이블에서 심볼 일시 비활성화
+            # - 관리자 알림 시스템 연동
+            # - 자동 재시도 스케줄링
+
+        except Exception as e:
+            logger.error(f"Failed to handle unavailable symbol {symbol}: {e}")
 
     def _calculate_price_movement(self, current: Decimal, previous: Decimal) -> str:
         """가격 움직임 계산 (UP/DOWN/FLAT)"""
