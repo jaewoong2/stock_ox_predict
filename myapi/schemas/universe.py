@@ -62,7 +62,7 @@ class UniverseItemWithPrice(BaseModel):
         ..., description="Change percentage from previous close"
     )
     change_direction: str = Field(
-        ..., description="Price movement direction (UP/DOWN/FLAT)"
+        ..., description="Price movement direction (UP/DOWN/FLAT/UNKNOWN)"
     )
     formatted_change: str = Field(
         ..., description="Formatted change string (e.g., '+2.01%')"

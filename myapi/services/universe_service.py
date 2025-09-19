@@ -98,12 +98,30 @@ class UniverseService:
             return None
 
         items: list[UniverseItemWithPrice] = []
-        missing: list[str] = []
+        missing_count = 0
+
         for m in models:
             snap = ActiveUniverseSnapshot.model_validate(m)
+
+            # 가격 데이터가 없는 경우 기본값으로 처리
             if snap.current_price is None or snap.previous_close is None:
-                missing.append(snap.symbol)
+                missing_count += 1
+                # 기본값으로 심볼 포함 (UI에서 "데이터 없음" 상태 표시 가능)
+                items.append(
+                    UniverseItemWithPrice(
+                        symbol=snap.symbol,
+                        seq=snap.seq,
+                        company_name=snap.symbol,  # TODO: 회사명 컬럼/소스 추가 시 교체
+                        current_price=0.0,  # 기본값
+                        previous_close=0.0,  # 기본값
+                        change_percent=0.0,
+                        change_direction="UNKNOWN",  # 데이터 없음 상태
+                        formatted_change="N/A",  # 데이터 없음 표시
+                    )
+                )
                 continue
+
+            # 정상 데이터가 있는 경우
             # 변동 방향
             change_dir = "FLAT"
             if snap.change_amount is not None and snap.change_amount > Decimal("0"):
@@ -128,17 +146,12 @@ class UniverseService:
                 )
             )
 
-        # If any symbol lacks a snapshot, fail fast with clear guidance
-        if missing:
-            from myapi.core.exceptions import NotFoundError
-
-            raise NotFoundError(
-                message="SNAPSHOT_NOT_AVAILABLE",
-                details={
-                    "resource": "current_price",
-                    "trading_day": session.trading_day.isoformat(),
-                    "missing_count": len(missing),
-                },
+        # 로깅: missing 심볼이 있으면 경고 로그 남기기
+        if missing_count > 0:
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"Price data missing for {missing_count}/{len(models)} symbols "
+                f"on trading day {session.trading_day}. Using default values."
             )
 
         return UniverseWithPricesResponse(

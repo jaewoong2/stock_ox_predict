@@ -462,7 +462,7 @@ class UserDailyStatsRepository(
         )
 
     def get_or_create_user_daily_stats(
-        self, user_id: int, trading_day: date
+        self, user_id: int, trading_day: date, *, commit: bool = True
     ) -> UserDailyStatsResponse:
         """사용자 일일 통계 조회 또는 생성"""
         model_instance = (
@@ -508,7 +508,8 @@ class UserDailyStatsRepository(
             self.db.add(model_instance)
             self.db.flush()
             self.db.refresh(model_instance)
-            self.db.commit()
+            if commit:
+                self.db.commit()
 
         response = self._to_response(model_instance)
         if response is None:
@@ -700,7 +701,9 @@ class UserDailyStatsRepository(
         self, user_id: int, trading_day: date, amount: int = 1, *, commit: bool = True
     ) -> UserDailyStatsResponse:
         """예측 취소 등으로 가용 슬롯 환불 (가용 +1, 사용량 -1, cap 준수)"""
-        stats = self.get_or_create_user_daily_stats(user_id, trading_day)
+        stats = self.get_or_create_user_daily_stats(
+            user_id, trading_day, commit=commit
+        )
         cap = settings.BASE_PREDICTION_SLOTS + settings.MAX_AD_SLOTS
         current_available = stats.available_predictions
         current_used = stats.predictions_made
@@ -726,7 +729,9 @@ class UserDailyStatsRepository(
         )
         if updated_count > 0 and commit:
             self.db.commit()
-        return self.get_or_create_user_daily_stats(user_id, trading_day)
+        return self.get_or_create_user_daily_stats(
+            user_id, trading_day, commit=commit
+        )
 
     def increase_max_predictions(
         self, user_id: int, trading_day: date, additional_slots: int = 1

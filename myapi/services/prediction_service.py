@@ -71,18 +71,10 @@ class PredictionService:
         """
         try:
             result = operation()
-            # 항상 명시적 커밋 (autobegin 환경 포함)
-            if self.db.in_transaction():
-                self.db.flush()
-                self.db.commit()
-            else:
-                # 일부 드라이버에서는 flush/commit 전에 자동으로 트랜잭션 시작
-                self.db.flush()
-                self.db.commit()
+            self.db.commit()
             return result
         except Exception:
-            if self.db.in_transaction():
-                self.db.rollback()
+            self.db.rollback()
             raise
 
     # 제출/수정/취소
@@ -373,20 +365,21 @@ class PredictionService:
         trading_day = to_date(model.trading_day)
 
         # 서비스 단위 원자 트랜잭션으로 취소 + 슬롯 환불 처리
-        try:
-            with self.db.begin():
-                canceled = self.pred_repo.cancel_prediction(prediction_id, commit=False)
-                if not canceled:
-                    raise ValidationError("Failed to cancel prediction")
+        def _cancel_operation() -> PredictionResponse:
+            canceled_prediction = self.pred_repo.cancel_prediction(
+                prediction_id, commit=False
+            )
+            if not canceled_prediction:
+                raise ValidationError("Failed to cancel prediction")
 
-                # 취소 성공 시 예측 환불 처리 (가용 +1, 사용량 -1)
-                if trading_day:
-                    self.stats_repo.refund_prediction(
-                        user_id, trading_day, 1, commit=False
-                    )
-        except Exception:
-            # 트랜잭션은 자동 롤백
-            raise
+            if trading_day:
+                self.stats_repo.refund_prediction(
+                    user_id, trading_day, 1, commit=False
+                )
+
+            return canceled_prediction
+
+        canceled = self._safe_transaction(_cancel_operation)
 
         # 취소로 즉시 슬롯이 복구되므로 활성 쿨다운이 있다면 중단
         if trading_day:

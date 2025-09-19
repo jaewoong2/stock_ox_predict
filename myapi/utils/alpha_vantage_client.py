@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import Optional, Dict, Any, Deque
 
 import httpx
+from myapi.config import settings
 from myapi.schemas.price import StockPrice
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,9 @@ class AlphaVantageClient:
         Args:
             api_key: Alpha Vantage API 키. 없으면 환경변수에서 조회
         """
-        self.api_key = api_key or os.getenv("ALPHA_VANTAGE_API_KEY")
+        configured_key = settings.ALPHA_VANTAGE_API_KEY
+        env_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+        self.api_key = api_key or configured_key or env_key
         if not self.api_key:
             logger.warning(
                 "Alpha Vantage API key not found. Set ALPHA_VANTAGE_API_KEY environment variable."
@@ -141,9 +144,7 @@ class AlphaVantageClient:
             logger.error("Alpha Vantage request error for %s (daily): %s", symbol, exc)
             return None
         except Exception as exc:  # pragma: no cover - defensive catch
-            logger.error(
-                "Alpha Vantage daily request failed for %s: %s", symbol, exc
-            )
+            logger.error("Alpha Vantage daily request failed for %s: %s", symbol, exc)
             return None
 
     async def aclose(self) -> None:
@@ -164,7 +165,10 @@ class AlphaVantageClient:
         """Respect Alpha Vantage's 5-requests-per-minute rate limit."""
         async with self._rate_limit_lock:
             now = datetime.now(timezone.utc)
-            if self._recent_request_times and len(self._recent_request_times) == self._recent_request_times.maxlen:
+            if (
+                self._recent_request_times
+                and len(self._recent_request_times) == self._recent_request_times.maxlen
+            ):
                 oldest = self._recent_request_times[0]
                 elapsed = (now - oldest).total_seconds()
                 cooldown = max(0.0, 60.0 - elapsed)
