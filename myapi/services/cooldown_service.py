@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Optional
 from sqlalchemy.orm import Session
 from myapi.repositories.cooldown_repository import CooldownRepository
@@ -12,6 +12,19 @@ from myapi.repositories.prediction_repository import UserDailyStatsRepository
 from myapi.schemas.cooldown import CooldownTimerSchema
 import logging
 import json
+
+
+def _split_eventbridge_arns(arn_value: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Parse stored EventBridge ARN payloads that may contain warmup metadata."""
+    if not arn_value:
+        return None, None
+    try:
+        parsed = json.loads(arn_value)
+        if isinstance(parsed, dict):
+            return parsed.get("main"), parsed.get("warmup")
+    except Exception:
+        pass
+    return arn_value, None
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +94,7 @@ class CooldownService:
                 )
 
             timer_id = int(timer.id)
-            # 5. SQS 메시지 준비 (batch_router와 동일한 HTTP proxy 포맷)
+            # 5. HTTP 요청 페이로드 준비 (SlotRefill message 포맷 재사용)
             payload = SlotRefillMessage(
                 user_id=user_id,
                 timer_id=timer_id,
@@ -96,7 +109,32 @@ class CooldownService:
                 auth_token=settings.AUTH_TOKEN,
             )
 
-            # 6. EventBridge Scheduler로 Lambda 직접 호출 스케줄링 (입력 포맷은 동일)
+            warm_rule_arn: Optional[str] = None
+            warmup_offset = getattr(settings, "COOLDOWN_WARMUP_OFFSET_MINUTES", 0)
+            if warmup_offset and settings.COOLDOWN_MINUTES > warmup_offset:
+                warm_delay = settings.COOLDOWN_MINUTES - warmup_offset
+                warm_message = self.aws_service.generate_queue_message_http(
+                    path="health",
+                    method="GET",
+                    body="",
+                    auth_token=settings.AUTH_TOKEN,
+                )
+                try:
+                    warm_rule_arn = self.aws_service.schedule_one_time_lambda_with_scheduler(
+                        delay_minutes=warm_delay,
+                        function_name=settings.LAMBDA_FUNCTION_NAME,
+                        input_payload=warm_message.model_dump(),
+                        schedule_name_prefix=f"cooldown-warmup-{user_id}",
+                        scheduler_role_arn=settings.SCHEDULER_TARGET_ROLE_ARN,
+                        scheduler_group_name=settings.SCHEDULER_GROUP_NAME,
+                    )
+                except Exception as warm_exc:
+                    logger.warning(
+                        "Failed to schedule cooldown warmup for user %s: %s",
+                        user_id,
+                        warm_exc,
+                    )
+
             rule_arn = self.aws_service.schedule_one_time_lambda_with_scheduler(
                 delay_minutes=settings.COOLDOWN_MINUTES,
                 function_name=settings.LAMBDA_FUNCTION_NAME,
@@ -107,7 +145,9 @@ class CooldownService:
             )
 
             # 7. ARN 업데이트
-            self.cooldown_repo.update_timer_arn(timer_id, rule_arn)
+            self.cooldown_repo.update_timer_arn(
+                timer_id, rule_arn, warmup_rule_arn=warm_rule_arn
+            )
 
             logger.info(
                 f"Started auto cooldown for user {user_id}, timer_id: {timer_id}, "
@@ -170,12 +210,39 @@ class CooldownService:
                 trading_day=trading_day.isoformat(),
                 slots_to_refill=slots_to_refill,
             ).model_dump()
+
             http_message = self.aws_service.generate_queue_message_http(
                 path="api/v1/cooldown/handle-slot-refill",
                 method="POST",
                 body=json.dumps(payload),
                 auth_token=settings.AUTH_TOKEN,
             )
+
+            warm_rule_arn: Optional[str] = None
+            warmup_offset = getattr(settings, "COOLDOWN_WARMUP_OFFSET_MINUTES", 0)
+            if warmup_offset and settings.COOLDOWN_MINUTES > warmup_offset:
+                warm_delay = settings.COOLDOWN_MINUTES - warmup_offset
+                warm_message = self.aws_service.generate_queue_message_http(
+                    path="health",
+                    method="GET",
+                    body="",
+                    auth_token=settings.AUTH_TOKEN,
+                )
+                try:
+                    warm_rule_arn = self.aws_service.schedule_one_time_lambda_with_scheduler(
+                        delay_minutes=warm_delay,
+                        function_name=settings.LAMBDA_FUNCTION_NAME,
+                        input_payload=warm_message.model_dump(),
+                        schedule_name_prefix=f"cooldown-warmup-{user_id}",
+                        scheduler_role_arn=settings.SCHEDULER_TARGET_ROLE_ARN,
+                        scheduler_group_name=settings.SCHEDULER_GROUP_NAME,
+                    )
+                except Exception as warm_exc:
+                    logger.warning(
+                        "Failed to schedule cooldown warmup (sync) for user %s: %s",
+                        user_id,
+                        warm_exc,
+                    )
 
             rule_arn = self.aws_service.schedule_one_time_lambda_with_scheduler(
                 delay_minutes=settings.COOLDOWN_MINUTES,
@@ -186,7 +253,9 @@ class CooldownService:
                 scheduler_group_name=settings.SCHEDULER_GROUP_NAME,
             )
 
-            self.cooldown_repo.update_timer_arn(timer_id, rule_arn)
+            self.cooldown_repo.update_timer_arn(
+                timer_id, rule_arn, warmup_rule_arn=warm_rule_arn
+            )
 
             logger.info(
                 f"Started auto cooldown (sync) for user {user_id}, timer_id: {timer_id}, "
@@ -201,7 +270,7 @@ class CooldownService:
 
     async def handle_cooldown_completion(self, timer_id: int) -> bool:
         """
-        쿨다운 완료 처리 (SQS 메시지 핸들러에서 호출)
+        쿨다운 완료 처리 (EventBridge Scheduler Lambda 콜백)
 
         Args:
             timer_id: 완료할 타이머 ID
@@ -233,10 +302,13 @@ class CooldownService:
             # 4. 타이머 완료 처리 (+ EventBridge 규칙 정리)
             self.cooldown_repo.complete_timer(timer_id)
             try:
-                if timer.eventbridge_rule_arn:
-                    self.aws_service.cancel_scheduled_event(
-                        str(timer.eventbridge_rule_arn)
-                    )
+                main_rule, warm_rule = _split_eventbridge_arns(
+                    timer.eventbridge_rule_arn
+                )
+                if main_rule:
+                    self.aws_service.cancel_scheduled_event(str(main_rule))
+                if warm_rule:
+                    self.aws_service.cancel_scheduled_event(str(warm_rule))
             except Exception:
                 # 정리 실패는 치명적이지 않음. 로깅만 수행.
                 logger.warning(
@@ -276,10 +348,13 @@ class CooldownService:
                 return True  # 이미 활성 타이머 없음
 
             # EventBridge 규칙 취소
-            if active_timer.eventbridge_rule_arn:
-                self.aws_service.cancel_scheduled_event(
-                    str(active_timer.eventbridge_rule_arn)
-                )
+            main_rule, warm_rule = _split_eventbridge_arns(
+                active_timer.eventbridge_rule_arn
+            )
+            if main_rule:
+                self.aws_service.cancel_scheduled_event(str(main_rule))
+            if warm_rule:
+                self.aws_service.cancel_scheduled_event(str(warm_rule))
 
             # 타이머 취소 처리
             self.cooldown_repo.cancel_timer(active_timer.id)

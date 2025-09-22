@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime
 from typing import Optional, List
 from sqlalchemy.orm import Session
@@ -55,7 +56,12 @@ class CooldownRepository(BaseRepository[CooldownTimer, CooldownTimerSchema]):
         )
         return self._to_schema(model_instance)
 
-    def update_timer_arn(self, timer_id: int, eventbridge_rule_arn: str) -> bool:
+    def update_timer_arn(
+        self,
+        timer_id: int,
+        eventbridge_rule_arn: str,
+        warmup_rule_arn: Optional[str] = None,
+    ) -> bool:
         """
         타이머에 EventBridge 규칙 ARN 업데이트
 
@@ -67,11 +73,17 @@ class CooldownRepository(BaseRepository[CooldownTimer, CooldownTimerSchema]):
             bool: 업데이트 성공 여부
         """
         try:
+            stored_value: str = (
+                json.dumps({"main": eventbridge_rule_arn, "warmup": warmup_rule_arn})
+                if warmup_rule_arn
+                else eventbridge_rule_arn
+            )
+
             updated_count = (
                 self.db.query(self.model_class)
                 .filter(self.model_class.id == timer_id)
                 .update(
-                    {self.model_class.eventbridge_rule_arn: eventbridge_rule_arn},
+                    {self.model_class.eventbridge_rule_arn: stored_value},
                     synchronize_session=False,
                 )
             )

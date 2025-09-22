@@ -79,9 +79,9 @@ async def handle_slot_refill_message(
     cooldown_service: CooldownService = Depends(get_cooldown_service),
 ) -> dict:
     """
-    SQS 메시지 핸들러: 쿨다운 완료 후 슬롯 충전 처리
+    EventBridge Scheduler Lambda 콜백: 쿨다운 완료 후 슬롯 충전 처리
 
-    이 엔드포인트는 AWS Lambda에서 SQS 메시지를 받아 호출됩니다.
+    이 엔드포인트는 AWS Lambda(스케줄러 트리거)를 통해 내부 인증 헤더와 함께 호출됩니다.
     직접 사용자 호출용이 아닙니다.
 
     Args:
