@@ -14,7 +14,9 @@ import logging
 import json
 
 
-def _split_eventbridge_arns(arn_value: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+def _split_eventbridge_arns(
+    arn_value: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
     """Parse stored EventBridge ARN payloads that may contain warmup metadata."""
     if not arn_value:
         return None, None
@@ -25,6 +27,7 @@ def _split_eventbridge_arns(arn_value: Optional[str]) -> tuple[Optional[str], Op
     except Exception:
         pass
     return arn_value, None
+
 
 logger = logging.getLogger(__name__)
 
@@ -120,13 +123,15 @@ class CooldownService:
                     auth_token=settings.AUTH_TOKEN,
                 )
                 try:
-                    warm_rule_arn = self.aws_service.schedule_one_time_lambda_with_scheduler(
-                        delay_minutes=warm_delay,
-                        function_name=settings.LAMBDA_FUNCTION_NAME,
-                        input_payload=warm_message.model_dump(),
-                        schedule_name_prefix=f"cooldown-warmup-{user_id}",
-                        scheduler_role_arn=settings.SCHEDULER_TARGET_ROLE_ARN,
-                        scheduler_group_name=settings.SCHEDULER_GROUP_NAME,
+                    warm_rule_arn = (
+                        self.aws_service.schedule_one_time_lambda_with_scheduler(
+                            delay_minutes=warm_delay,
+                            function_name=settings.LAMBDA_FUNCTION_NAME,
+                            input_payload=warm_message.model_dump(),
+                            schedule_name_prefix=f"cooldown-warmup-{user_id}",
+                            scheduler_role_arn=settings.SCHEDULER_TARGET_ROLE_ARN,
+                            scheduler_group_name=settings.SCHEDULER_GROUP_NAME,
+                        )
                     )
                 except Exception as warm_exc:
                     logger.warning(
@@ -219,7 +224,8 @@ class CooldownService:
             )
 
             warm_rule_arn: Optional[str] = None
-            warmup_offset = getattr(settings, "COOLDOWN_WARMUP_OFFSET_MINUTES", 0)
+            warmup_offset = settings.COOLDOWN_WARMUP_OFFSET_MINUTES
+
             if warmup_offset and settings.COOLDOWN_MINUTES > warmup_offset:
                 warm_delay = settings.COOLDOWN_MINUTES - warmup_offset
                 warm_message = self.aws_service.generate_queue_message_http(
@@ -229,13 +235,15 @@ class CooldownService:
                     auth_token=settings.AUTH_TOKEN,
                 )
                 try:
-                    warm_rule_arn = self.aws_service.schedule_one_time_lambda_with_scheduler(
-                        delay_minutes=warm_delay,
-                        function_name=settings.LAMBDA_FUNCTION_NAME,
-                        input_payload=warm_message.model_dump(),
-                        schedule_name_prefix=f"cooldown-warmup-{user_id}",
-                        scheduler_role_arn=settings.SCHEDULER_TARGET_ROLE_ARN,
-                        scheduler_group_name=settings.SCHEDULER_GROUP_NAME,
+                    warm_rule_arn = (
+                        self.aws_service.schedule_one_time_lambda_with_scheduler(
+                            delay_minutes=warm_delay,
+                            function_name=settings.LAMBDA_FUNCTION_NAME,
+                            input_payload=warm_message.model_dump(),
+                            schedule_name_prefix=f"cooldown-warmup-{user_id}",
+                            scheduler_role_arn=settings.SCHEDULER_TARGET_ROLE_ARN,
+                            scheduler_group_name=settings.SCHEDULER_GROUP_NAME,
+                        )
                     )
                 except Exception as warm_exc:
                     logger.warning(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, cast
 
 from sqlalchemy.orm import Session
 from myapi.models.prediction import (
@@ -128,6 +128,7 @@ class PredictionService:
         stats_after = self.stats_repo.consume_available_prediction(
             user_id, trading_day, amount=1
         )
+
         if stats_after.available_predictions != max(
             0, stats_before.available_predictions - 1
         ):
@@ -297,7 +298,8 @@ class PredictionService:
                 message="Cannot modify another user's prediction",
             )
 
-        if model.status != StatusEnum.PENDING:
+        model_status = cast(StatusEnum, model.status)
+        if model_status != StatusEnum.PENDING:
             raise BusinessLogicError(
                 error_code="PREDICTION_LOCKED",
                 message="Only pending predictions can be updated",
@@ -330,7 +332,8 @@ class PredictionService:
                 message="Cannot cancel another user's prediction",
             )
 
-        if model.status != StatusEnum.PENDING:
+        model_status = cast(StatusEnum, model.status)
+        if model_status != StatusEnum.PENDING:
             raise BusinessLogicError(
                 error_code="PREDICTION_NOT_CANCELABLE",
                 message="Only pending predictions can be canceled",
@@ -373,9 +376,7 @@ class PredictionService:
                 raise ValidationError("Failed to cancel prediction")
 
             if trading_day:
-                self.stats_repo.refund_prediction(
-                    user_id, trading_day, 1, commit=False
-                )
+                self.stats_repo.refund_prediction(user_id, trading_day, 1, commit=False)
 
             return canceled_prediction
 
