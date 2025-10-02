@@ -28,6 +28,7 @@ from myapi.repositories.prediction_repository import (
 )
 from myapi.repositories.active_universe_repository import ActiveUniverseRepository
 from myapi.repositories.session_repository import SessionRepository
+from myapi.repositories.price_repository import PriceRepository
 from myapi.services.point_service import PointService
 from myapi.schemas.prediction import (
     PredictionCreate,
@@ -37,6 +38,9 @@ from myapi.schemas.prediction import (
     PredictionStats,
     PredictionSummary,
     PredictionChoice,
+    PredictionTrendsResponse,
+    MostLongPredictionItem,
+    MostShortPredictionItem,
 )
 from myapi.services.error_log_service import ErrorLogService
 from myapi.utils.date_utils import to_date
@@ -53,6 +57,7 @@ class PredictionService:
         self.stats_repo = UserDailyStatsRepository(db)
         self.universe_repo = ActiveUniverseRepository(db)
         self.session_repo = SessionRepository(db)
+        self.price_repo = PriceRepository(db)
         self.point_service = PointService(db)
         self.error_log_service = ErrorLogService(db)
         self.settings = settings
@@ -528,3 +533,105 @@ class PredictionService:
         if additional_slots <= 0:
             raise ValidationError("additional_slots must be positive")
         self.stats_repo.increase_max_predictions(user_id, trading_day, additional_slots)
+
+    # 트렌드 조회
+    def get_prediction_trends(
+        self, trading_day: date, limit: int = 5
+    ) -> PredictionTrendsResponse:
+        """
+        예측 트렌드 조회 (롱/숏 예측이 많은 종목)
+
+        Args:
+            trading_day: 조회할 거래일
+            limit: 각 카테고리별 최대 종목 수 (1-10)
+
+        Returns:
+            PredictionTrendsResponse
+        """
+        # limit 범위 검증
+        limit = max(1, min(limit, 10))
+
+        # 롱 예측 많은 종목 조회
+        long_data = self.pred_repo.get_most_long_predictions(trading_day, limit)
+
+        # 숏 예측 많은 종목 조회
+        short_data = self.pred_repo.get_most_short_predictions(trading_day, limit)
+
+        # 가격 정보 조회를 위한 심볼 목록
+        all_tickers = set(
+            [ticker for ticker, _, _, _ in long_data]
+            + [ticker for ticker, _, _, _ in short_data]
+        )
+
+        # 가격 정보 조회 (최신 가격)
+        price_map = {}
+        for ticker in all_tickers:
+            try:
+                price_data = self.price_repo.get_eod_price(ticker, trading_day)
+                if price_data:
+                    price_map[ticker] = {
+                        "last_price": price_data.close_price,
+                        "change_percent": price_data.change_percent,
+                    }
+            except Exception:
+                # 가격 조회 실패 시 None으로 처리
+                pass
+
+        # 회사명 정보 조회 (universe에서)
+        company_name_map = {}
+        for ticker in all_tickers:
+            try:
+                universe_item_model = self.universe_repo.get_universe_item_model(
+                    trading_day, ticker
+                )
+                if universe_item_model and hasattr(universe_item_model, "company_name"):
+                    company_name_map[ticker] = universe_item_model.company_name
+            except Exception:
+                # 회사명 조회 실패 시 None으로 처리
+                pass
+
+        # 롱 예측 아이템 생성
+        most_long_items = []
+        for ticker, count, win_rate, avg_profit in long_data:
+            price_info = price_map.get(ticker, {})
+            most_long_items.append(
+                MostLongPredictionItem(
+                    ticker=ticker,
+                    company_name=company_name_map.get(ticker),
+                    count=count,
+                    win_rate=win_rate,
+                    avg_profit=avg_profit,
+                    last_price=price_info.get("last_price"),
+                    change_percent=(
+                        float(price_info.get("change_percent"))
+                        if price_info.get("change_percent") is not None
+                        else None
+                    ),
+                )
+            )
+
+        # 숏 예측 아이템 생성
+        most_short_items = []
+        for ticker, count, win_rate, avg_profit in short_data:
+            price_info = price_map.get(ticker, {})
+            most_short_items.append(
+                MostShortPredictionItem(
+                    ticker=ticker,
+                    company_name=company_name_map.get(ticker),
+                    count=count,
+                    win_rate=win_rate,
+                    avg_profit=avg_profit,
+                    last_price=price_info.get("last_price"),
+                    change_percent=(
+                        float(price_info.get("change_percent"))
+                        if price_info.get("change_percent") is not None
+                        else None
+                    ),
+                )
+            )
+
+        return PredictionTrendsResponse(
+            most_long_predictions=most_long_items,
+            most_short_predictions=most_short_items,
+            updated_at=datetime.now(timezone.utc),
+        )

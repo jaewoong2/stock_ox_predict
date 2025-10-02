@@ -315,6 +315,51 @@ def get_remaining_predictions(
         )
 
 
+@router.get("/trends", response_model=BaseResponse)
+@inject
+def get_prediction_trends(
+    date_param: str = Query(None, alias="date", description="조회할 날짜 (YYYY-MM-DD)"),
+    limit: int = Query(5, ge=1, le=10, description="각 카테고리별 최대 종목 수 (1-10)"),
+    current_user: UserSchema = Depends(get_current_active_user),
+    service: PredictionService = Depends(get_prediction_service),
+) -> Any:
+    """
+    실시간 예측 트렌드 통계를 반환합니다.
+
+    - **date**: 조회할 날짜 (YYYY-MM-DD 형식, 기본값: 오늘)
+    - **limit**: 각 카테고리별 최대 종목 수 (1-10, 기본값: 5)
+    """
+    try:
+        # 날짜 파라미터 처리
+        if date_param:
+            try:
+                trading_day = date.fromisoformat(date_param)
+            except ValueError:
+                return BaseResponse(
+                    success=False,
+                    error=Error(
+                        code=ErrorCode.INVALID_CREDENTIALS,
+                        message="날짜 형식이 올바르지 않습니다. YYYY-MM-DD 형식을 사용하세요.",
+                    ),
+                )
+        else:
+            trading_day = date.today()
+
+        # 트렌드 데이터 조회
+        trends = service.get_prediction_trends(trading_day, limit)
+
+        return BaseResponse(
+            success=True,
+            data=trends.model_dump(),
+        )
+    except Exception:
+        logger.exception("[PredictionError] get_prediction_trends: unexpected error")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Prediction trends fetch failed",
+        )
+
+
 @router.post("/increase-slots/{trading_day}", response_model=BaseResponse)
 @inject
 def increase_prediction_slots(

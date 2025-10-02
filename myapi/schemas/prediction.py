@@ -92,3 +92,40 @@ class UserDailyStatsResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# Prediction Trends Schemas
+class MostLongPredictionItem(BaseModel):
+    """롱 예측이 가장 많은 종목 정보"""
+
+    ticker: str = Field(..., description="티커 심볼")
+    company_name: Optional[str] = Field(None, description="회사명")
+    count: int = Field(..., description="롱 예측 횟수")
+    win_rate: Optional[float] = Field(None, description="승률 %")
+    avg_profit: Optional[float] = Field(None, description="평균 수익률 %")
+    last_price: Optional[Decimal] = Field(None, description="최신 가격")
+    change_percent: Optional[float] = Field(None, description="변동률 %")
+
+
+class MostShortPredictionItem(BaseModel):
+    """숏 예측이 가장 많은 종목 정보"""
+
+    ticker: str = Field(..., description="티커 심볼")
+    company_name: Optional[str] = Field(None, description="회사명")
+    count: int = Field(..., description="숏 예측 횟수")
+    win_rate: Optional[float] = Field(None, description="승률 %")
+    avg_profit: Optional[float] = Field(None, description="평균 수익률 %")
+    last_price: Optional[Decimal] = Field(None, description="최신 가격")
+    change_percent: Optional[float] = Field(None, description="변동률 %")
+
+
+class PredictionTrendsResponse(BaseModel):
+    """예측 트렌드 응답"""
+
+    most_long_predictions: List[MostLongPredictionItem] = Field(
+        default_factory=list, description="롱 예측이 가장 많은 종목 TOP N"
+    )
+    most_short_predictions: List[MostShortPredictionItem] = Field(
+        default_factory=list, description="숏 예측이 가장 많은 종목 TOP N"
+    )
+    updated_at: datetime = Field(..., description="데이터 업데이트 시간")

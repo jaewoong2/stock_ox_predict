@@ -1,6 +1,6 @@
 from typing import List, Optional, Tuple, cast
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, desc, asc, func, text
+from sqlalchemy import and_, desc, asc, func, text, Numeric
 from sqlalchemy import exc as sa_exc
 from datetime import date, datetime, timedelta, timezone
 
@@ -436,6 +436,172 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             .count()
         )
 
+    def get_most_long_predictions(
+        self, trading_day: date, limit: int = 5
+    ) -> List[Tuple[str, int, Optional[float], Optional[float]]]:
+        """
+        롱(UP) 예측이 가장 많은 종목 TOP N 조회
+
+        Returns:
+            List[Tuple[ticker, count, win_rate, avg_profit]]
+        """
+        self._ensure_clean_session()
+
+        # 롱 예측 집계
+        long_stats = (
+            self.db.query(
+                self.model_class.symbol.label("ticker"),
+                func.count(self.model_class.id).label("count"),
+                # 승률 계산 (완료된 예측 중 정답 비율)
+                func.cast(
+                    func.sum(
+                        func.case(
+                            [(self.model_class.status == StatusEnum.CORRECT, 1)],
+                            else_=0,
+                        )
+                    )
+                    * 100.0
+                    / func.nullif(
+                        func.sum(
+                            func.case(
+                                [
+                                    (
+                                        self.model_class.status.in_(
+                                            [StatusEnum.CORRECT, StatusEnum.INCORRECT]
+                                        ),
+                                        1,
+                                    )
+                                ],
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ),
+                    Numeric(10, 2),
+                ).label("win_rate"),
+                # 평균 수익률 계산 (완료된 예측의 평균 포인트 기반 추정)
+                func.cast(
+                    func.avg(
+                        func.case(
+                            [
+                                (
+                                    self.model_class.status.in_(
+                                        [StatusEnum.CORRECT, StatusEnum.INCORRECT]
+                                    ),
+                                    self.model_class.points_earned,
+                                )
+                            ],
+                            else_=None,
+                        )
+                    ),
+                    Numeric(10, 2),
+                ).label("avg_profit"),
+            )
+            .filter(
+                and_(
+                    self.model_class.trading_day == trading_day,
+                    self.model_class.choice == ChoiceEnum.UP,
+                )
+            )
+            .group_by(self.model_class.symbol)
+            .order_by(desc("count"))
+            .limit(limit)
+            .all()
+        )
+
+        return [
+            (
+                row.ticker,
+                row.count,
+                float(row.win_rate) if row.win_rate is not None else None,
+                float(row.avg_profit) if row.avg_profit is not None else None,
+            )
+            for row in long_stats
+        ]
+
+    def get_most_short_predictions(
+        self, trading_day: date, limit: int = 5
+    ) -> List[Tuple[str, int, Optional[float], Optional[float]]]:
+        """
+        숏(DOWN) 예측이 가장 많은 종목 TOP N 조회
+
+        Returns:
+            List[Tuple[ticker, count, win_rate, avg_profit]]
+        """
+        self._ensure_clean_session()
+
+        # 숏 예측 집계
+        short_stats = (
+            self.db.query(
+                self.model_class.symbol.label("ticker"),
+                func.count(self.model_class.id).label("count"),
+                # 승률 계산 (완료된 예측 중 정답 비율)
+                func.cast(
+                    func.sum(
+                        func.case(
+                            [(self.model_class.status == StatusEnum.CORRECT, 1)],
+                            else_=0,
+                        )
+                    )
+                    * 100.0
+                    / func.nullif(
+                        func.sum(
+                            func.case(
+                                [
+                                    (
+                                        self.model_class.status.in_(
+                                            [StatusEnum.CORRECT, StatusEnum.INCORRECT]
+                                        ),
+                                        1,
+                                    )
+                                ],
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ),
+                    Numeric(10, 2),
+                ).label("win_rate"),
+                # 평균 수익률 계산 (완료된 예측의 평균 포인트 기반 추정)
+                func.cast(
+                    func.avg(
+                        func.case(
+                            [
+                                (
+                                    self.model_class.status.in_(
+                                        [StatusEnum.CORRECT, StatusEnum.INCORRECT]
+                                    ),
+                                    self.model_class.points_earned,
+                                )
+                            ],
+                            else_=None,
+                        )
+                    ),
+                    Numeric(10, 2),
+                ).label("avg_profit"),
+            )
+            .filter(
+                and_(
+                    self.model_class.trading_day == trading_day,
+                    self.model_class.choice == ChoiceEnum.DOWN,
+                )
+            )
+            .group_by(self.model_class.symbol)
+            .order_by(desc("count"))
+            .limit(limit)
+            .all()
+        )
+
+        return [
+            (
+                row.ticker,
+                row.count,
+                float(row.win_rate) if row.win_rate is not None else None,
+                float(row.avg_profit) if row.avg_profit is not None else None,
+            )
+            for row in short_stats
+        ]
+
 
 class UserDailyStatsRepository(
     BaseRepository[UserDailyStatsModel, UserDailyStatsResponse]
@@ -493,9 +659,13 @@ class UserDailyStatsRepository(
                 .order_by(desc(self.model_class.trading_day))
                 .first()
             )
-            
+
             total_available = max(
-                prev_stats.available_predictions if prev_stats else settings.BASE_PREDICTION_SLOTS,
+                (
+                    prev_stats.available_predictions
+                    if prev_stats
+                    else settings.BASE_PREDICTION_SLOTS
+                ),
                 3,
             )
 
@@ -701,9 +871,7 @@ class UserDailyStatsRepository(
         self, user_id: int, trading_day: date, amount: int = 1, *, commit: bool = True
     ) -> UserDailyStatsResponse:
         """예측 취소 등으로 가용 슬롯 환불 (가용 +1, 사용량 -1, cap 준수)"""
-        stats = self.get_or_create_user_daily_stats(
-            user_id, trading_day, commit=commit
-        )
+        stats = self.get_or_create_user_daily_stats(user_id, trading_day, commit=commit)
         cap = settings.BASE_PREDICTION_SLOTS + settings.MAX_AD_SLOTS
         current_available = stats.available_predictions
         current_used = stats.predictions_made
@@ -729,9 +897,7 @@ class UserDailyStatsRepository(
         )
         if updated_count > 0 and commit:
             self.db.commit()
-        return self.get_or_create_user_daily_stats(
-            user_id, trading_day, commit=commit
-        )
+        return self.get_or_create_user_daily_stats(user_id, trading_day, commit=commit)
 
     def increase_max_predictions(
         self, user_id: int, trading_day: date, additional_slots: int = 1
