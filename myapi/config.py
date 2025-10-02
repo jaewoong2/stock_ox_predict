@@ -48,7 +48,16 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str = ""
     KAKAO_CLIENT_ID: str = ""
     KAKAO_CLIENT_SECRET: str = ""
+    APPLE_CLIENT_ID: str = ""
+    APPLE_TEAM_ID: str = ""
+    APPLE_KEY_ID: str = ""
+    APPLE_PRIVATE_KEY: str = ""
     OAUTH_STATE_EXPIRE_MINUTES: int = 10
+    
+    # Magic Link
+    MAGIC_LINK_EXPIRE_MINUTES: int = 15
+    MAGIC_LINK_BASE_URL: str = ""
+    SES_FROM_EMAIL: str = ""
 
     # External APIs
     ALPHA_VANTAGE_API_KEY: str = "demo"  # Default demo key

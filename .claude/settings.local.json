@@ -22,7 +22,8 @@
       "Bash(cd:*)",
       "mcp__ide__getDiagnostics",
       "WebSearch",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(rm:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

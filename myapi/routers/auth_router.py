@@ -15,10 +15,12 @@ from myapi.schemas.auth import (
     Error,
     ErrorCode,
 )
+from myapi.schemas.magic_link import MagicLinkRequest
+from myapi.services.magic_link_service import MagicLinkService
 
 from dependency_injector.wiring import inject
 from myapi.database.session import get_db
-from myapi.deps import get_auth_service
+from myapi.deps import get_auth_service, get_magic_link_service
 from urllib.parse import urlencode
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -26,6 +28,62 @@ logger = logging.getLogger(__name__)
 
 
 ## Local login endpoint removed (OAuth-only policy)
+
+
+@router.post("/magic-link/send", response_model=BaseResponse)
+@inject
+async def send_magic_link(
+    request: MagicLinkRequest,
+    magic_link_service: MagicLinkService = Depends(get_magic_link_service),
+) -> Any:
+    """Send magic link to email"""
+    try:
+        result = await magic_link_service.send_magic_link(request)
+
+        return BaseResponse(
+            success=result.success,
+            data={"message": result.message},
+        )
+    except Exception as e:
+        logger.error(f"Magic link send error: {str(e)}")
+        return BaseResponse(
+            success=False,
+            error=Error(code=ErrorCode.FORBIDDEN, message="Failed to send magic link"),
+        )
+
+
+@router.get("/magic-link/verify", response_model=BaseResponse)
+@inject
+async def verify_magic_link(
+    token: str,
+    magic_link_service: MagicLinkService = Depends(get_magic_link_service),
+) -> Any:
+    """Verify magic link token"""
+    try:
+        result = await magic_link_service.verify_magic_link(token)
+
+        return BaseResponse(
+            success=True,
+            data={
+                "user_id": result.user_id,
+                "token": result.token,
+                "nickname": result.nickname,
+                "is_new_user": result.is_new_user,
+            },
+        )
+    except AuthenticationError as e:
+        return BaseResponse(
+            success=False,
+            error=Error(code=ErrorCode.UNAUTHORIZED, message=str(e)),
+        )
+    except Exception as e:
+        logger.error(f"Magic link verify error: {str(e)}")
+        return BaseResponse(
+            success=False,
+            error=Error(
+                code=ErrorCode.FORBIDDEN, message="Failed to verify magic link"
+            ),
+        )
 
 
 @router.get("/oauth/{provider}/authorize")
@@ -99,7 +157,7 @@ async def oauth_callback_get(
     """Provider redirects here. Exchange code -> token, then redirect to client."""
     oauth_state_repo = OAuthStateRepository(db)
     client_redirect = None
-    
+
     try:
         # Resolve client redirect from stored state and clear it
         client_redirect = oauth_state_repo.pop(state)
@@ -137,16 +195,18 @@ async def oauth_callback_get(
             f"{client_redirect}{'&' if ('?' in client_redirect) else '?'}{qs}"
         )
         return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
-        
+
     except OAuthError as e:
         logger.error(f"OAuth error: {str(e)}")
         if client_redirect:
             # Redirect to frontend with error
-            qs = urlencode({
-                "error": "oauth_error",
-                "error_description": str(e),
-                "provider": provider
-            })
+            qs = urlencode(
+                {
+                    "error": "oauth_error",
+                    "error_description": str(e),
+                    "provider": provider,
+                }
+            )
             redirect_url = (
                 f"{client_redirect}{'&' if ('?' in client_redirect) else '?'}{qs}"
             )
@@ -161,11 +221,13 @@ async def oauth_callback_get(
         logger.error(f"OAuth callback error: {str(e)}")
         if client_redirect:
             # Redirect to frontend with error
-            qs = urlencode({
-                "error": "server_error", 
-                "error_description": "OAuth callback processing failed",
-                "provider": provider
-            })
+            qs = urlencode(
+                {
+                    "error": "server_error",
+                    "error_description": "OAuth callback processing failed",
+                    "provider": provider,
+                }
+            )
             redirect_url = (
                 f"{client_redirect}{'&' if ('?' in client_redirect) else '?'}{qs}"
             )

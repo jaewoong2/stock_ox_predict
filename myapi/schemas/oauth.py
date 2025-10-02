@@ -14,7 +14,7 @@ class OAuthTokenResponse(BaseModel):
 
 class OAuthUserInfo(BaseModel):
     id: str
-    email: str
+    email: str  # Can be fallback email like kakao_123@oauth.local
     name: Optional[str] = None
     picture: Optional[str] = None
     verified_email: Optional[bool] = None

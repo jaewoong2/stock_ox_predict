@@ -10,6 +10,7 @@ from myapi.repositories.user_repository import UserRepository
 from myapi.services.point_service import PointService
 from myapi.providers.oauth.google import GoogleOAuthProvider
 from myapi.providers.oauth.kakao import KakaoOAuthProvider
+from myapi.providers.oauth.apple import AppleOAuthProvider
 from myapi.schemas.oauth import OAuthTokenResponse, OAuthUserInfo
 from myapi.schemas.auth import (
     Token,
@@ -32,6 +33,7 @@ class AuthService:
         self.point_service = PointService(db)
         self.google_oauth = GoogleOAuthProvider()
         self.kakao_oauth = KakaoOAuthProvider()
+        self.apple_oauth = AppleOAuthProvider()
         self.settings = settings
 
     def get_oauth_auth_url(self, provider: str, redirect_uri: str, state: str) -> str:
@@ -40,6 +42,8 @@ class AuthService:
             return self.google_oauth.generate_auth_url(redirect_uri, state)
         elif provider == "kakao":
             return self.kakao_oauth.generate_auth_url(redirect_uri, state)
+        elif provider == "apple":
+            return self.apple_oauth.generate_auth_url(redirect_uri, state)
         else:
             raise OAuthError(f"Unsupported OAuth provider: {provider}")
 
@@ -64,6 +68,14 @@ class AuthService:
                 )
                 user_info = await self.kakao_oauth.get_user_info(
                     token_response.access_token
+                )
+            elif callback_data.provider == "apple":
+                token_response = await self.apple_oauth.get_access_token(
+                    callback_data.code, callback_data.redirect_uri
+                )
+                # Apple uses id_token instead of access_token
+                user_info = await self.apple_oauth.get_user_info(
+                    token_response.id_token or token_response.access_token
                 )
             else:
                 raise OAuthError(
@@ -184,8 +196,8 @@ class AuthService:
         except OAuthError:
             raise
         except Exception as e:
-            logger.error(f"OAuth callback processing error: {str(e)}")
-            raise OAuthError("OAuth processing failed")
+            logger.exception(f"OAuth callback processing error: {str(e)}")
+            raise OAuthError(f"OAuth processing failed: {str(e)}")
 
     def verify_token(self, token: str) -> Optional[TokenData]:
         """JWT 토큰 검증"""

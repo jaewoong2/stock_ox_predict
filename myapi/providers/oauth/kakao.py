@@ -26,7 +26,9 @@ class KakaoOAuthProvider:
         }
         return f"{self.auth_url}?{urlencode(params)}"
 
-    async def get_access_token(self, code: str, redirect_uri: str) -> OAuthTokenResponse:
+    async def get_access_token(
+        self, code: str, redirect_uri: str
+    ) -> OAuthTokenResponse:
         """Exchange authorization code for access token"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -75,14 +77,19 @@ class KakaoOAuthProvider:
                 # Transform Kakao user data to consistent format
                 kakao_account = user_data.get("kakao_account", {})
                 profile = kakao_account.get("profile", {})
-                
-                # Validate required fields
-                if not kakao_account.get("email"):
-                    raise OAuthError("Email not provided by OAuth provider")
+
+                # Get email or use fallback
+                email = kakao_account.get("email")
+                if not email:
+                    kakao_id = user_data.get("id")
+                    email = f"kakao_{kakao_id}@kakao-login.com"
+                    logger.info(
+                        f"Kakao user {kakao_id} did not provide email, using fallback: {email}"
+                    )
 
                 return OAuthUserInfo(
                     id=str(user_data.get("id")),
-                    email=kakao_account.get("email"),
+                    email=email,
                     name=profile.get("nickname", ""),
                     picture=profile.get("profile_image_url", ""),
                     verified_email=kakao_account.get("is_email_verified", False),
@@ -90,6 +97,8 @@ class KakaoOAuthProvider:
         except httpx.TimeoutException:
             logger.error("Kakao OAuth user info fetch timeout")
             raise OAuthError("OAuth provider timeout")
+        except OAuthError:
+            raise  # Re-raise OAuthError as is
         except Exception as e:
-            logger.error(f"Kakao OAuth user info error: {str(e)}")
-            raise OAuthError("Failed to fetch user information")
+            logger.exception(f"Kakao OAuth user info error: {str(e)}")
+            raise OAuthError(f"Failed to fetch user information: {str(e)}")

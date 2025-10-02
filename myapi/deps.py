@@ -16,6 +16,7 @@ from myapi.services.point_service import PointService
 from myapi.services.ad_unlock_service import AdUnlockService
 from myapi.services.cooldown_service import CooldownService
 from myapi.services.auth_service import AuthService
+from myapi.services.magic_link_service import MagicLinkService
 
 
 def get_user_service(db: Session = Depends(get_db)) -> UserService:
@@ -60,3 +61,7 @@ def get_cooldown_service(db: Session = Depends(get_db)) -> CooldownService:
 
 def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
     return AuthService(db=db, settings=settings)
+
+
+def get_magic_link_service(db: Session = Depends(get_db)) -> MagicLinkService:
+    return MagicLinkService(db=db, settings=settings)
