@@ -320,7 +320,6 @@ def get_remaining_predictions(
 def get_prediction_trends(
     date_param: str = Query(None, alias="date", description="조회할 날짜 (YYYY-MM-DD)"),
     limit: int = Query(5, ge=1, le=10, description="각 카테고리별 최대 종목 수 (1-10)"),
-    current_user: UserSchema = Depends(get_current_active_user),
     service: PredictionService = Depends(get_prediction_service),
 ) -> Any:
     """

@@ -1,6 +1,6 @@
 from typing import List, Optional, Tuple, cast
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, desc, asc, func, text, Numeric
+from sqlalchemy import and_, desc, asc, func, text, Numeric, case
 from sqlalchemy import exc as sa_exc
 from datetime import date, datetime, timedelta, timezone
 
@@ -451,27 +451,25 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         long_stats = (
             self.db.query(
                 self.model_class.symbol.label("ticker"),
-                func.count(self.model_class.id).label("count"),
+                func.count(self.model_class.id).label("prediction_count"),
                 # 승률 계산 (완료된 예측 중 정답 비율)
                 func.cast(
                     func.sum(
-                        func.case(
-                            [(self.model_class.status == StatusEnum.CORRECT, 1)],
+                        case(
+                            (self.model_class.status == StatusEnum.CORRECT, 1),
                             else_=0,
                         )
                     )
                     * 100.0
                     / func.nullif(
                         func.sum(
-                            func.case(
-                                [
-                                    (
-                                        self.model_class.status.in_(
-                                            [StatusEnum.CORRECT, StatusEnum.INCORRECT]
-                                        ),
-                                        1,
-                                    )
-                                ],
+                            case(
+                                (
+                                    self.model_class.status.in_(
+                                        [StatusEnum.CORRECT, StatusEnum.INCORRECT]
+                                    ),
+                                    1,
+                                ),
                                 else_=0,
                             )
                         ),
@@ -482,15 +480,13 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
                 # 평균 수익률 계산 (완료된 예측의 평균 포인트 기반 추정)
                 func.cast(
                     func.avg(
-                        func.case(
-                            [
-                                (
-                                    self.model_class.status.in_(
-                                        [StatusEnum.CORRECT, StatusEnum.INCORRECT]
-                                    ),
-                                    self.model_class.points_earned,
-                                )
-                            ],
+                        case(
+                            (
+                                self.model_class.status.in_(
+                                    [StatusEnum.CORRECT, StatusEnum.INCORRECT]
+                                ),
+                                self.model_class.points_earned,
+                            ),
                             else_=None,
                         )
                     ),
@@ -504,15 +500,15 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
                 )
             )
             .group_by(self.model_class.symbol)
-            .order_by(desc("count"))
+            .order_by(desc("prediction_count"))
             .limit(limit)
             .all()
         )
 
         return [
             (
-                row.ticker,
-                row.count,
+                str(row.ticker),
+                int(row.prediction_count),
                 float(row.win_rate) if row.win_rate is not None else None,
                 float(row.avg_profit) if row.avg_profit is not None else None,
             )
@@ -534,27 +530,25 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         short_stats = (
             self.db.query(
                 self.model_class.symbol.label("ticker"),
-                func.count(self.model_class.id).label("count"),
+                func.count(self.model_class.id).label("prediction_count"),
                 # 승률 계산 (완료된 예측 중 정답 비율)
                 func.cast(
                     func.sum(
-                        func.case(
-                            [(self.model_class.status == StatusEnum.CORRECT, 1)],
+                        case(
+                            (self.model_class.status == StatusEnum.CORRECT, 1),
                             else_=0,
                         )
                     )
                     * 100.0
                     / func.nullif(
                         func.sum(
-                            func.case(
-                                [
-                                    (
-                                        self.model_class.status.in_(
-                                            [StatusEnum.CORRECT, StatusEnum.INCORRECT]
-                                        ),
-                                        1,
-                                    )
-                                ],
+                            case(
+                                (
+                                    self.model_class.status.in_(
+                                        [StatusEnum.CORRECT, StatusEnum.INCORRECT]
+                                    ),
+                                    1,
+                                ),
                                 else_=0,
                             )
                         ),
@@ -565,15 +559,13 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
                 # 평균 수익률 계산 (완료된 예측의 평균 포인트 기반 추정)
                 func.cast(
                     func.avg(
-                        func.case(
-                            [
-                                (
-                                    self.model_class.status.in_(
-                                        [StatusEnum.CORRECT, StatusEnum.INCORRECT]
-                                    ),
-                                    self.model_class.points_earned,
-                                )
-                            ],
+                        case(
+                            (
+                                self.model_class.status.in_(
+                                    [StatusEnum.CORRECT, StatusEnum.INCORRECT]
+                                ),
+                                self.model_class.points_earned,
+                            ),
                             else_=None,
                         )
                     ),
@@ -587,15 +579,15 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
                 )
             )
             .group_by(self.model_class.symbol)
-            .order_by(desc("count"))
+            .order_by(desc("prediction_count"))
             .limit(limit)
             .all()
         )
 
         return [
             (
-                row.ticker,
-                row.count,
+                str(row.ticker),
+                int(row.prediction_count),
                 float(row.win_rate) if row.win_rate is not None else None,
                 float(row.avg_profit) if row.avg_profit is not None else None,
             )
