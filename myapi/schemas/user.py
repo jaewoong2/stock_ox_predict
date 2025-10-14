@@ -11,6 +11,7 @@ class AuthProvider(str, Enum):
     LOCAL = "local"
     GOOGLE = "google"
     KAKAO = "kakao"
+    MAGIC_LINK = "magic_link"
 
 
 class User(BaseModel):

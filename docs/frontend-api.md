@@ -231,6 +231,7 @@ enum AuthProvider {
   LOCAL = "local",
   GOOGLE = "google",
   KAKAO = "kakao",
+  MAGIC_LINK = "magic_link",
 }
 
 enum UserRole {
@@ -2795,6 +2796,8 @@ const getProviderText = (provider: AuthProvider): string => {
       return "Google";
     case AuthProvider.KAKAO:
       return "Kakao";
+    case AuthProvider.MAGIC_LINK:
+      return "Magic Link";
     case AuthProvider.LOCAL:
       return "일반";
     default:
