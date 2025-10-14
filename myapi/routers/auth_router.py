@@ -61,33 +61,37 @@ async def verify_magic_link(
 ) -> Any:
     """Verify magic link token"""
     try:
-        result = await magic_link_service.verify_magic_link(token)
+        auth_result, redirect_url = await magic_link_service.verify_magic_link(token)
+
+        effective_redirect_url = redirect_url or settings.magic_link_client_redirect_url
 
         if redirect:
-            redirect_url = settings.magic_link_client_redirect_url
-            if redirect_url:
+            if effective_redirect_url:
                 qs = urlencode(
                     {
-                        "token": result.token,
-                        "user_id": result.user_id,
-                        "nickname": result.nickname,
+                        "token": auth_result.token,
+                        "user_id": auth_result.user_id,
+                        "nickname": auth_result.nickname,
                         "provider": "magic_link",
-                        "is_new_user": str(result.is_new_user).lower(),
+                        "is_new_user": str(auth_result.is_new_user).lower(),
                     }
                 )
-                separator = "&" if "?" in redirect_url else "?"
+                separator = (
+                    "&" if "?" in effective_redirect_url else "?"
+                )
                 return RedirectResponse(
-                    url=f"{redirect_url}{separator}{qs}",
+                    url=f"{effective_redirect_url}{separator}{qs}",
                     status_code=status.HTTP_302_FOUND,
                 )
 
         return BaseResponse(
             success=True,
             data={
-                "user_id": result.user_id,
-                "token": result.token,
-                "nickname": result.nickname,
-                "is_new_user": result.is_new_user,
+                "user_id": auth_result.user_id,
+                "token": auth_result.token,
+                "nickname": auth_result.nickname,
+                "is_new_user": auth_result.is_new_user,
+                "redirect_url": effective_redirect_url,
             },
         )
     except AuthenticationError as e:

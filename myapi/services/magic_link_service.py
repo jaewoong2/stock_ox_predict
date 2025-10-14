@@ -1,7 +1,9 @@
+import json
 import secrets
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Tuple, Set
+from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 
 from myapi.config import Settings
@@ -35,9 +37,18 @@ class MagicLinkService:
                 minutes=self.settings.MAGIC_LINK_EXPIRE_MINUTES
             )
 
-            # Save token with email as redirect_uri
+            redirect_target = self._resolve_redirect_url(
+                str(request.redirect_url) if request.redirect_url else None
+            )
+
+            state_payload = {"email": request.email}
+            if redirect_target:
+                state_payload["redirect_url"] = redirect_target
+
             self.oauth_state_repo.save(
-                state=token, client_redirect_uri=request.email, expires_at=expires_at
+                state=token,
+                client_redirect_uri=json.dumps(state_payload),
+                expires_at=expires_at,
             )
 
             base_url = self.settings.magic_link_base_url
@@ -62,13 +73,19 @@ class MagicLinkService:
             logger.error(f"Failed to send magic link: {str(e)}")
             return MagicLinkResponse(success=False, message="Failed to send magic link")
 
-    async def verify_magic_link(self, token: str) -> OAuthLoginResponse:
+    async def verify_magic_link(self, token: str) -> Tuple[OAuthLoginResponse, Optional[str]]:
         """Verify magic link token and authenticate user"""
-        # Get email from oauth_states and delete the token
-        email = self.oauth_state_repo.pop(token)
+        state_value = self.oauth_state_repo.pop(token)
+
+        if not state_value:
+            raise AuthenticationError("Invalid or expired magic link")
+
+        email, state_redirect = self._extract_state_payload(state_value)
 
         if not email:
             raise AuthenticationError("Invalid or expired magic link")
+
+        redirect_target = self._resolve_redirect_url(state_redirect)
 
         # Get or create user
         user = self.user_repo.get_by_email(email)
@@ -129,12 +146,84 @@ class MagicLinkService:
         # Generate JWT token
         access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
 
-        return OAuthLoginResponse(
+        auth_response = OAuthLoginResponse(
             user_id=user.id,
             token=access_token,
             nickname=user.nickname,
             is_new_user=is_new_user,
         )
+
+        return auth_response, redirect_target
+
+    def _extract_state_payload(
+        self, stored_value: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Parse stored magic link payload (backward compatible with legacy format)."""
+        try:
+            data = json.loads(stored_value)
+        except json.JSONDecodeError:
+            # Legacy entries stored plain email string
+            return stored_value, None
+
+        if isinstance(data, dict):
+            email = data.get("email")
+            redirect_url = data.get("redirect_url")
+            return email, redirect_url
+
+        return None, None
+
+    def _resolve_redirect_url(self, supplied: Optional[str]) -> Optional[str]:
+        """Validate supplied redirect or fall back to configured default."""
+        if supplied:
+            try:
+                return self._validate_redirect_url(supplied)
+            except ValidationError as exc:
+                logger.warning(
+                    "Ignoring invalid magic link redirect '%s': %s", supplied, exc
+                )
+
+        default_url = self.settings.magic_link_client_redirect_url
+        try:
+            return self._validate_redirect_url(default_url)
+        except ValidationError as exc:
+            if default_url:
+                logger.warning(
+                    "Configured magic link redirect URL is invalid: %s", exc
+                )
+            return None
+
+    def _validate_redirect_url(self, url: Optional[str]) -> Optional[str]:
+        if not url:
+            return None
+
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValidationError("Invalid redirect URL")
+
+        allowed_hosts = self._allowed_redirect_hosts()
+        if allowed_hosts and parsed.netloc not in allowed_hosts:
+            raise ValidationError(
+                f"Redirect host '{parsed.netloc}' not permitted"
+            )
+
+        return url
+
+    def _allowed_redirect_hosts(self) -> Set[str]:
+        urls = [
+            self.settings.MAGIC_LINK_CLIENT_REDIRECT_URL,
+            self.settings.MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL,
+            self.settings.MAGIC_LINK_CLIENT_REDIRECT_URL_PROD,
+            self.settings.magic_link_client_redirect_url,
+        ]
+
+        hosts: Set[str] = set()
+        for candidate in urls:
+            if not candidate:
+                continue
+            parsed = urlparse(candidate)
+            if parsed.netloc:
+                hosts.add(parsed.netloc)
+        return hosts
 
     async def _send_email(self, to_email: str, subject: str, body_html: str):
         """Send email via AWS SES"""
