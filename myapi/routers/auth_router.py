@@ -56,11 +56,30 @@ async def send_magic_link(
 @inject
 async def verify_magic_link(
     token: str,
+    redirect: bool = True,
     magic_link_service: MagicLinkService = Depends(get_magic_link_service),
 ) -> Any:
     """Verify magic link token"""
     try:
         result = await magic_link_service.verify_magic_link(token)
+
+        if redirect:
+            redirect_url = settings.magic_link_client_redirect_url
+            if redirect_url:
+                qs = urlencode(
+                    {
+                        "token": result.token,
+                        "user_id": result.user_id,
+                        "nickname": result.nickname,
+                        "provider": "magic_link",
+                        "is_new_user": str(result.is_new_user).lower(),
+                    }
+                )
+                separator = "&" if "?" in redirect_url else "?"
+                return RedirectResponse(
+                    url=f"{redirect_url}{separator}{qs}",
+                    status_code=status.HTTP_302_FOUND,
+                )
 
         return BaseResponse(
             success=True,

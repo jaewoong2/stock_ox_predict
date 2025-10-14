@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     # Magic Link
     MAGIC_LINK_EXPIRE_MINUTES: int = 15
     MAGIC_LINK_BASE_URL: str = ""
+    MAGIC_LINK_BASE_URL_LOCAL: Optional[str] = None
+    MAGIC_LINK_BASE_URL_PROD: Optional[str] = None
+    MAGIC_LINK_CLIENT_REDIRECT_URL: str = ""
+    MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL: Optional[str] = None
+    MAGIC_LINK_CLIENT_REDIRECT_URL_PROD: Optional[str] = None
     SES_FROM_EMAIL: str = ""
 
     # External APIs
@@ -139,6 +144,38 @@ class Settings(BaseSettings):
     LAMBDA_URL_TIMEOUT_SEC: int = 15
     # Internal auth forwarding when using Function URL (avoid clobbering AWS SigV4 Authorization header)
     INTERNAL_AUTH_HEADER: str = "x-internal-authorization"
+
+    @property
+    def magic_link_base_url(self) -> str:
+        """Return environment-appropriate magic link base URL."""
+        env = (self.ENVIRONMENT or "").lower()
+
+        if env in {"local", "development", "dev"} and self.MAGIC_LINK_BASE_URL_LOCAL:
+            return self.MAGIC_LINK_BASE_URL_LOCAL
+
+        if env in {"production", "prod", "staging"} and self.MAGIC_LINK_BASE_URL_PROD:
+            return self.MAGIC_LINK_BASE_URL_PROD
+
+        return self.MAGIC_LINK_BASE_URL
+
+    @property
+    def magic_link_client_redirect_url(self) -> str:
+        """Return frontend redirect URL used after magic link verification."""
+        env = (self.ENVIRONMENT or "").lower()
+
+        if (
+            env in {"local", "development", "dev"}
+            and self.MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL
+        ):
+            return self.MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL
+
+        if (
+            env in {"production", "prod", "staging"}
+            and self.MAGIC_LINK_CLIENT_REDIRECT_URL_PROD
+        ):
+            return self.MAGIC_LINK_CLIENT_REDIRECT_URL_PROD
+
+        return self.MAGIC_LINK_CLIENT_REDIRECT_URL
 
 
 settings = Settings()

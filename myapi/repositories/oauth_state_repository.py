@@ -1,5 +1,5 @@
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, cast
 
 from sqlalchemy.orm import Session
 
@@ -40,6 +40,17 @@ class OAuthStateRepository:
         )
 
         if not rec:
+            return None
+
+        # Expire stale states before returning the redirect/email value
+        expires_at_value = cast(Optional[datetime], rec.expires_at)
+        if expires_at_value and expires_at_value < datetime.now(timezone.utc):
+            try:
+                self.db.delete(rec)
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
             return None
 
         client_redirect = rec.redirect_uri

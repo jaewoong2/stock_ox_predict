@@ -37,13 +37,15 @@ class MagicLinkService:
 
             # Save token with email as redirect_uri
             self.oauth_state_repo.save(
-                state=token,
-                client_redirect_uri=request.email,
-                expires_at=expires_at
+                state=token, client_redirect_uri=request.email, expires_at=expires_at
             )
 
+            base_url = self.settings.magic_link_base_url
+            if not base_url:
+                raise ValidationError("MAGIC_LINK_BASE_URL is not configured.")
+
             # Generate magic link URL
-            magic_link_url = f"{self.settings.MAGIC_LINK_BASE_URL}?token={token}"
+            magic_link_url = f"{base_url}?token={token}"
 
             # Send email via AWS SES
             await self._send_email(
@@ -58,9 +60,7 @@ class MagicLinkService:
 
         except Exception as e:
             logger.error(f"Failed to send magic link: {str(e)}")
-            return MagicLinkResponse(
-                success=False, message="Failed to send magic link"
-            )
+            return MagicLinkResponse(success=False, message="Failed to send magic link")
 
     async def verify_magic_link(self, token: str) -> OAuthLoginResponse:
         """Verify magic link token and authenticate user"""
@@ -77,7 +77,7 @@ class MagicLinkService:
         if not user:
             # Create new user
             nickname = email.split("@")[0]
-            
+
             # Handle duplicate nicknames
             original_nickname = nickname
             counter = 1
@@ -97,7 +97,6 @@ class MagicLinkService:
 
             is_new_user = True
 
-            # Award signup bonus
             try:
                 from myapi.schemas.points import PointsTransactionRequest
 
@@ -128,9 +127,7 @@ class MagicLinkService:
             self.user_repo.update_last_login(user.id)
 
         # Generate JWT token
-        access_token = create_access_token(
-            data={"sub": user.email, "user_id": user.id}
-        )
+        access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
 
         return OAuthLoginResponse(
             user_id=user.id,
@@ -142,7 +139,7 @@ class MagicLinkService:
     async def _send_email(self, to_email: str, subject: str, body_html: str):
         """Send email via AWS SES"""
         ses = self.aws_service._client("ses")
-        
+
         try:
             response = ses.send_email(
                 Source=self.settings.SES_FROM_EMAIL,
