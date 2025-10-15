@@ -244,38 +244,62 @@ class MagicLinkService:
             raise
 
     def _generate_email_html(self, magic_link_url: str) -> str:
-        """Generate email HTML template"""
+        """Generate polished login email template"""
         return f"""
         <!DOCTYPE html>
-        <html>
+        <html lang="ko">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{self.settings.APP_NAME} Magic Link</title>
         </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background-color: #f8f9fa; border-radius: 10px; padding: 30px;">
-                <h2 style="color: #2c3e50; margin-bottom: 20px;">OX Universe 로그인</h2>
-                <p style="margin-bottom: 20px;">안녕하세요!</p>
-                <p style="margin-bottom: 20px;">아래 버튼을 클릭하여 로그인하세요:</p>
-                <div style="text-align: center; margin: 30px 0;">
-                    <a href="{magic_link_url}" 
-                       style="display: inline-block; 
-                              background-color: #007bff; 
-                              color: white; 
-                              padding: 12px 30px; 
-                              text-decoration: none; 
-                              border-radius: 5px;
-                              font-weight: bold;">
-                        로그인하기
-                    </a>
-                </div>
-                <p style="color: #666; font-size: 14px; margin-top: 30px;">
-                    이 링크는 {self.settings.MAGIC_LINK_EXPIRE_MINUTES}분 동안 유효합니다.
-                </p>
-                <p style="color: #666; font-size: 14px;">
-                    본인이 요청하지 않은 경우 이 이메일을 무시하세요.
-                </p>
-            </div>
+        <body style="margin:0; padding:0; background-color:#f6f7fb; color:#1f2937; font-family:'Helvetica Neue', Arial, sans-serif;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f6f7fb; padding:48px 0;">
+                <tr>
+                    <td align="center">
+                        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:16px; border:1px solid #e5e7eb; overflow:hidden;">
+                            <tr>
+                                <td style="padding:32px 40px 16px 40px; text-align:center;">
+                                    <div style="font-size:26px; font-weight:700; color:#111827; letter-spacing:-0.4px;">
+                                        {self.settings.APP_NAME or "OX Universe"}
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:0 40px 8px 40px;">
+                                    <div style="background-color:#f3f4f6; border-radius:12px; padding:20px 24px; font-size:15px; line-height:1.7; color:#4b5563; text-align:center;">
+                                        <strong style="display:block; margin-bottom:8px; color:#111827;">안녕하세요!</strong>
+                                        로그인 요청이 확인되었습니다. 아래 버튼을 눌러 로그인을 완료하세요.<br>
+                                        만약 본인이 요청하지 않았다면, 이 메일을 무시해 주세요.
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:16px 40px 24px 40px; text-align:center;">
+                                    <a href="{magic_link_url}" style="display:inline-block; background:linear-gradient(135deg,#7c3aed,#6366f1); color:#ffffff; text-decoration:none; font-weight:600; padding:14px 48px; border-radius:9999px; font-size:17px;">
+                                        계속하기
+                                    </a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:0 40px 24px 40px; text-align:center; font-size:13px; color:#6b7280; line-height:1.7;">
+                                    버튼이 작동하지 않는다면 아래 링크를 브라우저 주소창에 붙여넣으세요.<br>
+                                    <a href="{magic_link_url}" style="color:#7c3aed; text-decoration:none;">{magic_link_url}</a>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:0 40px 32px 40px; font-size:12px; color:#9ca3af; text-align:center; line-height:1.7;">
+                                    이 링크는 발송 시점부터 {self.settings.MAGIC_LINK_EXPIRE_MINUTES}분 동안만 유효합니다.<br>
+                                    보안을 위해 타인과 공유하지 말아 주세요.
+                                </td>
+                            </tr>
+                        </table>
+                        <div style="margin-top:24px; font-size:12px; color:#9ca3af;">
+                            © {datetime.now().year} {self.settings.APP_NAME or "OX Universe"} · All rights reserved.
+                        </div>
+                    </td>
+                </tr>
+            </table>
         </body>
         </html>
         """

@@ -150,11 +150,15 @@ class Settings(BaseSettings):
         """Return environment-appropriate magic link base URL."""
         env = (self.ENVIRONMENT or "").lower()
 
-        if env in {"local", "development", "dev"} and self.MAGIC_LINK_BASE_URL_LOCAL:
-            return self.MAGIC_LINK_BASE_URL_LOCAL
+        if env in {"local", "development", "dev"}:
+            url = self.MAGIC_LINK_BASE_URL_LOCAL or self.MAGIC_LINK_BASE_URL
+            if url:
+                return url
 
-        if env in {"production", "prod", "staging"} and self.MAGIC_LINK_BASE_URL_PROD:
-            return self.MAGIC_LINK_BASE_URL_PROD
+        if env in {"production", "prod", "staging"}:
+            url = self.MAGIC_LINK_BASE_URL_PROD or self.MAGIC_LINK_BASE_URL
+            if url:
+                return url
 
         return self.MAGIC_LINK_BASE_URL
 
@@ -163,17 +167,15 @@ class Settings(BaseSettings):
         """Return frontend redirect URL used after magic link verification."""
         env = (self.ENVIRONMENT or "").lower()
 
-        if (
-            env in {"local", "development", "dev"}
-            and self.MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL
-        ):
-            return self.MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL
+        if env in {"local", "development", "dev"}:
+            url = self.MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL or self.MAGIC_LINK_CLIENT_REDIRECT_URL
+            if url:
+                return url
 
-        if (
-            env in {"production", "prod", "staging"}
-            and self.MAGIC_LINK_CLIENT_REDIRECT_URL_PROD
-        ):
-            return self.MAGIC_LINK_CLIENT_REDIRECT_URL_PROD
+        if env in {"production", "prod", "staging"}:
+            url = self.MAGIC_LINK_CLIENT_REDIRECT_URL_PROD or self.MAGIC_LINK_CLIENT_REDIRECT_URL
+            if url:
+                return url
 
         return self.MAGIC_LINK_CLIENT_REDIRECT_URL
 
