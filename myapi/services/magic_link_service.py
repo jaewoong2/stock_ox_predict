@@ -61,7 +61,7 @@ class MagicLinkService:
             # Send email via AWS SES
             await self._send_email(
                 to_email=request.email,
-                subject="OX Universe 로그인 링크",
+                subject="[Bamtoly | AI로 분석하는 미국주식] 로그인 링크",
                 body_html=self._generate_email_html(magic_link_url),
             )
 
@@ -73,7 +73,9 @@ class MagicLinkService:
             logger.error(f"Failed to send magic link: {str(e)}")
             return MagicLinkResponse(success=False, message="Failed to send magic link")
 
-    async def verify_magic_link(self, token: str) -> Tuple[OAuthLoginResponse, Optional[str]]:
+    async def verify_magic_link(
+        self, token: str
+    ) -> Tuple[OAuthLoginResponse, Optional[str]]:
         """Verify magic link token and authenticate user"""
         state_value = self.oauth_state_repo.pop(token)
 
@@ -187,9 +189,7 @@ class MagicLinkService:
             return self._validate_redirect_url(default_url)
         except ValidationError as exc:
             if default_url:
-                logger.warning(
-                    "Configured magic link redirect URL is invalid: %s", exc
-                )
+                logger.warning("Configured magic link redirect URL is invalid: %s", exc)
             return None
 
     def _validate_redirect_url(self, url: Optional[str]) -> Optional[str]:
@@ -202,9 +202,7 @@ class MagicLinkService:
 
         allowed_hosts = self._allowed_redirect_hosts()
         if allowed_hosts and parsed.netloc not in allowed_hosts:
-            raise ValidationError(
-                f"Redirect host '{parsed.netloc}' not permitted"
-            )
+            raise ValidationError(f"Redirect host '{parsed.netloc}' not permitted")
 
         return url
 
