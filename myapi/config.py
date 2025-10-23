@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     
     # Magic Link
     MAGIC_LINK_EXPIRE_MINUTES: int = 15
+    # API Base URL (쿨다운 콜백 등에 사용)
+    API_BASE_URL: str = ""
+    API_BASE_URL_LOCAL: Optional[str] = None
+    API_BASE_URL_PROD: Optional[str] = None
+    
+    # Magic Link
     MAGIC_LINK_BASE_URL: str = ""
     MAGIC_LINK_BASE_URL_LOCAL: Optional[str] = None
     MAGIC_LINK_BASE_URL_PROD: Optional[str] = None
@@ -98,7 +104,7 @@ class Settings(BaseSettings):
     COOLDOWN_MINUTES: int = 5  # 자동 쿨다운 간격 (분)
     COOLDOWN_TRIGGER_THRESHOLD: int = 3  # 쿨다운 시작 임계값 (슬롯 개수)
     MAX_COOLDOWN_TIMERS_PER_DAY: int = 10  # 일일 쿨다운 타이머 생성 제한
-    COOLDOWN_WARMUP_OFFSET_MINUTES: int = 1  # 본 작업 전에 워머 호출 (분) 0이면 비활성
+    # COOLDOWN_WARMUP_OFFSET_MINUTES 제거됨 (Warmup 로직 제거)
 
     # Point Management
     CORRECT_PREDICTION_POINTS: int = 100  # 정답 예측 시 지급 포인트
@@ -144,6 +150,12 @@ class Settings(BaseSettings):
     LAMBDA_URL_TIMEOUT_SEC: int = 15
     # Internal auth forwarding when using Function URL (avoid clobbering AWS SigV4 Authorization header)
     INTERNAL_AUTH_HEADER: str = "x-internal-authorization"
+
+    @property
+    def api_base_url(self) -> str:
+        """Return environment-appropriate API base URL for callbacks."""
+        # Always use production URL (local도 production API 호출)
+        return self.API_BASE_URL_PROD or self.API_BASE_URL
 
     @property
     def magic_link_base_url(self) -> str:

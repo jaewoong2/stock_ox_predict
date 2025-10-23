@@ -555,3 +555,39 @@ class AwsService:
             raise HTTPException(
                 status_code=500, detail=f"Function URL request failed: {str(e)}"
             )
+
+    def generate_api_call_lambda_payload(
+        self,
+        *,
+        target_url: str,
+        method: Literal["GET", "POST", "PUT", "DELETE"] = "POST",
+        headers: Optional[Dict[str, str]] = None,
+        body: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        API_CALL_LAMBDA 함수용 페이로드 생성
+        
+        EventBridge Scheduler → API_CALL_LAMBDA → FastAPI 호출용
+        
+        Args:
+            target_url: 호출할 API URL (예: https://ox-universe.bamtoly.com/api/v1/cooldown/handle-slot-refill)
+            method: HTTP 메서드
+            headers: HTTP 헤더
+            body: POST body (JSON 변환됨)
+            params: Query string parameters
+            
+        Returns:
+            API_CALL_LAMBDA에 전달할 페이로드
+        """
+        payload = {
+            "target_url": target_url,
+            "method": method.upper(),
+            "headers": headers or {},
+            "params": params or {},
+        }
+        
+        if body and method != "GET":
+            payload["body"] = body
+            
+        return payload

@@ -72,20 +72,7 @@ class FakePredictionService:
             points_earned=0,
         )
 
-    def cancel_prediction(self, user_id, prediction_id):
-        from myapi.schemas.prediction import PredictionResponse, PredictionChoice, PredictionStatus
-        from datetime import date
-        return PredictionResponse(
-            id=prediction_id,
-            user_id=user_id,
-            trading_day=date(2025, 1, 1),
-            symbol="AAPL",
-            choice=PredictionChoice.UP,
-            status=PredictionStatus.CANCELLED,
-            submitted_at=_fake_now(),
-            updated_at=_fake_now(),
-            points_earned=0,
-        )
+    # cancel_prediction 메서드 제거됨 (Mock)
 
     def get_user_predictions_for_day(self, user_id, trading_day):
         from myapi.schemas.prediction import (
@@ -198,12 +185,7 @@ def test_update_prediction_success():
     assert body["data"]["prediction"]["choice"] == "DOWN"
 
 
-def test_cancel_prediction_success():
-    res = client.delete("/api/v1/predictions/1")
-    assert res.status_code == 200
-    body = res.json()
-    assert body["success"] is True
-    assert body["data"]["prediction"]["status"] == "CANCELLED"
+# test_cancel_prediction_success 제거됨 (예측 취소 기능 제거)
 
 
 def test_stats_and_summary_success():

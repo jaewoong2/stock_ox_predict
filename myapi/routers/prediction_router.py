@@ -100,36 +100,7 @@ def update_prediction(
         )
 
 
-@router.delete("/{prediction_id}", response_model=BaseResponse)
-@inject
-def cancel_prediction(
-    prediction_id: int,
-    current_user: UserSchema = Depends(get_current_active_user),
-    service: PredictionService = Depends(get_prediction_service),
-) -> Any:
-    try:
-        canceled = service.cancel_prediction(current_user.id, prediction_id)
-        return BaseResponse(success=True, data={"prediction": canceled.model_dump()})
-    except (BusinessLogicError,) as e:
-        msg = getattr(e, "message", str(e))
-        logger.warning(f"[PredictionError] cancel: {msg}")
-        return BaseResponse(
-            success=False,
-            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=msg),
-        )
-    except NotFoundError as e:
-        msg = getattr(e, "message", str(e))
-        logger.warning(f"[PredictionError] cancel: {msg}")
-        return BaseResponse(
-            success=False,
-            error=Error(code=ErrorCode.USER_NOT_FOUND, message=msg),
-        )
-    except Exception:
-        logger.exception("[PredictionError] cancel: unexpected error")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Prediction cancel failed",
-        )
+# DELETE 엔드포인트 제거됨 (예측 취소 기능 제거)
 
 
 @router.get("/day/{trading_day}", response_model=BaseResponse)

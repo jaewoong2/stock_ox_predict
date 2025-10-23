@@ -6,8 +6,8 @@ from typing import List, Optional, Tuple, cast
 from sqlalchemy.orm import Session
 from myapi.models.prediction import (
     Prediction as PredictionModel,
-    UserDailyStats as UserDailyStatsModel,
 )
+from myapi.services.cooldown_service import CooldownService
 
 from myapi.core.exceptions import (
     ConflictError,
@@ -240,7 +240,6 @@ class PredictionService:
             # - 이미 활성 쿨다운이 있으면 아무 것도 하지 않음
             # - 사용 가능한 슬롯이 임계값보다 적고 타이머가 없으면 자동 회복 시작
             if available_slots < self.settings.COOLDOWN_TRIGGER_THRESHOLD:
-                from myapi.services.cooldown_service import CooldownService
 
                 cooldown_service = CooldownService(self.db, self.settings)
                 active = cooldown_service.cooldown_repo.get_active_timer(
@@ -252,37 +251,7 @@ class PredictionService:
             # 쿨다운 시작 실패해도 예측 제출은 성공으로 처리
             print(f"Failed to check cooldown for user {user_id}: {str(e)}")
 
-    async def _trigger_cooldown_if_needed(
-        self, user_id: int, trading_day: date
-    ) -> None:
-        """
-        예측 제출 후 슬롯 수를 확인하여 필요시 자동 쿨다운 시작 (비동기 버전)
-
-        Args:
-            user_id: 사용자 ID
-            trading_day: 거래일
-        """
-        try:
-            # 현재 사용 가능한 슬롯 수 확인 (가용=현재 available_predictions)
-            stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
-            available_slots = max(0, stats.available_predictions)
-
-            # 임계값 이하일 때만 쿨다운 시작 (정책: 3 이하)
-            if available_slots <= 3:
-                from myapi.services.cooldown_service import CooldownService
-
-                cooldown_service = CooldownService(self.db, self.settings)
-                await cooldown_service.start_auto_cooldown(user_id, trading_day)
-
-                print(
-                    f"Triggered auto cooldown for user {user_id}, "
-                    f"available_slots: {available_slots}, "
-                    f"threshold: {self.settings.COOLDOWN_TRIGGER_THRESHOLD}"
-                )
-
-        except Exception as e:
-            # 쿨다운 시작 실패해도 예측 제출은 성공으로 처리
-            print(f"Failed to trigger cooldown for user {user_id}: {str(e)}")
+    # 비동기 버전 제거됨 (사용되지 않음, 동기 버전만 사용)
 
     def update_prediction(
         self, user_id: int, prediction_id: int, payload: PredictionUpdate
@@ -322,83 +291,12 @@ class PredictionService:
             raise ValidationError("Failed to update prediction")
         return updated
 
-    def cancel_prediction(self, user_id: int, prediction_id: int) -> PredictionResponse:
-        model: Optional[PredictionModel] = (
-            self.db.query(PredictionModel)
-            .filter(PredictionModel.id == prediction_id)
-            .first()
-        )
-        if not model:
-            raise NotFoundError("Prediction not found")
-
-        if int(str(model.user_id)) != int(user_id):
-            raise BusinessLogicError(
-                error_code="FORBIDDEN_PREDICTION",
-                message="Cannot cancel another user's prediction",
-            )
-
-        model_status = cast(StatusEnum, model.status)
-        if model_status != StatusEnum.PENDING:
-            raise BusinessLogicError(
-                error_code="PREDICTION_NOT_CANCELABLE",
-                message="Only pending predictions can be canceled",
-            )
-
-        # 제출 후 취소 허용 시간 경과 여부 체크
-        try:
-            now = datetime.now(timezone.utc)
-            submitted_at = getattr(model, "submitted_at", None)
-            if (
-                submitted_at
-                and (now - submitted_at).total_seconds()
-                > self.CANCEL_WINDOW_MINUTES * 60
-            ):
-                raise BusinessLogicError(
-                    error_code="PREDICTION_CANCEL_TIME_EXCEEDED",
-                    message=f"Predictions can be canceled within {self.CANCEL_WINDOW_MINUTES} minutes of submission",
-                )
-        except Exception:
-            # 시간 계산 실패 시 보수적으로 취소 불가 처리
-            raise BusinessLogicError(
-                error_code="PREDICTION_CANCEL_TIME_EXCEEDED",
-                message=f"Predictions can be canceled within {self.CANCEL_WINDOW_MINUTES} minutes of submission",
-            )
-
-        if getattr(model, "locked_at", None) is not None:
-            raise BusinessLogicError(
-                error_code="PREDICTION_LOCKED",
-                message="Prediction has been locked for settlement",
-            )
-
-        trading_day = to_date(model.trading_day)
-
-        # 서비스 단위 원자 트랜잭션으로 취소 + 슬롯 환불 처리
-        def _cancel_operation() -> PredictionResponse:
-            canceled_prediction = self.pred_repo.cancel_prediction(
-                prediction_id, commit=False
-            )
-            if not canceled_prediction:
-                raise ValidationError("Failed to cancel prediction")
-
-            if trading_day:
-                self.stats_repo.refund_prediction(user_id, trading_day, 1, commit=False)
-
-            return canceled_prediction
+    # 예측 취소 기능 제거됨 (정책 변경)_prediction
 
         canceled = self._safe_transaction(_cancel_operation)
 
-        # 취소로 즉시 슬롯이 복구되므로 활성 쿨다운이 있다면 중단
-        if trading_day:
-            try:
-                from myapi.services.cooldown_service import CooldownService
-
-                cooldown_service = CooldownService(self.db, self.settings)
-                cooldown_service.cancel_active_cooldown(user_id, trading_day)
-            except Exception as e:
-                # 쿨다운 취소 실패는 치명적이지 않으므로 로깅만 수행
-                print(
-                    f"Failed to cancel cooldown after prediction cancel for user {user_id}: {str(e)}"
-                )
+        # 정책 변경: 예측 취소 시에도 쿨다운은 유지 (슬롯 회복 계속 진행)
+        # 쿨다운 취소 로직 제거됨
 
         # 취소 시 수수료 환불 (비즈니스 규칙에 따라)
         if self.PREDICTION_CANCEL_REFUND:

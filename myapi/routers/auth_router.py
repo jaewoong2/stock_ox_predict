@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from myapi.config import settings
 from myapi.services.auth_service import AuthService
-from myapi.core.exceptions import AuthenticationError, OAuthError, ValidationError
+from myapi.core.exceptions import AuthenticationError, OAuthError
 from myapi.repositories.oauth_state_repository import OAuthStateRepository
 from myapi.schemas.auth import (
     OAuthCallbackRequest,
@@ -76,9 +76,7 @@ async def verify_magic_link(
                         "is_new_user": str(auth_result.is_new_user).lower(),
                     }
                 )
-                separator = (
-                    "&" if "?" in effective_redirect_url else "?"
-                )
+                separator = "&" if "?" in effective_redirect_url else "?"
                 return RedirectResponse(
                     url=f"{effective_redirect_url}{separator}{qs}",
                     status_code=status.HTTP_302_FOUND,

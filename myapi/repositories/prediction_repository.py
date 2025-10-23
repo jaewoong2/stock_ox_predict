@@ -786,78 +786,33 @@ class UserDailyStatsRepository(
     def refill_by_cooldown(self, user_id: int, trading_day: date, amount: int = 1):
         """쿨다운으로 가용 슬롯 회복 (최대 3까지).
 
-        잠재적 락 경합을 줄이기 위해 단일 SQL로 원자적 업데이트를 시도하고,
-        일시적 타임아웃/락으로 실패 시 짧게 재시도합니다.
+        단순 원자적 UPDATE로 변경
         """
-        import time
-
-        max_retries = 3
-        backoff_sec = 0.2
-
-        for attempt in range(max_retries):
-            try:
-                # 잠금 대기 시간을 짧게 설정하여 빠르게 재시도
-                try:
-                    self.db.execute(text("SET LOCAL lock_timeout = '200ms'"))
-                    self.db.execute(text("SET LOCAL statement_timeout = '1000ms'"))
-                except Exception:
-                    # 일부 드라이버/엔진에서 실패하더라도 핵심 로직은 계속
-                    pass
-
-                # 먼저 NOWAIT로 행 잠금을 시도하여 대기 없이 충돌 감지
-                locked_row = (
-                    self.db.query(self.model_class)
-                    .filter(
-                        and_(
-                            self.model_class.user_id == user_id,
-                            self.model_class.trading_day == trading_day,
-                        )
-                    )
-                    .with_for_update(nowait=True)
-                    .one_or_none()
+        # 슬롯이 3 미만일 때만 충전 (최대 3까지)
+        updated_count = (
+            self.db.query(self.model_class)
+            .filter(
+                and_(
+                    self.model_class.user_id == user_id,
+                    self.model_class.trading_day == trading_day,
+                    self.model_class.available_predictions < 3,
                 )
-
-                if locked_row is None:
-                    # 행이 없으면 생성 후 최신 상태 반환
-                    return self.get_or_create_user_daily_stats(user_id, trading_day)
-
-                # available_predictions < 3 인 경우에만 cap(3)까지 증가 (단일 UPDATE 유지)
-                updated_count = (
-                    self.db.query(self.model_class)
-                    .filter(
-                        and_(
-                            self.model_class.user_id == user_id,
-                            self.model_class.trading_day == trading_day,
-                            self.model_class.available_predictions < 3,
-                        )
+            )
+            .update(
+                {
+                    "available_predictions": func.least(
+                        3, self.model_class.available_predictions + amount
                     )
-                    .update(
-                        {
-                            "available_predictions": func.least(
-                                3, self.model_class.available_predictions + amount
-                            )
-                        },
-                        synchronize_session=False,
-                    )
-                )
-                if updated_count > 0:
-                    self.db.commit()
-                # 최신 상태 반환
-                return self.get_or_create_user_daily_stats(user_id, trading_day)
-            except sa_exc.OperationalError as e:
-                # 잠금 불가/타임아웃 등 운영 에러: 재시도 백오프
-                self.db.rollback()
-                if attempt < max_retries - 1:
-                    time.sleep(backoff_sec * (attempt + 1))
-                    continue
-                raise
-            except Exception:
-                # 기타 예외도 동일 처리
-                self.db.rollback()
-                if attempt < max_retries - 1:
-                    time.sleep(backoff_sec * (attempt + 1))
-                    continue
-                raise
+                },
+                synchronize_session=False,
+            )
+        )
+
+        if updated_count > 0:
+            self.db.commit()
+
+        # 최신 상태 반환
+        return self.get_or_create_user_daily_stats(user_id, trading_day)
 
     def refund_prediction(
         self, user_id: int, trading_day: date, amount: int = 1, *, commit: bool = True

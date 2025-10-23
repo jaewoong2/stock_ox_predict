@@ -144,7 +144,7 @@ graph TD
  | 오늘의 종목 조회   | GET /universe/today                 | universe_router.py:20   |
   | 예측 제출       | POST /predictions/{symbol}          | prediction_router.py:29 |
   | 예측 수정       | PUT /predictions/{prediction_id}    | prediction_router.py:66 |
-  | 예측 취소       | DELETE /predictions/{prediction_id} | prediction_router.py:96 |
+    | ~~예측 취소~~ (제거됨) | ~~DELETE /predictions/{prediction_id}~~ | - |
   | 슬롯 정보 조회    | GET /ads/available-slots            | ad_unlock_router.py:183 |
   | 광고 시청 완료    | POST /ads/watch-complete            | ad_unlock_router.py:54  |
   | 쿨다운 슬롯 해제   | POST /ads/unlock-slot               | ad_unlock_router.py:121 |
@@ -157,7 +157,7 @@ graph TD
 - 예측 제출: `available - 1`, `predictions_made + 1` (원자적 트랜잭션으로 처리)
 - 자동 쿨다운: `available <= 3`이면 발동, 5분마다 +1, 최대 3까지 회복
   - `available >= 3`이면 쿨다운 불가(추가 충전은 광고로만 가능)
-- 예측 취소: 가용 +1, 사용량 -1로 즉시 환불 (cap=10 준수, 상태 PENDING, 기본 5분 이내)
+- ~~예측 취소: 기능 제거됨 (정책 변경)~~
 - 일일 초기화(연속성, 거래일 기준):
   - user_daily_stats가 없을 때 초기 가용은 `available = BASE + min(MAX_AD_SLOTS, lifetime_ad_bonus)`
   - lifetime_ad_bonus = `sum(ad_unlocks.unlocked_slots where method='AD')`
@@ -556,7 +556,7 @@ OAuth 로그인 → JWT 토큰 발급 → 신규 가입자 1000포인트 보너�
 - `GET /universe/today/with-prices` - 가격 정보 포함 종목 조회 (예측 지원)
 - `POST /predictions/{symbol}` - 예측 제출 (상승/하락)
 - `PUT /predictions/{prediction_id}` - 예측 수정
-- `DELETE /predictions/{prediction_id}` - 예측 취소
+- ~~`DELETE /predictions/{prediction_id}` - 예측 취소 (제거됨)~~
 
 #### **4.3 광고 시청 및 슬롯 증가**
 

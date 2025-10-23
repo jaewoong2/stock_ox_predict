@@ -587,24 +587,11 @@ const updatePrediction = async (
 };
 ```
 
-### 예측 취소
+### ~~예측 취소 (제거됨)~~
 
 ```typescript
-// DELETE /predictions/{prediction_id}
-const cancelPrediction = async (
-  token: string,
-  predictionId: number
-): Promise<Prediction> => {
-  const response = await fetch(`${API_BASE_URL}/predictions/${predictionId}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  const result: BaseResponse<{ prediction: Prediction }> =
-    await response.json();
-  if (!result.success) throw new Error(result.error?.message);
-  return result.data!.prediction;
-};
+// DELETE /predictions/{prediction_id} - 제거됨
+// 정책 변경: 예측 취소 기능 제거
 ```
 
 ### 특정 날짜 예측 조회
