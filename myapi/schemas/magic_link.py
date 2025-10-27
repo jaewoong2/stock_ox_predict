@@ -4,7 +4,7 @@ from typing import Optional
 
 class MagicLinkRequest(BaseModel):
     email: EmailStr
-    redirect_url: Optional[AnyHttpUrl] = None
+    redirect_url: Optional[str] = None
 
 
 class MagicLinkResponse(BaseModel):

@@ -197,7 +197,10 @@ class MagicLinkService:
             return None
 
         parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        if (
+            parsed.scheme not in {"http", "https", "bamtoly", "bamtoly://"}
+            or not parsed.netloc
+        ):
             raise ValidationError("Invalid redirect URL")
 
         allowed_hosts = self._allowed_redirect_hosts()
@@ -212,6 +215,7 @@ class MagicLinkService:
             self.settings.MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL,
             self.settings.MAGIC_LINK_CLIENT_REDIRECT_URL_PROD,
             self.settings.magic_link_client_redirect_url,
+            "bamtoly://auth-callback",
         ]
 
         hosts: Set[str] = set()
