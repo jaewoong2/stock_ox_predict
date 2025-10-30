@@ -15,7 +15,7 @@ from myapi.schemas.auth import (
     Error,
     ErrorCode,
 )
-from myapi.schemas.magic_link import MagicLinkRequest
+from myapi.schemas.magic_link import MagicLinkRequest, MagicLinkVerifyCodeRequest
 from myapi.services.magic_link_service import MagicLinkService
 
 from dependency_injector.wiring import inject
@@ -103,6 +103,43 @@ async def verify_magic_link(
             success=False,
             error=Error(
                 code=ErrorCode.FORBIDDEN, message="Failed to verify magic link"
+            ),
+        )
+
+
+@router.post("/magic-link/verify-code", response_model=BaseResponse)
+@inject
+async def verify_magic_link_code(
+    request: MagicLinkVerifyCodeRequest,
+    magic_link_service: MagicLinkService = Depends(get_magic_link_service),
+) -> Any:
+    """Verify 6-digit verification code and authenticate user"""
+    try:
+        auth_result = await magic_link_service.verify_code(
+            email=request.email,
+            code=request.code
+        )
+
+        return BaseResponse(
+            success=True,
+            data={
+                "user_id": auth_result.user_id,
+                "token": auth_result.token,
+                "nickname": auth_result.nickname,
+                "is_new_user": auth_result.is_new_user,
+            },
+        )
+    except AuthenticationError as e:
+        return BaseResponse(
+            success=False,
+            error=Error(code=ErrorCode.UNAUTHORIZED, message=str(e)),
+        )
+    except Exception as e:
+        logger.error(f"Magic link code verify error: {str(e)}")
+        return BaseResponse(
+            success=False,
+            error=Error(
+                code=ErrorCode.FORBIDDEN, message="Failed to verify magic link code"
             ),
         )
 

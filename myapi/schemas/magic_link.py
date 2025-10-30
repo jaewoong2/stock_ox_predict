@@ -14,3 +14,9 @@ class MagicLinkResponse(BaseModel):
 
 class MagicLinkVerifyRequest(BaseModel):
     token: str
+
+
+class MagicLinkVerifyCodeRequest(BaseModel):
+    """Request schema for verifying 6-digit code"""
+    email: EmailStr
+    code: str  # 6-digit numeric string

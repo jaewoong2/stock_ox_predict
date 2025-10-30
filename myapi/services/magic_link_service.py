@@ -11,10 +11,11 @@ from myapi.core.exceptions import AuthenticationError, ValidationError
 from myapi.repositories.oauth_state_repository import OAuthStateRepository
 from myapi.repositories.user_repository import UserRepository
 from myapi.services.point_service import PointService
-from myapi.schemas.magic_link import MagicLinkRequest, MagicLinkResponse
+from myapi.schemas.magic_link import MagicLinkRequest, MagicLinkResponse, MagicLinkVerifyCodeRequest
 from myapi.schemas.auth import OAuthLoginResponse
 from myapi.core.security import create_access_token
 from myapi.services.aws_service import AwsService
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -28,41 +29,64 @@ class MagicLinkService:
         self.point_service = PointService(db)
         self.aws_service = AwsService(settings)
 
+    def _generate_verification_code(self) -> str:
+        """Generate 6-digit numeric verification code (100000-999999)"""
+        return str(secrets.randbelow(900000) + 100000)
+
     async def send_magic_link(self, request: MagicLinkRequest) -> MagicLinkResponse:
         """Send magic link email via AWS SES"""
         try:
-            # Generate token
-            token = secrets.token_urlsafe(32)
-            expires_at = datetime.now(timezone.utc) + timedelta(
-                minutes=self.settings.MAGIC_LINK_EXPIRE_MINUTES
-            )
+            # Generate 6-digit verification code with retry logic for collision handling
+            max_retries = 3
+            token = None
 
-            redirect_target = self._resolve_redirect_url(
-                str(request.redirect_url) if request.redirect_url else None
-            )
+            for attempt in range(max_retries):
+                try:
+                    token = self._generate_verification_code()
+                    expires_at = datetime.now(timezone.utc) + timedelta(
+                        minutes=self.settings.MAGIC_LINK_EXPIRE_MINUTES
+                    )
 
-            state_payload = {"email": request.email}
-            if redirect_target:
-                state_payload["redirect_url"] = redirect_target
+                    redirect_target = self._resolve_redirect_url(
+                        str(request.redirect_url) if request.redirect_url else None
+                    )
 
-            self.oauth_state_repo.save(
-                state=token,
-                client_redirect_uri=json.dumps(state_payload),
-                expires_at=expires_at,
-            )
+                    state_payload = {"email": request.email}
+                    if redirect_target:
+                        state_payload["redirect_url"] = redirect_target
+
+                    self.oauth_state_repo.save(
+                        state=token,
+                        client_redirect_uri=json.dumps(state_payload),
+                        expires_at=expires_at,
+                    )
+
+                    # If save succeeded, break out of retry loop
+                    break
+
+                except IntegrityError:
+                    # State collision - retry with new code
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to generate unique verification code after {max_retries} attempts")
+                        raise
+                    logger.warning(f"Verification code collision on attempt {attempt + 1}, retrying...")
+                    continue
+
+            if not token:
+                raise ValidationError("Failed to generate verification code")
 
             base_url = self.settings.magic_link_base_url
             if not base_url:
                 raise ValidationError("MAGIC_LINK_BASE_URL is not configured.")
 
-            # Generate magic link URL
+            # Generate magic link URL with 6-digit code
             magic_link_url = f"{base_url}?token={token}"
 
-            # Send email via AWS SES
+            # Send email via AWS SES with 6-digit code displayed
             await self._send_email(
                 to_email=request.email,
                 subject="[Bamtoly | AI로 분석하는 미국주식] 로그인 링크",
-                body_html=self._generate_email_html(magic_link_url),
+                body_html=self._generate_email_html(magic_link_url, token),
             )
 
             return MagicLinkResponse(
@@ -157,6 +181,95 @@ class MagicLinkService:
 
         return auth_response, redirect_target
 
+    async def verify_code(
+        self, email: str, code: str
+    ) -> OAuthLoginResponse:
+        """Verify 6-digit verification code and authenticate user"""
+        # Pop state from DB (expires_at check included)
+        state_value = self.oauth_state_repo.pop(code)
+
+        if not state_value:
+            raise AuthenticationError("유효하지 않거나 만료된 인증 코드입니다")
+
+        # Extract email from stored payload
+        stored_email, state_redirect = self._extract_state_payload(state_value)
+
+        if not stored_email:
+            raise AuthenticationError("유효하지 않은 인증 코드입니다")
+
+        # Verify email matches
+        if stored_email != email:
+            raise AuthenticationError("이메일과 인증 코드가 일치하지 않습니다")
+
+        # Get or create user (reuse existing logic)
+        user = self.user_repo.get_by_email(email)
+        is_new_user = False
+
+        if not user:
+            # Create new user
+            nickname = email.split("@")[0]
+
+            # Handle duplicate nicknames
+            original_nickname = nickname
+            counter = 1
+            while self.user_repo.exists(filters={"nickname": nickname}):
+                nickname = f"{original_nickname}_{counter}"
+                counter += 1
+
+            user = self.user_repo.create_oauth_user(
+                email=email,
+                nickname=nickname,
+                auth_provider="magic_link",
+                provider_id=email,
+            )
+
+            if not user:
+                raise AuthenticationError("Failed to create user")
+
+            is_new_user = True
+
+            # Award signup bonus
+            try:
+                from myapi.schemas.points import PointsTransactionRequest
+
+                bonus_request = PointsTransactionRequest(
+                    amount=self.settings.SIGNUP_BONUS_POINTS,
+                    reason="Welcome bonus for new magic link user registration",
+                    ref_id=f"magic_link_signup_bonus_{user.id}_{datetime.now().strftime('%Y%m%d')}",
+                )
+
+                bonus_result = self.point_service.add_points(
+                    user_id=user.id, request=bonus_request
+                )
+
+                if bonus_result.success:
+                    logger.info(
+                        f"✅ Awarded signup bonus to new magic link user {user.id}: {self.settings.SIGNUP_BONUS_POINTS} points"
+                    )
+                else:
+                    logger.warning(
+                        f"❌ Failed to award signup bonus to new magic link user {user.id}: {bonus_result.message}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"❌ Error awarding signup bonus to new magic link user {user.id}: {str(e)}"
+                )
+        else:
+            # Update last login
+            self.user_repo.update_last_login(user.id)
+
+        # Generate JWT token
+        access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
+
+        auth_response = OAuthLoginResponse(
+            user_id=user.id,
+            token=access_token,
+            nickname=user.nickname,
+            is_new_user=is_new_user,
+        )
+
+        return auth_response
+
     def _extract_state_payload(
         self, stored_value: str
     ) -> Tuple[Optional[str], Optional[str]]:
@@ -247,8 +360,11 @@ class MagicLinkService:
             logger.error(f"Failed to send email via SES: {str(e)}")
             raise
 
-    def _generate_email_html(self, magic_link_url: str) -> str:
-        """Generate polished login email template"""
+    def _generate_email_html(self, magic_link_url: str, verification_code: str) -> str:
+        """Generate polished login email template with verification code"""
+        # Format verification code with spaces for readability
+        formatted_code = " ".join(verification_code)
+
         return f"""
         <!DOCTYPE html>
         <html lang="ko">
@@ -273,27 +389,47 @@ class MagicLinkService:
                                 <td style="padding:0 40px 8px 40px;">
                                     <div style="background-color:#f3f4f6; border-radius:12px; padding:20px 24px; font-size:15px; line-height:1.7; color:#4b5563; text-align:center;">
                                         <strong style="display:block; margin-bottom:8px; color:#111827;">안녕하세요!</strong>
-                                        로그인 요청이 확인되었습니다. 아래 버튼을 눌러 로그인을 완료하세요.<br>
+                                        로그인 요청이 확인되었습니다. 아래 두 가지 방법 중 하나를 선택하여 로그인하세요.<br>
                                         만약 본인이 요청하지 않았다면, 이 메일을 무시해 주세요.
                                     </div>
                                 </td>
                             </tr>
                             <tr>
-                                <td style="padding:16px 40px 24px 40px; text-align:center;">
+                                <td style="padding:16px 40px 8px 40px; text-align:center;">
+                                    <div style="font-size:14px; font-weight:600; color:#111827; margin-bottom:12px;">
+                                        방법 1: 버튼 클릭
+                                    </div>
                                     <a href="{magic_link_url}" style="display:inline-block; background:linear-gradient(135deg,#7c3aed,#6366f1); color:#ffffff; text-decoration:none; font-weight:600; padding:14px 48px; border-radius:9999px; font-size:17px;">
                                         계속하기
                                     </a>
                                 </td>
                             </tr>
                             <tr>
+                                <td style="padding:24px 40px; text-align:center;">
+                                    <div style="border-top:1px solid #e5e7eb; padding-top:24px;">
+                                        <div style="font-size:14px; font-weight:600; color:#111827; margin-bottom:16px;">
+                                            방법 2: 인증 코드 입력
+                                        </div>
+                                        <div style="background:linear-gradient(135deg,#f3f4f6,#e5e7eb); border-radius:12px; padding:20px; margin-bottom:8px;">
+                                            <div style="font-size:32px; font-weight:700; color:#7c3aed; letter-spacing:8px; font-family:'Courier New', monospace;">
+                                                {formatted_code}
+                                            </div>
+                                        </div>
+                                        <div style="font-size:13px; color:#6b7280;">
+                                            앱에서 위 6자리 코드를 입력하세요
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr>
                                 <td style="padding:0 40px 24px 40px; text-align:center; font-size:13px; color:#6b7280; line-height:1.7;">
                                     버튼이 작동하지 않는다면 아래 링크를 브라우저 주소창에 붙여넣으세요.<br>
-                                    <a href="{magic_link_url}" style="color:#7c3aed; text-decoration:none;">{magic_link_url}</a>
+                                    <a href="{magic_link_url}" style="color:#7c3aed; text-decoration:none; word-break:break-all;">{magic_link_url}</a>
                                 </td>
                             </tr>
                             <tr>
                                 <td style="padding:0 40px 32px 40px; font-size:12px; color:#9ca3af; text-align:center; line-height:1.7;">
-                                    이 링크는 발송 시점부터 {self.settings.MAGIC_LINK_EXPIRE_MINUTES}분 동안만 유효합니다.<br>
+                                    이 인증 코드와 링크는 발송 시점부터 {self.settings.MAGIC_LINK_EXPIRE_MINUTES}분 동안만 유효합니다.<br>
                                     보안을 위해 타인과 공유하지 말아 주세요.
                                 </td>
                             </tr>
