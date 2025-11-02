@@ -49,6 +49,12 @@ class PredictionResponse(BaseModel):
     prediction_price_at: Optional[datetime] = None
     prediction_price_source: Optional[str] = None
 
+    # TickerReference 정보 추가
+    ticker_name: Optional[str] = None
+    ticker_market_category: Optional[str] = None
+    ticker_is_etf: Optional[bool] = None
+    ticker_exchange: Optional[str] = None
+
     class Config:
         from_attributes = True
 
