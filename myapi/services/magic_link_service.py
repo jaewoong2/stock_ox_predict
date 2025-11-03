@@ -11,7 +11,11 @@ from myapi.core.exceptions import AuthenticationError, ValidationError
 from myapi.repositories.oauth_state_repository import OAuthStateRepository
 from myapi.repositories.user_repository import UserRepository
 from myapi.services.point_service import PointService
-from myapi.schemas.magic_link import MagicLinkRequest, MagicLinkResponse, MagicLinkVerifyCodeRequest
+from myapi.schemas.magic_link import (
+    MagicLinkRequest,
+    MagicLinkResponse,
+    MagicLinkVerifyCodeRequest,
+)
 from myapi.schemas.auth import OAuthLoginResponse
 from myapi.core.security import create_access_token
 from myapi.services.aws_service import AwsService
@@ -67,9 +71,13 @@ class MagicLinkService:
                 except IntegrityError:
                     # State collision - retry with new code
                     if attempt == max_retries - 1:
-                        logger.error(f"Failed to generate unique verification code after {max_retries} attempts")
+                        logger.error(
+                            f"Failed to generate unique verification code after {max_retries} attempts"
+                        )
                         raise
-                    logger.warning(f"Verification code collision on attempt {attempt + 1}, retrying...")
+                    logger.warning(
+                        f"Verification code collision on attempt {attempt + 1}, retrying..."
+                    )
                     continue
 
             if not token:
@@ -181,9 +189,7 @@ class MagicLinkService:
 
         return auth_response, redirect_target
 
-    async def verify_code(
-        self, email: str, code: str
-    ) -> OAuthLoginResponse:
+    async def verify_code(self, email: str, code: str) -> OAuthLoginResponse:
         """Verify 6-digit verification code and authenticate user"""
         # Pop state from DB (expires_at check included)
         state_value = self.oauth_state_repo.pop(code)
