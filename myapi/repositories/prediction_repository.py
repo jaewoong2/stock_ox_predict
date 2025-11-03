@@ -1,8 +1,7 @@
-from typing import List, Optional, Tuple, cast
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, desc, asc, func, text, Numeric, case
-from sqlalchemy import exc as sa_exc
-from datetime import date, datetime, timedelta, timezone
+from typing import List, Optional, Tuple
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import and_, desc, asc, func, Numeric, case
+from datetime import date, datetime, timezone
 
 
 from myapi.models.prediction import (
@@ -10,8 +9,8 @@ from myapi.models.prediction import (
     ChoiceEnum,
     StatusEnum,
     UserDailyStats as UserDailyStatsModel,
-    AdUnlocks as AdUnlocksModel,
 )
+from myapi.models.ticker_reference import TickerReference
 from myapi.schemas.prediction import (
     PredictionResponse,
     UserPredictionsResponse,
@@ -388,8 +387,16 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
         self, user_id: int, limit: int = 50, offset: int = 0
     ) -> List[PredictionResponse]:
         """사용자 예측 이력 조회 (최신순)"""
+
         model_instances = (
-            self.db.query(self.model_class)
+            self.db.query(
+                self.model_class,
+                TickerReference.name,
+                TickerReference.market_category,
+                TickerReference.is_etf,
+                TickerReference.exchange,
+            )
+            .join(TickerReference, TickerReference.symbol == self.model_class.symbol)
             .filter(self.model_class.user_id == user_id)
             .order_by(
                 desc(self.model_class.trading_day), desc(self.model_class.submitted_at)
@@ -399,11 +406,24 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             .all()
         )
 
-        return [
-            p
-            for p in (self._to_schema(instance) for instance in model_instances)
-            if p is not None
-        ]
+        response_list = []
+        for prediction, name, market_category, is_etf, exchange in model_instances:
+            predict = self._to_schema(prediction)
+            if predict is None:
+                continue
+
+            pred_dict = predict.model_dump()
+            pred_dict.update(
+                {
+                    "ticker_name": name,
+                    "ticker_market_category": market_category,
+                    "ticker_is_etf": is_etf,
+                    "ticker_exchange": exchange,
+                }
+            )
+            response_list.append(PredictionResponse(**pred_dict))
+
+        return response_list
 
     def count_predictions_by_date(self, trading_day: date) -> int:
         """특정 날짜의 전체 예측 개수"""

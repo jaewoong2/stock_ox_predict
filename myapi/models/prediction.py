@@ -62,10 +62,16 @@ class UserDailyStats(BaseModel):
         {"schema": "crypto"},
     )
 
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crypto.users.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("crypto.users.id"), nullable=False
+    )
     trading_day: Mapped[date] = mapped_column(Date, nullable=False)
-    predictions_made: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
-    available_predictions: Mapped[int] = mapped_column(SmallInteger, default=3, nullable=False)
+    predictions_made: Mapped[int] = mapped_column(
+        SmallInteger, default=0, nullable=False
+    )
+    available_predictions: Mapped[int] = mapped_column(
+        SmallInteger, default=3, nullable=False
+    )
 
 
 class AdUnlocks(BaseModel):
