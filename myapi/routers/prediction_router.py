@@ -185,6 +185,26 @@ def get_user_prediction_summary(
         )
 
 
+@router.get("/history/month", response_model=BaseResponse)
+@inject
+def get_user_prediction_history_by_month(
+    month: str,
+    current_user: UserSchema = Depends(get_current_active_user),
+    service: PredictionService = Depends(get_prediction_service),
+):
+    try:
+        history = service.get_user_prediction_history_by_date(current_user.id, month)
+        return BaseResponse(success=True, data={"history": history.model_dump()})
+    except Exception:
+        logger.exception(
+            "[PredictionError] get_user_prediction_history_by_month: unexpected error"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Prediction history fetch failed",
+        )
+
+
 @router.get("/history", response_model=BaseResponse)
 @inject
 def get_user_prediction_history(
@@ -202,6 +222,7 @@ def get_user_prediction_history(
         history, total_count, has_next = service.get_user_prediction_history_paginated(
             current_user.id, limit=limit, offset=offset
         )
+
         return BaseResponse(
             success=True,
             data={"history": [pred.model_dump() for pred in history]},

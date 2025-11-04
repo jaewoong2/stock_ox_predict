@@ -31,6 +31,7 @@ from myapi.repositories.session_repository import SessionRepository
 from myapi.repositories.price_repository import PriceRepository
 from myapi.services.point_service import PointService
 from myapi.schemas.prediction import (
+    PredictHistoryMonth,
     PredictionCreate,
     PredictionResponse,
     PredictionUpdate,
@@ -291,7 +292,7 @@ class PredictionService:
             raise ValidationError("Failed to update prediction")
         return updated
 
-    # 예측 취소 기능 제거됨 (정책 변경)_prediction
+        # 예측 취소 기능 제거됨 (정책 변경)_prediction
 
         canceled = self._safe_transaction(_cancel_operation)
 
@@ -376,6 +377,30 @@ class PredictionService:
     ) -> List[PredictionResponse]:
         return self.pred_repo.get_user_prediction_history(
             user_id, limit=limit, offset=offset
+        )
+
+    def get_user_prediction_history_by_date(
+        self, user_id: int, yyymmdd: str
+    ) -> PredictHistoryMonth:
+        history = self.pred_repo.get_user_prediction_history_by_date(user_id, yyymmdd)
+
+        total_points = sum(
+            pred.points_earned for pred in history if pred.points_earned is not None
+        )
+        total_correct = sum(1 for pred in history if pred.status == StatusEnum.CORRECT)
+        total_incorrect = sum(
+            1 for pred in history if pred.status == StatusEnum.INCORRECT
+        )
+        total_predictions = len(history)
+        total_pending = sum(1 for pred in history if pred.status == StatusEnum.PENDING)
+
+        return PredictHistoryMonth(
+            month=yyymmdd,
+            total_points=total_points,
+            total_correct=total_correct,
+            total_incorrect=total_incorrect,
+            total_predictions=total_predictions,
+            total_pending=total_pending,
         )
 
     def get_user_prediction_history_paginated(

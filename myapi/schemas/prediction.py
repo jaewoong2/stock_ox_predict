@@ -34,6 +34,15 @@ class PredictionUpdate(BaseModel):
     choice: PredictionChoice = Field(..., description="Updated prediction choice")
 
 
+class PredictHistoryMonth(BaseModel):
+    month: str  # yymm
+    total_points: int = Field(..., description="Total points earned")
+    total_correct: int = Field(..., description="Total correct predictions")
+    total_incorrect: int = Field(..., description="Total incorrect predictions")
+    total_predictions: int = Field(..., description="Total predictions")
+    total_pending: int = Field(..., description="Total pending predictions")
+
+
 class PredictionResponse(BaseModel):
     id: int
     user_id: int

@@ -383,6 +383,26 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             prediction_id, StatusEnum.CANCELLED, commit=commit
         )
 
+    def get_user_prediction_history_by_date(
+        self, user_id: int, yyymmdd: str
+    ) -> List[PredictionResponse]:
+        """사용자 예측 이력 조회 (날짜별)"""
+        model_instances = (
+            self.db.query(self.model_class)
+            .filter(
+                self.model_class.user_id == user_id,
+                self.model_class.trading_day == yyymmdd,
+            )
+            .order_by(desc(self.model_class.submitted_at))
+            .all()
+        )
+
+        return [
+            p
+            for p in (self._to_schema(instance) for instance in model_instances)
+            if p is not None
+        ]
+
     def get_user_prediction_history(
         self, user_id: int, limit: int = 50, offset: int = 0
     ) -> List[PredictionResponse]:
