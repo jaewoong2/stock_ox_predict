@@ -35,7 +35,7 @@ class PredictionUpdate(BaseModel):
 
 
 class PredictHistoryMonth(BaseModel):
-    month: str  # yymm
+    month: str = Field(..., description="Aggregated month identifier (YYYYMM)")
     total_points: int = Field(..., description="Total points earned")
     total_correct: int = Field(..., description="Total correct predictions")
     total_incorrect: int = Field(..., description="Total incorrect predictions")

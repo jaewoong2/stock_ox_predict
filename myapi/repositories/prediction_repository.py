@@ -383,17 +383,21 @@ class PredictionRepository(BaseRepository[PredictionModel, PredictionResponse]):
             prediction_id, StatusEnum.CANCELLED, commit=commit
         )
 
-    def get_user_prediction_history_by_date(
-        self, user_id: int, yyymmdd: str
+    def get_user_prediction_history_by_month(
+        self, user_id: int, month_start: date, month_end: date
     ) -> List[PredictionResponse]:
-        """사용자 예측 이력 조회 (날짜별)"""
+        """사용자 예측 이력 조회 (월별)"""
         model_instances = (
             self.db.query(self.model_class)
             .filter(
                 self.model_class.user_id == user_id,
-                self.model_class.trading_day == yyymmdd,
+                self.model_class.trading_day >= month_start,
+                self.model_class.trading_day <= month_end,
             )
-            .order_by(desc(self.model_class.submitted_at))
+            .order_by(
+                desc(self.model_class.trading_day),
+                desc(self.model_class.submitted_at),
+            )
             .all()
         )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from calendar import monthrange
 from typing import List, Optional, Tuple, cast
 
 from sqlalchemy.orm import Session
@@ -34,6 +35,7 @@ from myapi.schemas.prediction import (
     PredictHistoryMonth,
     PredictionCreate,
     PredictionResponse,
+    PredictionStatus,
     PredictionUpdate,
     UserPredictionsResponse,
     PredictionStats,
@@ -379,23 +381,46 @@ class PredictionService:
             user_id, limit=limit, offset=offset
         )
 
-    def get_user_prediction_history_by_date(
-        self, user_id: int, yyymmdd: str
+    def get_user_prediction_history_by_month(
+        self, user_id: int, month: str
     ) -> PredictHistoryMonth:
-        history = self.pred_repo.get_user_prediction_history_by_date(user_id, yyymmdd)
+        normalized = month.replace("-", "")
+        if not normalized.isdigit() or len(normalized) not in (6, 8):
+            raise ValueError(
+                "월 파라미터는 YYYYMM, YYYYMMDD 또는 YYYY-MM-DD 형식이어야 합니다."
+            )
+
+        year = int(normalized[:4])
+        month_int = int(normalized[4:6])
+        if month_int < 1 or month_int > 12:
+            raise ValueError(
+                "월 파라미터는 YYYYMM, YYYYMMDD 또는 YYYY-MM-DD 형식이어야 합니다."
+            )
+
+        last_day = monthrange(year, month_int)[1]
+        month_start = date(year, month_int, 1)
+        month_end = date(year, month_int, last_day)
+
+        history = self.pred_repo.get_user_prediction_history_by_month(
+            user_id, month_start, month_end
+        )
 
         total_points = sum(
-            pred.points_earned for pred in history if pred.points_earned is not None
+            50 for pred in history if pred.status == PredictionStatus.CORRECT
         )
-        total_correct = sum(1 for pred in history if pred.status == StatusEnum.CORRECT)
+        total_correct = sum(
+            1 for pred in history if pred.status == PredictionStatus.CORRECT
+        )
         total_incorrect = sum(
-            1 for pred in history if pred.status == StatusEnum.INCORRECT
+            1 for pred in history if pred.status == PredictionStatus.INCORRECT
         )
         total_predictions = len(history)
-        total_pending = sum(1 for pred in history if pred.status == StatusEnum.PENDING)
+        total_pending = sum(
+            1 for pred in history if pred.status == PredictionStatus.PENDING
+        )
 
         return PredictHistoryMonth(
-            month=yyymmdd,
+            month=f"{year:04d}{month_int:02d}",
             total_points=total_points,
             total_correct=total_correct,
             total_incorrect=total_incorrect,

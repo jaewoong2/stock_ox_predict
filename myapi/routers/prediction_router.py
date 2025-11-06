@@ -188,13 +188,24 @@ def get_user_prediction_summary(
 @router.get("/history/month", response_model=BaseResponse)
 @inject
 def get_user_prediction_history_by_month(
-    month: str,
+    month: str = Query(
+        ...,
+        pattern=r"(^\d{6}$)|(^\d{8}$)|(^\d{4}-\d{2}-\d{2}$)",
+        description="조회할 월 (YYYYMM / YYYYMMDD / YYYY-MM-DD)",
+    ),
     current_user: UserSchema = Depends(get_current_active_user),
     service: PredictionService = Depends(get_prediction_service),
 ):
     try:
-        history = service.get_user_prediction_history_by_date(current_user.id, month)
+        history = service.get_user_prediction_history_by_month(current_user.id, month)
         return BaseResponse(success=True, data={"history": history.model_dump()})
+    except ValueError as e:
+        msg = str(e)
+        logger.warning(f"[PredictionError] get_user_prediction_history_by_month: {msg}")
+        return BaseResponse(
+            success=False,
+            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=msg),
+        )
     except Exception:
         logger.exception(
             "[PredictionError] get_user_prediction_history_by_month: unexpected error"
