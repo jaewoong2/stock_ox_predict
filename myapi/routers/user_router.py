@@ -1,6 +1,5 @@
-from typing import Any, List
+from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
 from myapi.services.user_service import UserService
 from myapi.core.auth_middleware import (
     get_current_active_user,
@@ -14,8 +13,7 @@ from myapi.schemas.user import (
     AffordabilityCheck,
 )
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
-from myapi.schemas.points import PointsBalanceResponse, PointsLedgerResponse
-from myapi.schemas.pagination import PaginationLimits, PaginationMeta
+from myapi.schemas.pagination import PaginationLimits
 import logging
 from dependency_injector.wiring import inject
 from myapi.deps import get_user_service
@@ -25,10 +23,17 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/me", response_model=BaseResponse)
+@inject
 def get_current_user_profile(
-    current_user: UserSchema = Depends(get_current_active_user),
-) -> Any:
+    current_user: UserSchema = Depends(get_current_user_optional),
+):
     """현재 사용자 프로필 조회"""
+    if not current_user:
+        return BaseResponse(
+            success=False,
+            data=None,
+        )
+
     return BaseResponse(
         success=True,
         data={
