@@ -50,7 +50,7 @@ resource "aws_lb_listener_rule" "fastapi_api" {
 
   condition {
     host_header {
-      values = ["ox-universe.bamtoly.com"]
+      values = ["ox-universe.bamtoly.com", "ox-api.biizbiiz.com"]
     }
   }
 
@@ -74,7 +74,7 @@ resource "aws_lb_listener_rule" "fastapi_http_redirect" {
 
   condition {
     host_header {
-      values = ["ox-universe.bamtoly.com"]
+      values = ["ox-universe.bamtoly.com", "ox-api.biizbiiz.com"]
     }
   }
 

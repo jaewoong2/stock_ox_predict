@@ -11,7 +11,7 @@ public_subnet_ids = ["subnet-0cd24b3e29f28ed01", "subnet-02314d35d476ded10"]
 security_group_id = "sg-0f45e0b0868c2ea7c"
 
 # Domain Configuration
-domain_name = "ox-universe.bamtoly.com"
+domain_name = "ox-api.biizbiiz.com"
 
 # Alert Configuration
 alert_email = "jwisgenius@naver.com"

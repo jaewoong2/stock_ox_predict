@@ -51,6 +51,8 @@ def create_app() -> FastAPI:
             "http://localhost:3000",
             "https://ai.bamtoly.com",
             "https://ox-universe.bamtoly.com",
+            "https://biizbiiz.com",
+            "https://ox-api.biizbiiz.com",
         ],
         allow_credentials=True,
         allow_methods=["*"],
