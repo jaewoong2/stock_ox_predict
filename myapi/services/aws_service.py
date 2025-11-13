@@ -177,7 +177,14 @@ class AwsService:
         clean_path = split.path.lstrip("/") if split.path else path.lstrip("/")
 
         # Merge parsed query from path and explicitly supplied params
-        parsed_qs = {k: v[0] if isinstance(v, list) and v else v for k, v in parse_qs(split.query).items()} if split.query else {}
+        parsed_qs = (
+            {
+                k: v[0] if isinstance(v, list) and v else v
+                for k, v in parse_qs(split.query).items()
+            }
+            if split.query
+            else {}
+        )
         # Explicit parameters override parsed ones
         qsp = {**parsed_qs, **supplied_qsp} if parsed_qs or supplied_qsp else {}
 
@@ -567,16 +574,16 @@ class AwsService:
     ) -> Dict[str, Any]:
         """
         API_CALL_LAMBDA 함수용 페이로드 생성
-        
+
         EventBridge Scheduler → API_CALL_LAMBDA → FastAPI 호출용
-        
+
         Args:
             target_url: 호출할 API URL (예: https://ox-universe.bamtoly.com/api/v1/cooldown/handle-slot-refill)
             method: HTTP 메서드
             headers: HTTP 헤더
             body: POST body (JSON 변환됨)
             params: Query string parameters
-            
+
         Returns:
             API_CALL_LAMBDA에 전달할 페이로드
         """
@@ -586,8 +593,8 @@ class AwsService:
             "headers": headers or {},
             "params": params or {},
         }
-        
+
         if body and method != "GET":
             payload["body"] = body
-            
+
         return payload
