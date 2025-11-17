@@ -310,7 +310,12 @@ class SettlementService:
         """정답 예측에 대한 보상 처리"""
         try:
             # 1. 예측 상태를 CORRECT로 변경
-            self.pred_repo.update_prediction_status(prediction_id, StatusEnum.CORRECT)
+            self.pred_repo.update_prediction_status(
+                prediction_id=prediction_id,
+                status=StatusEnum.CORRECT,
+                points_earned=self.CORRECT_PREDICTION_POINTS,
+                commit=True,
+            )
 
             # 2. 포인트 지급
             result = self.point_service.award_prediction_points(
