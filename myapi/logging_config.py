@@ -3,50 +3,49 @@ import sys
 
 def setup_logging(log_level: str = "INFO"):
     log_level = log_level.upper()
-    
+
     LOGGING_CONFIG = {
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
-            "default": {
-                "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            "detailed": {
+                "format": "\n{'=' * 80}\n%(asctime)s | %(levelname)-8s | %(name)s\n%(pathname)s:%(lineno)d\n%(message)s\n{'=' * 80}",
             },
-            "json": {
-                "class": "pythonjsonlogger.jsonlogger.JsonFormatter",
-                # Include exc_info to capture full traceback in error logs
-                "format": "%(asctime)s %(name)s %(levelname)s %(message)s %(pathname)s %(lineno)d %(exc_info)s",
+            "simple": {
+                "format": "%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s",
             },
         },
         "handlers": {
-            "default": {
-                "formatter": "default",
+            "console": {
+                "formatter": "simple",
                 "class": "logging.StreamHandler",
                 "stream": sys.stdout,
             },
-            "json": {
-                "formatter": "json",
+            "error_console": {
+                "formatter": "detailed",
                 "class": "logging.StreamHandler",
-                "stream": sys.stdout,
+                "stream": sys.stderr,
+                "level": "WARNING",
             },
         },
         "loggers": {
             "": {  # root logger
-                "handlers": ["default"],
+                "handlers": ["console", "error_console"],
                 "level": log_level,
                 "propagate": True,
             },
             "uvicorn.error": {
-                "handlers": ["default"],
+                "handlers": ["console", "error_console"],
                 "level": log_level,
                 "propagate": False,
             },
             "uvicorn.access": {
-                "handlers": ["default"],
+                "handlers": ["console"],
                 "level": log_level,
                 "propagate": False,
             },
             "myapi": {
-                "handlers": ["json"],
+                "handlers": ["console", "error_console"],
                 "level": log_level,
                 "propagate": False,
             },

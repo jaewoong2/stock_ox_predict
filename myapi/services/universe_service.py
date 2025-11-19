@@ -130,7 +130,7 @@ class UniverseService:
                 change_dir = "DOWN"
 
             # 포맷된 변동률
-            cp = float(snap.change_percent) if snap.change_percent is not None else 0.0
+            cp = snap.change_percent if snap.change_percent is not None else Decimal("0.0")
             formatted = f"{cp:+.2f}%"
 
             items.append(
@@ -138,8 +138,8 @@ class UniverseService:
                     symbol=snap.symbol,
                     seq=snap.seq,
                     company_name=snap.symbol,  # TODO: 회사명 컬럼/소스 추가 시 교체
-                    current_price=float(snap.current_price),
-                    previous_close=float(snap.previous_close),
+                    current_price=snap.current_price,
+                    previous_close=snap.previous_close,
                     change_percent=cp,
                     change_direction=change_dir,
                     formatted_change=formatted,

@@ -262,8 +262,8 @@ class SettlementService:
                 (correct_count / processed_count * 100) if processed_count else 0
             ),
             price_movement=price_data.price_movement,
-            settlement_price=float(price_data.settlement_price),
-            change_percent=float(price_data.change_percent),
+            settlement_price=price_data.settlement_price,
+            change_percent=price_data.change_percent,
         )
 
     async def _handle_void_predictions(

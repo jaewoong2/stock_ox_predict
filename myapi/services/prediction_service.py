@@ -551,7 +551,7 @@ class PredictionService:
                     avg_profit=avg_profit,
                     last_price=price_info.get("last_price"),
                     change_percent=(
-                        float(price_info.get("change_percent"))
+                        price_info.get("change_percent")
                         if price_info.get("change_percent") is not None
                         else None
                     ),
@@ -571,7 +571,7 @@ class PredictionService:
                     avg_profit=avg_profit,
                     last_price=price_info.get("last_price"),
                     change_percent=(
-                        float(price_info.get("change_percent"))
+                        price_info.get("change_percent")
                         if price_info.get("change_percent") is not None
                         else None
                     ),

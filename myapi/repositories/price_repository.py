@@ -38,7 +38,7 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
             trading_date=model_instance.trading_date.isoformat(),
             close_price=model_instance.close_price,
             previous_close=model_instance.previous_close,
-            change=model_instance.change_amount,
+            change_amount=model_instance.change_amount,
             change_percent=model_instance.change_percent,
             high=model_instance.high_price,
             low=model_instance.low_price,
@@ -51,11 +51,11 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
         self,
         symbol: str,
         trading_date: date,
-        open_price: float,
-        high_price: float,
-        low_price: float,
-        close_price: float,
-        previous_close: float,
+        open_price: Decimal,
+        high_price: Decimal,
+        low_price: Decimal,
+        close_price: Decimal,
+        previous_close: Decimal,
         volume: int,
         data_source: str = "yfinance",
     ) -> Optional[EODPriceSchema]:
@@ -78,15 +78,12 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
         """
         try:
             self._ensure_clean_session()
-            # float를 Decimal로 변환하여 계산 정확도 보장
-            close_price_d = Decimal(str(close_price))
-            previous_close_d = Decimal(str(previous_close))
-
+            
             # 변동액 및 변동률 계산
-            change_amount = close_price_d - previous_close_d
+            change_amount = close_price - previous_close
             change_percent = (
-                (change_amount / previous_close_d * Decimal("100"))
-                if previous_close_d != Decimal("0")
+                (change_amount / previous_close * Decimal("100"))
+                if previous_close != Decimal("0")
                 else Decimal("0")
             )
 
@@ -104,11 +101,11 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
 
             if existing:
                 # 기존 데이터 업데이트
-                existing.open_price = Decimal(str(open_price))
-                existing.high_price = Decimal(str(high_price))
-                existing.low_price = Decimal(str(low_price))
-                existing.close_price = close_price_d
-                existing.previous_close = previous_close_d
+                existing.open_price = open_price
+                existing.high_price = high_price
+                existing.low_price = low_price
+                existing.close_price = close_price
+                existing.previous_close = previous_close
                 existing.change_amount = change_amount
                 existing.change_percent = change_percent
                 existing.volume = volume
@@ -123,11 +120,11 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
                 new_price = self.model_class(
                     symbol=symbol,
                     trading_date=trading_date,
-                    open_price=Decimal(str(open_price)),
-                    high_price=Decimal(str(high_price)),
-                    low_price=Decimal(str(low_price)),
-                    close_price=close_price_d,
-                    previous_close=previous_close_d,
+                    open_price=open_price,
+                    high_price=high_price,
+                    low_price=low_price,
+                    close_price=close_price,
+                    previous_close=previous_close,
                     change_amount=change_amount,
                     change_percent=change_percent,
                     volume=volume,
@@ -204,17 +201,23 @@ class PriceRepository(BaseRepository[EODPriceModel, EODPriceSchema]):
             EOD 가격 스키마 리스트
         """
         self._ensure_clean_session()
-        model_instances = (
-            self.db.query(self.model_class)
-            .filter(
+
+        if len(symbols) == 1:
+            model_instance = self.db.query(self.model_class).filter(
+                and_(
+                    self.model_class.symbol == symbols[0],
+                    self.model_class.trading_date == trading_date,
+                )
+            )
+        else:
+            model_instance = self.db.query(self.model_class).filter(
                 and_(
                     self.model_class.symbol.in_(symbols),
                     self.model_class.trading_date == trading_date,
                 )
             )
-            .order_by(self.model_class.symbol)
-            .all()
-        )
+
+        model_instances = model_instance.order_by(self.model_class.symbol).all()
 
         return [self._to_eod_price_schema(instance) for instance in model_instances]
 

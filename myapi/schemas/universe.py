@@ -56,9 +56,9 @@ class UniverseItemWithPrice(BaseModel):
     symbol: str = Field(..., description="Stock symbol (e.g., AAPL)")
     seq: int = Field(..., description="Sequence number for ordering")
     company_name: str = Field(..., description="Company name")
-    current_price: float = Field(..., description="Current stock price")
-    previous_close: float = Field(..., description="Previous close price")
-    change_percent: float = Field(
+    current_price: Decimal = Field(..., description="Current stock price")
+    previous_close: Decimal = Field(..., description="Previous close price")
+    change_percent: Decimal = Field(
         ..., description="Change percentage from previous close"
     )
     change_direction: str = Field(

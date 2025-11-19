@@ -25,6 +25,9 @@ from myapi.schemas.price import (
     SettlementPriceData,
     EODCollectionResult,
     EODCollectionDetail,
+    TradingDayPriceSummary,
+    EODPriceSnapshot,
+    CurrentPriceSnapshot,
 )
 from myapi.schemas.error_log import ErrorTypeEnum
 from myapi.services.error_log_service import ErrorLogService
@@ -641,6 +644,121 @@ class PriceService:
             last_updated=datetime.now(timezone.utc),
         )
 
+    def get_trading_day_price_summary(
+        self,
+        trading_day: Optional[date] = None,
+        symbols: Optional[List[str]] = None,
+    ) -> List[TradingDayPriceSummary]:
+        """
+        거래일 가격 요약 조회 (종가 + 현재가)
+
+        Returns:
+            - 금일 종가 (전일 대비 변동)
+            - 현재가 (금일 종가 대비 변동)
+
+        Args:
+            trading_day: 거래일 (기본값: 현재 KST 거래일)
+            symbols: 조회할 심볼 리스트 (기본값: 전체 유니버스)
+
+        Raises:
+            NotFoundError: 데이터가 없는 경우
+        """
+        # 1. trading_day 기본값 설정
+        if trading_day is None:
+            try:
+                session = self.session_repo.get_current_session()
+                trading_day = session.trading_day if session else date.today()
+            except Exception:
+                from myapi.utils.market_hours import USMarketHours
+
+                trading_day = USMarketHours.get_kst_trading_day()
+
+        # 2. EOD 가격 데이터 조회 및 변환
+        if symbols:
+            eod_models = self.price_repo.get_eod_prices_for_symbols(
+                symbols=symbols, trading_date=trading_day - timedelta(days=1)
+            )
+        else:
+            eod_models = self.price_repo.get_eod_prices_for_date(
+                trading_day - timedelta(days=1)
+            )
+
+        if not eod_models:
+            raise NotFoundError(
+                message="EOD_DATA_NOT_AVAILABLE",
+                details={
+                    "resource": "eod_prices",
+                    "trading_day": str(trading_day),
+                    "reason": "EOD data not collected yet (collected at 06:00 KST)",
+                },
+            )
+
+        # 3. 현재가 데이터 조회 및 변환
+        universe_models = self.universe_repo.get_universe_models_for_date(trading_day)
+        if not universe_models:
+            raise NotFoundError(
+                message="UNIVERSE_DATA_NOT_AVAILABLE",
+                details={
+                    "resource": "active_universe",
+                    "trading_day": str(trading_day),
+                },
+            )
+
+        # 4. DB 모델을 타입 안전한 스냅샷으로 변환
+        eod_map = {
+            eod.symbol: EODPriceSnapshot.from_db_model(eod) for eod in eod_models
+        }
+
+        current_map = {
+            str(model.symbol): CurrentPriceSnapshot.from_db_model(model)
+            for model in universe_models
+            if model.current_price is not None  # 현재가가 있는 것만
+        }
+
+        # 5. EOD + 현재가 결합하여 요약 데이터 생성
+        summaries: List[TradingDayPriceSummary] = []
+        symbol_seq_map: dict[str, int] = {}  # 정렬용 seq 맵
+
+        for symbol, eod_snap in eod_map.items():
+            current_snap = current_map.get(symbol)
+            if not current_snap:
+                # 현재가 데이터가 없으면 스킵
+                continue
+
+            # seq 저장 (정렬용)
+            symbol_seq_map[symbol] = current_snap.seq
+
+            # 현재가 변동 계산 (현재가 - 금일 종가)
+            current_change_amount = current_snap.current_price - eod_snap.close_price
+            current_change_percent = (
+                (current_change_amount / eod_snap.close_price * 100)
+                if eod_snap.close_price != 0
+                else Decimal("0")
+            )
+
+            summaries.append(
+                TradingDayPriceSummary(
+                    symbol=symbol,
+                    trading_day=trading_day.strftime("%Y-%m-%d"),
+                    # 종가 정보 (전일 대비)
+                    closing_price=eod_snap.close_price,
+                    previous_close=eod_snap.previous_close,
+                    close_change_amount=eod_snap.change_amount,
+                    close_change_percent=eod_snap.change_percent,
+                    # 현재가 정보 (종가 대비)
+                    current_price=current_snap.current_price,
+                    current_change_amount=current_change_amount,
+                    current_change_percent=current_change_percent,
+                    market_status=current_snap.market_status,
+                    last_price_updated=current_snap.last_price_updated,
+                )
+            )
+
+        # 6. 정렬 (seq 순서대로) - 타입 안전
+        summaries.sort(key=lambda x: symbol_seq_map.get(x.symbol, 9999))
+
+        return summaries
+
     def get_eod_price_snapshot(self, symbol: str, trading_day: date) -> EODPrice:
         """EOD from DB only. Raises NotFoundError if missing."""
         db_price = self.price_repo.get_eod_price(symbol, trading_day)
@@ -739,7 +857,7 @@ class PriceService:
             trading_date=trading_day.strftime("%Y-%m-%d"),
             close_price=close_price,
             previous_close=previous_close,
-            change=change,
+            change_amount=change,
             change_percent=change_percent,
             high=high_price,
             low=low_price,
@@ -1013,9 +1131,7 @@ class PriceService:
                                 else Decimal("0")
                             ),
                             volume=(
-                                int(volume_raw)
-                                if volume_raw is not None
-                                else None
+                                int(volume_raw) if volume_raw is not None else None
                             ),
                             market_status="CACHED_UNIVERSE",
                             last_updated=cast(datetime, last_price_updated_value),
@@ -1206,11 +1322,11 @@ class PriceService:
                 self.price_repo.save_eod_price(
                     symbol=symbol,
                     trading_date=trading_day,
-                    open_price=float(eod_price.open_price),
-                    high_price=float(eod_price.high),
-                    low_price=float(eod_price.low),
-                    close_price=float(eod_price.close_price),
-                    previous_close=float(eod_price.previous_close),
+                    open_price=eod_price.open_price,
+                    high_price=eod_price.high,
+                    low_price=eod_price.low,
+                    close_price=eod_price.close_price,
+                    previous_close=eod_price.previous_close,
                     volume=eod_price.volume,
                     data_source="yfinance",
                 )

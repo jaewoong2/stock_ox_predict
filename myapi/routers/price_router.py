@@ -50,6 +50,73 @@ async def get_universe_current_prices(
         )
 
 
+@router.get("/trading-day-summary", response_model=BaseResponse)
+@inject
+async def get_trading_day_price_summary(
+    trading_day: str = "",
+    symbols: str = "",
+    _current_user: UserSchema = Depends(get_current_active_user),
+    price_service: PriceService = Depends(get_price_service),
+) -> Any:
+    """
+    거래일 가격 요약 조회 (종가 + 현재가)
+
+    Returns:
+        - 금일 종가 (전일 대비 변동률/변동액)
+        - 현재가 (금일 종가 대비 변동률/변동액)
+
+    Query Parameters:
+        - trading_day: 거래일 (YYYY-MM-DD, 기본값: 현재 KST 거래일)
+        - symbols: 쉼표로 구분된 종목 심볼 (예: AAPL,MSFT,GOOGL, 기본값: 전체 유니버스)
+
+    Example:
+        GET /api/v1/prices/trading-day-summary
+        GET /api/v1/prices/trading-day-summary?trading_day=2025-11-19
+        GET /api/v1/prices/trading-day-summary?symbols=AAPL,MSFT
+        GET /api/v1/prices/trading-day-summary?trading_day=2025-11-19&symbols=AAPL,MSFT
+    """
+    try:
+        # Parse trading_day
+        day = date.fromisoformat(trading_day) if trading_day else None
+
+        # Parse symbols
+        symbol_list = None
+        if symbols:
+            symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+
+        # Get summary
+        summaries = price_service.get_trading_day_price_summary(
+            trading_day=day, symbols=symbol_list
+        )
+
+        return BaseResponse(
+            success=True,
+            data={
+                "trading_day": summaries[0].trading_day if summaries else None,
+                "count": len(summaries),
+                "summaries": [s.model_dump() for s in summaries],
+            },
+        )
+    except ValueError as e:
+        return BaseResponse(
+            success=False,
+            error=Error(
+                code=ErrorCode.INVALID_CREDENTIALS,
+                message=f"Invalid date format: {str(e)}",
+            ),
+        )
+    except NotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get trading day price summary: {str(e)}",
+        )
+
+
 @router.get("/eod/{symbol}/{trading_day}", response_model=BaseResponse)
 @inject
 async def get_eod_price(
@@ -86,8 +153,12 @@ async def validate_settlement_prices(
         # Reuse existing transformation logic on snapshot data
         settlement_data = []
         for e in eod_prices:
-            price_movement = price_service._calculate_price_movement(e.close_price, e.previous_close)
-            change_percent = price_service._calculate_change_percent(e.close_price, e.previous_close)
+            price_movement = price_service._calculate_price_movement(
+                e.close_price, e.previous_close
+            )
+            change_percent = price_service._calculate_change_percent(
+                e.close_price, e.previous_close
+            )
             is_valid, void_reason = price_service._validate_price_for_settlement(e)
             settlement_data.append(
                 SettlementPriceData(
@@ -201,15 +272,16 @@ async def collect_eod_data(
                     "total_symbols": collection_result.total_symbols,
                     "successful_collections": collection_result.successful_collections,
                     "failed_collections": collection_result.failed_collections,
-                    "collection_details": [detail.model_dump() for detail in collection_result.details]
-                }
+                    "collection_details": [
+                        detail.model_dump() for detail in collection_result.details
+                    ],
+                },
             )
     except ValueError:
         return BaseResponse(
             success=False,
             error=Error(
-                code=ErrorCode.INVALID_CREDENTIALS, 
-                message="Invalid date format"
+                code=ErrorCode.INVALID_CREDENTIALS, message="Invalid date format"
             ),
         )
     except NotFoundError as e:

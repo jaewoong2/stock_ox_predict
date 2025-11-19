@@ -76,7 +76,7 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
             inst: Any = cast(Any, instance)
             setattr(inst, "current_price", price.current_price)
             setattr(inst, "previous_close", price.previous_close)
-            setattr(inst, "change_amount", price.change)
+            setattr(inst, "change_amount", price.change_amount)
             setattr(inst, "change_percent", price.change_percent)
             setattr(inst, "volume", price.volume)
             setattr(inst, "market_status", price.market_status)
