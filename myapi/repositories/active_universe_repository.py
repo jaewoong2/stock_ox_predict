@@ -72,15 +72,18 @@ class ActiveUniverseRepository(BaseRepository[ActiveUniverseModel, UniverseItem]
             if not instance:
                 return False
 
-            # Use setattr to avoid static type errors with SQLAlchemy Column typing
-            inst: Any = cast(Any, instance)
-            setattr(inst, "current_price", price.current_price)
-            setattr(inst, "previous_close", price.previous_close)
-            setattr(inst, "change_amount", price.change_amount)
-            setattr(inst, "change_percent", price.change_percent)
-            setattr(inst, "volume", price.volume)
-            setattr(inst, "market_status", price.market_status)
-            setattr(inst, "last_price_updated", price.last_updated)
+            update_fields = {
+                "current_price": price.current_price,
+                "previous_close": price.previous_close,
+                "change_amount": price.change,
+                "change_percent": price.change_percent,
+                "volume": price.volume,
+                "market_status": price.market_status,
+                "last_price_updated": price.last_updated,
+            }
+
+            for field, value in update_fields.items():
+                setattr(instance, field, value)
 
             self.db.add(instance)
             self.db.flush()

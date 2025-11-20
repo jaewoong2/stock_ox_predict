@@ -167,7 +167,7 @@ class PriceService:
 
         return price_data
 
-    async def get_intraday_price(
+    async def save_intraday_price(
         self, symbol: str, interval: str = "15m", period: str = "1d"
     ) -> StockPrice:
         """
@@ -257,7 +257,7 @@ class PriceService:
             raise NotFoundError(f"No universe found for {trading_day}")
 
         tasks = [
-            self.get_intraday_price(item.symbol, interval=interval)
+            self.save_intraday_price(item.symbol, interval=interval)
             for item in universe_symbols
         ]
 
@@ -930,14 +930,10 @@ class PriceService:
                         symbol, interval, period
                     )
 
-            # 가장 최근 완료된 봉 (예: 10:00~10:30)
             latest_row = hist.iloc[-1]
-            # 그 이전 완료된 봉 (예: 09:30~10:00)
             previous_row = hist.iloc[-2]
 
-            # 현재가: 최근 봉의 종가
             current_price = Decimal(str(latest_row["Close"]))
-            # 이전가: 이전 봉의 종가 (봉 간 연속성 추적)
             previous_close = Decimal(str(previous_row["Close"]))
 
             # 봉 간 가격 변화 계산

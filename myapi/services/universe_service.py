@@ -112,9 +112,9 @@ class UniverseService:
                         symbol=snap.symbol,
                         seq=snap.seq,
                         company_name=snap.symbol,  # TODO: 회사명 컬럼/소스 추가 시 교체
-                        current_price=0.0,  # 기본값
-                        previous_close=0.0,  # 기본값
-                        change_percent=0.0,
+                        current_price=Decimal("0.0"),  # 기본값
+                        previous_close=Decimal("0.0"),  # 기본값
+                        change_percent=Decimal("0.0"),
                         change_direction="UNKNOWN",  # 데이터 없음 상태
                         formatted_change="N/A",  # 데이터 없음 표시
                     )
@@ -130,7 +130,11 @@ class UniverseService:
                 change_dir = "DOWN"
 
             # 포맷된 변동률
-            cp = snap.change_percent if snap.change_percent is not None else Decimal("0.0")
+            cp = (
+                snap.change_percent
+                if snap.change_percent is not None
+                else Decimal("0.0")
+            )
             formatted = f"{cp:+.2f}%"
 
             items.append(
@@ -215,7 +219,9 @@ class UniverseService:
         async with self.price_service as service:
             return await service.refresh_universe_prices(trading_day)
 
-    async def refresh_today_prices_intraday(self, trading_day: date, interval: str = "30m"):
+    async def refresh_today_prices_intraday(
+        self, trading_day: date, interval: str = "30m"
+    ):
         """
         오늘의 유니버스 종목들에 대한 intraday 가격(30분봉 등)을 수집하고 DB에 반영합니다.
         PriceService.refresh_universe_prices_intraday를 사용해 봉 데이터 기반 갱신합니다.
