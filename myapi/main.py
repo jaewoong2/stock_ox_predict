@@ -27,7 +27,7 @@ from myapi.routers import (
 from myapi.routers import price_router, settlement_router
 from myapi.routers import cooldown_router
 from myapi.routers import reward_router, point_router, ad_unlock_router
-from myapi.routers import admin_router
+from myapi.routers import admin_router, favorites_router
 from myapi.containers import Container
 from myapi.schemas.health import HealthCheckResponse
 
@@ -76,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(point_router.router, prefix=settings.API_V1_STR)
     app.include_router(ad_unlock_router.router, prefix=settings.API_V1_STR)
     app.include_router(admin_router.router, prefix=settings.API_V1_STR)
+    app.include_router(favorites_router.router, prefix=settings.API_V1_STR)
 
     # Exception handlers (last so they apply globally)
     app.add_exception_handler(BaseAPIException, handle_base_api_exception)

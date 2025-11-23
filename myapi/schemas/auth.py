@@ -19,6 +19,13 @@ class ErrorCode(str, Enum):
     USER_ALREADY_EXISTS = "USER_001"
     USER_NOT_FOUND = "USER_002"
 
+    # Favorites related
+    FAVORITES_LIST_ERROR = "FAVORITES_001"
+    FAVORITES_ADD_ERROR = "FAVORITES_002"
+    FAVORITES_REMOVE_ERROR = "FAVORITES_003"
+    FAVORITES_CHECK_ERROR = "FAVORITES_004"
+    FAVORITES_SYMBOLS_ERROR = "FAVORITES_005"
+
 class Error(BaseModel):
     code: ErrorCode
     message: str

@@ -17,6 +17,7 @@ from myapi.services.ad_unlock_service import AdUnlockService
 from myapi.services.cooldown_service import CooldownService
 from myapi.services.auth_service import AuthService
 from myapi.services.magic_link_service import MagicLinkService
+from myapi.services.favorites_service import FavoritesService
 
 
 def get_user_service(db: Session = Depends(get_db)) -> UserService:
@@ -65,3 +66,7 @@ def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
 
 def get_magic_link_service(db: Session = Depends(get_db)) -> MagicLinkService:
     return MagicLinkService(db=db, settings=settings)
+
+
+def get_favorites_service(db: Session = Depends(get_db)) -> FavoritesService:
+    return FavoritesService(db=db)

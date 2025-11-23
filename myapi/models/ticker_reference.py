@@ -4,10 +4,16 @@ from typing import Optional
 from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from myapi.models.base import BaseModel
+from myapi.models.base import Base
 
 
-class TickerReference(BaseModel):
+class TickerReference(Base):
+    """
+    Ticker reference table.
+
+    NOTE: This model does NOT inherit from BaseModel because the database table
+    does not have created_at/updated_at columns. It only inherits from Base.
+    """
     __tablename__ = "tickers_reference"
     __table_args__ = {"schema": "crypto"}
 
