@@ -405,9 +405,7 @@ class PredictionService:
             user_id, month_start, month_end
         )
 
-        total_points = sum(
-            50 for pred in history if pred.status == PredictionStatus.CORRECT
-        )
+        total_points = sum(pred.points_earned or 0 for pred in history)
         total_correct = sum(
             1 for pred in history if pred.status == PredictionStatus.CORRECT
         )
