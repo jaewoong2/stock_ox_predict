@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timedelta
 from typing import Optional, Tuple
+from functools import lru_cache
 import pytz
 
 
@@ -34,6 +35,7 @@ class USMarketHours:
         return datetime.now(cls.KST_TZ)
 
     @classmethod
+    @lru_cache(maxsize=128)  # Cache ~4 months of dates for performance
     def is_us_trading_day(cls, check_date: date) -> bool:
         """주어진 날짜(ET 기준)가 미국 증시 거래일인지 확인"""
         if check_date.weekday() >= 5:  # 주말 (토, 일) 제외
@@ -87,6 +89,7 @@ class USMarketHours:
         return start_time <= current_kst <= end_time
 
     @classmethod
+    @lru_cache(maxsize=128)  # Cache ~4 months of dates for performance
     def get_next_trading_day(cls, from_date: date) -> date:
         """주어진 날짜(ET 기준)로부터 가장 가까운 다음 거래일을 찾습니다."""
         next_day = from_date + timedelta(days=1)

@@ -129,6 +129,20 @@ class InsufficientBalanceError(BaseAPIException):
             details=details
         )
 
+class NonTradingDayError(BaseAPIException):
+    """Non-trading day validation errors"""
+    def __init__(self, requested_date: str, day_type: str, next_trading_day: str):
+        super().__init__(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            error_code="NON_TRADING_DAY",
+            message=f"{requested_date} is not a US trading day ({day_type})",
+            details={
+                "requested_date": requested_date,
+                "day_type": day_type,
+                "next_trading_day": next_trading_day
+            }
+        )
+
 class ServiceException(Exception):
     """Base exception for service layer errors"""
     pass

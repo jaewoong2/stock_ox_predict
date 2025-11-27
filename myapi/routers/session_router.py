@@ -23,7 +23,6 @@ router = APIRouter(prefix="/session", tags=["session"])
 @router.get("/today", response_model=BaseResponse)
 @inject
 def get_today_session(
-    _user: Optional[UserSchema] = Depends(get_current_user_optional),  # optional
     service: SessionService = Depends(get_session_service),
 ) -> Any:
     """

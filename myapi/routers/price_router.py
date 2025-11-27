@@ -8,7 +8,7 @@ from myapi.schemas.user import User as UserSchema
 from myapi.schemas.auth import BaseResponse, Error, ErrorCode
 from myapi.schemas.price import SettlementPriceData
 from myapi.services.price_service import PriceService
-from myapi.deps import get_price_service
+from myapi.deps import get_price_service, require_trading_day
 from myapi.core.exceptions import NotFoundError
 
 
@@ -55,6 +55,7 @@ async def get_universe_current_prices(
 async def get_trading_day_price_summary(
     trading_day: str = "",
     symbols: str = "",
+    validated_date: date = Depends(require_trading_day),
     _current_user: UserSchema = Depends(get_current_active_user),
     price_service: PriceService = Depends(get_price_service),
 ) -> Any:
@@ -74,11 +75,12 @@ async def get_trading_day_price_summary(
         GET /api/v1/prices/trading-day-summary?trading_day=2025-11-19
         GET /api/v1/prices/trading-day-summary?symbols=AAPL,MSFT
         GET /api/v1/prices/trading-day-summary?trading_day=2025-11-19&symbols=AAPL,MSFT
+
+    Raises:
+        NonTradingDayError (422): 요청한 날짜가 비거래일인 경우 (주말/공휴일)
     """
     try:
-        # Parse trading_day
-        day = date.fromisoformat(trading_day) if trading_day else None
-
+        # validated_date is already validated by require_trading_day dependency
         # Parse symbols
         symbol_list = None
         if symbols:
@@ -86,7 +88,7 @@ async def get_trading_day_price_summary(
 
         # Get summary
         summaries = price_service.get_trading_day_price_summary(
-            trading_day=day, symbols=symbol_list
+            trading_day=validated_date, symbols=symbol_list
         )
 
         return BaseResponse(
@@ -96,14 +98,6 @@ async def get_trading_day_price_summary(
                 "count": len(summaries),
                 "summaries": [s.model_dump() for s in summaries],
             },
-        )
-    except ValueError as e:
-        return BaseResponse(
-            success=False,
-            error=Error(
-                code=ErrorCode.INVALID_CREDENTIALS,
-                message=f"Invalid date format: {str(e)}",
-            ),
         )
     except NotFoundError as e:
         raise HTTPException(
