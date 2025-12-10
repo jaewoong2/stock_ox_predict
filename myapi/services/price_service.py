@@ -674,24 +674,16 @@ class PriceService:
                 trading_day = USMarketHours.get_kst_trading_day()
 
         # 2. EOD 가격 데이터 조회 및 변환
+        from myapi.utils.market_hours import USMarketHours
+
+        prev_trading_day = USMarketHours.get_prev_trading_day(trading_day)
+
         if symbols:
             eod_models = self.price_repo.get_eod_prices_for_symbols(
-                symbols=symbols, trading_date=trading_day - timedelta(days=1)
+                symbols=symbols, trading_date=prev_trading_day
             )
         else:
-            eod_models = self.price_repo.get_eod_prices_for_date(
-                trading_day - timedelta(days=1)
-            )
-
-        if not eod_models:
-            raise NotFoundError(
-                message="EOD_DATA_NOT_AVAILABLE",
-                details={
-                    "resource": "eod_prices",
-                    "trading_day": str(trading_day),
-                    "reason": "EOD data not collected yet (collected at 06:00 KST)",
-                },
-            )
+            eod_models = self.price_repo.get_eod_prices_for_date(prev_trading_day)
 
         # 3. 현재가 데이터 조회 및 변환
         universe_models = self.universe_repo.get_universe_models_for_date(trading_day)
@@ -719,14 +711,27 @@ class PriceService:
         summaries: List[TradingDayPriceSummary] = []
         symbol_seq_map: dict[str, int] = {}  # 정렬용 seq 맵
 
-        for symbol, eod_snap in eod_map.items():
-            current_snap = current_map.get(symbol)
-            if not current_snap:
-                # 현재가 데이터가 없으면 스킵
-                continue
-
+        for symbol, current_snap in current_map.items():
             # seq 저장 (정렬용)
             symbol_seq_map[symbol] = current_snap.seq
+
+            # EOD 데이터 조회 또는 폴백 생성
+            eod_snap = eod_map.get(symbol)
+
+            if not eod_snap:
+                # EOD 데이터 없음 → 폴백 값 사용 (0으로 채워서 나중에 업데이트 가능)
+                logger.warning(
+                    "No EOD data for symbol %s on previous trading day %s - using fallback values",
+                    symbol,
+                    prev_trading_day,
+                )
+                eod_snap = EODPriceSnapshot(
+                    symbol=symbol,
+                    close_price=current_snap.current_price,  # Baseline
+                    previous_close=current_snap.current_price,  # Baseline
+                    change_amount=Decimal("0"),  # No change data
+                    change_percent=Decimal("0"),  # No change data
+                )
 
             # 현재가 변동 계산 (현재가 - 금일 종가)
             current_change_amount = current_snap.current_price - eod_snap.close_price

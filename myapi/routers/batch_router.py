@@ -383,7 +383,8 @@ def execute_prediction_settlement(
     AWS EventBridge에서 매일 06:00에 호출되어 전날 예측을 정산하고 포인트를 지급합니다.
     """
     # queue_url only needed for SQS mode; dispatch helper handles selection
-    yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+    prev_trading_day = USMarketHours.get_prev_trading_day(dt.date.today())
+    yesterday = prev_trading_day.isoformat()
     today_str = dt.date.today().strftime("%Y%m%d")
 
     # 전날 예측 정산 작업
