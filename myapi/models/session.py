@@ -1,18 +1,23 @@
+import enum
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Optional
+
 from sqlalchemy import (
-    Column,
-    String,
     BigInteger,
-    DateTime,
-    Text,
     Date,
+    DateTime,
     Enum,
-    SmallInteger,
     Index,
     Numeric,
+    SmallInteger,
+    String,
+    Text,
 )
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import PrimaryKeyConstraint
+
 from myapi.models.base import BaseModel
-import enum
 
 
 class PhaseEnum(enum.Enum):
@@ -29,12 +34,20 @@ class SessionControl(BaseModel):
         {"schema": "crypto"},
     )
 
-    trading_day = Column(Date, primary_key=True)
-    phase = Column(Enum(PhaseEnum), nullable=False, default=PhaseEnum.CLOSED)
-    predict_open_at = Column(DateTime(timezone=True), nullable=False)
-    predict_cutoff_at = Column(DateTime(timezone=True), nullable=False)
-    settle_ready_at = Column(DateTime(timezone=True))  # When EOD data becomes available
-    settled_at = Column(DateTime(timezone=True))  # When settlement is complete
+    trading_day: Mapped[date] = mapped_column(Date, primary_key=True)
+    phase: Mapped[PhaseEnum] = mapped_column(
+        Enum(PhaseEnum), nullable=False, default=PhaseEnum.CLOSED
+    )
+    predict_open_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    predict_cutoff_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    settle_ready_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )  # When EOD data becomes available
+    settled_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )  # When settlement is complete
 
     def __repr__(self):
         return f"<SessionControl(trading_day={self.trading_day}, phase={self.phase.value})>"
@@ -65,15 +78,17 @@ class ActiveUniverse(BaseModel):
         {"schema": "crypto"},
     )
 
-    trading_day = Column(Date, nullable=False)
-    symbol = Column(Text, nullable=False)
-    seq = Column(SmallInteger, nullable=False)
+    trading_day: Mapped[date] = mapped_column(Date, nullable=False)
+    symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    seq: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     # Optional real-time-ish price snapshot fields
-    current_price = Column(Numeric(10, 4), nullable=True)
-    previous_close = Column(Numeric(10, 4), nullable=True)
-    change_amount = Column(Numeric(10, 4), nullable=True)
-    change_percent = Column(Numeric(6, 4), nullable=True)
-    volume = Column(BigInteger, nullable=True)
-    market_status = Column(String(32), nullable=True)
-    last_price_updated = Column(DateTime(timezone=True), nullable=True)
+    current_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
+    previous_close: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
+    change_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
+    change_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 4), nullable=True)
+    volume: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    market_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_price_updated: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

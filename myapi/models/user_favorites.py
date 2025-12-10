@@ -5,8 +5,10 @@ Junction table for many-to-many relationship between users and tickers.
 Allows users to create a watchlist of favorite stocks.
 """
 
-from sqlalchemy import Column, BigInteger, String, ForeignKey
+from sqlalchemy import BigInteger, ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import PrimaryKeyConstraint
+
 from myapi.models.base import BaseModel
 
 
@@ -26,14 +28,14 @@ class UserFavorite(BaseModel):
         {"schema": "crypto"},
     )
 
-    user_id = Column(
+    user_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("crypto.users.id", ondelete="CASCADE"),
         nullable=False,
         comment="Reference to user who favorited the ticker",
     )
 
-    symbol = Column(
+    symbol: Mapped[str] = mapped_column(
         String,
         ForeignKey("crypto.tickers_reference.symbol", ondelete="CASCADE"),
         nullable=False,

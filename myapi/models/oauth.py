@@ -1,4 +1,8 @@
-from sqlalchemy import Column, String, DateTime, func
+from datetime import datetime
+
+from sqlalchemy import DateTime, String
+from sqlalchemy.orm import Mapped, mapped_column
+
 from myapi.models.base import BaseModel
 
 
@@ -6,6 +10,6 @@ class OAuthState(BaseModel):
     __tablename__ = "oauth_states"
     __table_args__ = {"schema": "crypto", "extend_existing": True}
 
-    state = Column(String, primary_key=True)
-    redirect_uri = Column(String, nullable=False)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
+    state: Mapped[str] = mapped_column(String, primary_key=True)
+    redirect_uri: Mapped[str] = mapped_column(String, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

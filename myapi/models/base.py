@@ -1,5 +1,7 @@
-from sqlalchemy import Column, DateTime, func
-from sqlalchemy.orm import declarative_base, declared_attr
+from datetime import datetime
+
+from sqlalchemy import DateTime, func
+from sqlalchemy.orm import Mapped, declarative_base, declared_attr, mapped_column
 
 Base = declarative_base()
 
@@ -8,13 +10,18 @@ class TimestampMixin:
     """타임스탬프 필드를 위한 믹스인"""
 
     @declared_attr
-    def created_at(cls):
-        return Column(DateTime(timezone=True), server_default=func.now())
+    def created_at(cls) -> Mapped[datetime]:
+        return mapped_column(
+            DateTime(timezone=True), server_default=func.now(), nullable=False
+        )
 
     @declared_attr
-    def updated_at(cls):
-        return Column(
-            DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    def updated_at(cls) -> Mapped[datetime]:
+        return mapped_column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            onupdate=func.now(),
+            nullable=False,
         )
 
 

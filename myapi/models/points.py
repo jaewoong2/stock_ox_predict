@@ -6,8 +6,13 @@
 포인트의 추가/차감은 모두 이 테이블에 기록되어 완전한 감사 추적(Audit Trail)을 제공합니다.
 """
 
-from sqlalchemy import Column, BigInteger, Text, Date, ForeignKey
+from datetime import date
+from typing import Optional
+
+from sqlalchemy import BigInteger, Date, ForeignKey, Text
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import UniqueConstraint
+
 from myapi.models.base import BaseModel
 
 
@@ -34,27 +39,29 @@ class PointsLedger(BaseModel):
     )
 
     # 기본 키 - 자동 증가하는 고유 식별자
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
     # 사용자 ID - users 테이블과의 외래키 관계
-    user_id = Column(BigInteger, ForeignKey('crypto.users.id'), nullable=False)
-    
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("crypto.users.id"), nullable=False
+    )
+
     # 거래일 - 포인트가 적용되는 거래일 (통계 및 리포팅용)
-    trading_day = Column(Date)
-    
+    trading_day: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
     # 심볼 - 포인트 적용 대상 종목 (예: BTC, ETH 등, 예측 관련 포인트인 경우)
-    symbol = Column(Text)
-    
+    symbol: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # 포인트 변동량 - 양수면 증가, 음수면 감소
-    delta_points = Column(BigInteger, nullable=False)
-    
+    delta_points: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
     # 거래 사유 - 포인트 변동 이유 (예: "예측 성공 보상", "예측 수수료" 등)
-    reason = Column(Text, nullable=False)
-    
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+
     # 참조 ID - 중복 처리 방지용 고유 식별자 (멱등성 보장)
     # 형식 예시: "prediction_123", "admin_adjustment_456_1640995200"
-    ref_id = Column(Text, nullable=False)
-    
+    ref_id: Mapped[str] = mapped_column(Text, nullable=False)
+
     # 거래 후 잔액 - 이 거래 완료 후의 총 포인트 잔액
     # 이 필드 덕분에 복잡한 SUM 쿼리 없이 빠르게 현재 잔액 조회 가능
-    balance_after = Column(BigInteger, nullable=False)
+    balance_after: Mapped[int] = mapped_column(BigInteger, nullable=False)

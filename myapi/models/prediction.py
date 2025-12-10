@@ -1,21 +1,24 @@
+import enum
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Optional
+
 from sqlalchemy import (
-    Column,
     BigInteger,
-    DateTime,
-    Text,
     Date,
+    DateTime,
     Enum,
-    SmallInteger,
     ForeignKey,
     Integer,
     Numeric,
+    SmallInteger,
     String,
+    Text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.schema import UniqueConstraint, PrimaryKeyConstraint
+from sqlalchemy.schema import PrimaryKeyConstraint, UniqueConstraint
+
 from myapi.models.base import BaseModel
-import enum
-from datetime import date
 
 
 class ChoiceEnum(enum.Enum):
@@ -38,21 +41,27 @@ class Prediction(BaseModel):
         {"schema": "crypto"},
     )
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    trading_day = Column(Date, nullable=False)
-    user_id = Column(BigInteger, ForeignKey("crypto.users.id"), nullable=False)
-    symbol = Column(Text, nullable=False)
-    choice = Column(Enum(ChoiceEnum), nullable=False)
-    status = Column(Enum(StatusEnum), default=StatusEnum.PENDING, nullable=False)
-    submitted_at = Column(DateTime(timezone=True), nullable=False)
-    updated_at = Column(DateTime(timezone=True))
-    locked_at = Column(DateTime(timezone=True))
-    points_earned = Column(Integer, default=0)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    trading_day: Mapped[date] = mapped_column(Date, nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("crypto.users.id"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(Text, nullable=False)
+    choice: Mapped[ChoiceEnum] = mapped_column(Enum(ChoiceEnum), nullable=False)
+    status: Mapped[StatusEnum] = mapped_column(
+        Enum(StatusEnum), default=StatusEnum.PENDING, nullable=False
+    )
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    points_earned: Mapped[Optional[int]] = mapped_column(Integer, default=0, nullable=True)
 
     # Snapshot of price at prediction time (for fair settlement)
-    prediction_price = Column(Numeric(10, 4), nullable=True)
-    prediction_price_at = Column(DateTime(timezone=True), nullable=True)
-    prediction_price_source = Column(String(50), nullable=True)
+    prediction_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
+    prediction_price_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    prediction_price_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
 
 class UserDailyStats(BaseModel):
@@ -78,8 +87,10 @@ class AdUnlocks(BaseModel):
     __tablename__ = "ad_unlocks"
     __table_args__ = {"schema": "crypto", "extend_existing": True}
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, ForeignKey("crypto.users.id"), nullable=False)
-    trading_day = Column(Date, nullable=False)
-    method = Column(Text, nullable=False)  # AD | COOLDOWN
-    unlocked_slots = Column(SmallInteger, default=1, nullable=False)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("crypto.users.id"), nullable=False
+    )
+    trading_day: Mapped[date] = mapped_column(Date, nullable=False)
+    method: Mapped[str] = mapped_column(Text, nullable=False)  # AD | COOLDOWN
+    unlocked_slots: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)

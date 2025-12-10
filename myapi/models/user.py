@@ -1,10 +1,14 @@
-from sqlalchemy import Column, String, BigInteger, DateTime, Text, Index, Boolean
+from datetime import datetime
+from enum import Enum
+from typing import Optional, Union
+
+from sqlalchemy import BigInteger, Boolean, DateTime, Index, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import UniqueConstraint
+
 from myapi.models.base import BaseModel
 
 """User role enumeration for role-based access control."""
-from enum import Enum
-from typing import Union
 
 
 class UserRole(str, Enum):
@@ -60,15 +64,29 @@ class User(BaseModel):
         {"schema": "crypto"},
     )
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    email = Column(String(255), unique=True, nullable=False, index=True)
-    nickname = Column(String(100), nullable=False)
-    password_hash = Column(Text, nullable=True)  # NULL for OAuth users
-    auth_provider = Column(String(50), default="local", nullable=False)
-    provider_id = Column(String(255), nullable=True)  # OAuth provider user ID
-    last_login_at = Column(DateTime(timezone=True), nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)  # For user deactivation
-    role = Column(String(20), default=UserRole.USER, nullable=False)  # User role
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, index=True
+    )
+    nickname: Mapped[str] = mapped_column(String(100), nullable=False)
+    password_hash: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )  # NULL for OAuth users
+    auth_provider: Mapped[str] = mapped_column(
+        String(50), default="local", nullable=False
+    )
+    provider_id: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )  # OAuth provider user ID
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )  # For user deactivation
+    role: Mapped[str] = mapped_column(
+        String(20), default=UserRole.USER, nullable=False
+    )  # User role
 
     def __repr__(self):
         return (
