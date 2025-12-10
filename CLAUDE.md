@@ -414,3 +414,45 @@ def get_universe_for_date(self, date: date) -> List[UniverseItem]:
 - 리팩토링이 쉬운 코드로 구현 할 것
 - 이미 구현 되어 있는 코드 및 기능이 있는지 찾아 볼 것
   \*\*
+
+
+
+### SQLAlchemy Model Definition Rules
+
+**MUST: Use Mapped[] Type Hints**
+```python
+# ✅ CORRECT - SQLAlchemy 2.0 style with type safety
+from datetime import datetime
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Integer, String, TIMESTAMP
+
+class MyModel(Base):
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=True)
+
+# ❌ WRONG - Old style without type hints (causes type checking errors)
+class MyModel(Base):
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    count = Column(Integer, default=0)
+    created_at = Column(TIMESTAMP)
+```
+
+**Type Mapping Guidelines**
+- `Integer` → `Mapped[int]`
+- `String` → `Mapped[str]`
+- `Boolean` → `Mapped[bool]`
+- `TIMESTAMP` / `DateTime` → `Mapped[datetime]`
+- `Date` → `Mapped[date]`
+- `Text` → `Mapped[str]`
+- `Float` / `Numeric` → `Mapped[float]`
+- Nullable columns → `Mapped[Optional[type]]` or `mapped_column(..., nullable=True)`
+
+**Benefits of Mapped[] Pattern**
+- Type-safe attribute access in repositories and services
+- IDE autocomplete and type checking support
+- Prevents runtime type errors and attribute access issues
+- Compatible with strict type checkers (mypy, pyright, basedpyright)
+- Aligns with SQLAlchemy 2.0+ best practices
