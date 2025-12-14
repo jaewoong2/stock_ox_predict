@@ -201,3 +201,60 @@ class RewardsRedemptionSnapshot(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ==================== 마이페이지용 응답 스키마 ====================
+
+class AvailableRewardResponse(BaseModel):
+    """사용 가능한 리워드"""
+
+    redemption_id: int = Field(..., description="교환 ID")
+    sku: str = Field(..., description="상품 SKU")
+    title: str = Field(..., description="상품명")
+    reward_type: str = Field(..., description="리워드 타입")
+    image_url: Optional[str] = Field(None, description="상품 이미지 URL")
+    description: Optional[str] = Field(None, description="상품 설명")
+    purchased_at: str = Field(..., description="구매 시간")
+    can_use_now: bool = Field(..., description="현재 사용 가능 여부")
+
+    class Config:
+        from_attributes = True
+
+
+class UsedRewardResponse(BaseModel):
+    """사용 완료된 리워드"""
+
+    redemption_id: int = Field(..., description="교환 ID")
+    sku: str = Field(..., description="상품 SKU")
+    title: str = Field(..., description="상품명")
+    reward_type: str = Field(..., description="리워드 타입")
+    used_at: str = Field(..., description="사용 시간")
+    cost_points: int = Field(..., description="사용된 포인트")
+
+    class Config:
+        from_attributes = True
+
+
+class RewardsSummaryResponse(BaseModel):
+    """마이페이지 리워드 요약"""
+
+    available_rewards: List[AvailableRewardResponse] = Field(..., description="사용 가능한 리워드 목록")
+    used_rewards: List[UsedRewardResponse] = Field(..., description="사용 완료된 리워드 목록")
+    pending_rewards: List[RewardRedemptionHistory] = Field(..., description="관리자 처리 대기 중 리워드")
+    total_points_spent: int = Field(..., description="총 사용된 포인트")
+
+    class Config:
+        from_attributes = True
+
+
+class RewardActivationResponse(BaseModel):
+    """리워드 활성화 결과"""
+
+    success: bool = Field(..., description="활성화 성공 여부")
+    message: str = Field(..., description="응답 메시지")
+    redemption_id: int = Field(..., description="교환 ID")
+    reward_type: str = Field(..., description="리워드 타입")
+    activation_result: Dict[str, Any] = Field(..., description="활성화 결과 상세 정보")
+
+    class Config:
+        from_attributes = True

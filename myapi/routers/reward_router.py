@@ -20,6 +20,8 @@ from myapi.schemas.rewards import (
     AdminStockUpdateRequest,
     RewardsInventoryResponse,
     AdminRewardsStatsResponse,
+    RewardsSummaryResponse,
+    RewardActivationResponse,
 )
 from myapi.schemas.pagination import PaginationLimits
 from myapi.core.exceptions import (
@@ -282,3 +284,51 @@ async def update_redemption_status(
         raise HTTPException(
             status_code=500, detail="Failed to update redemption status"
         )
+
+
+# ==================== 마이페이지용 엔드포인트 ====================
+
+@router.get("/my-summary", response_model=RewardsSummaryResponse)
+@inject
+async def get_my_rewards_summary(
+    current_user: UserSchema = Depends(verify_bearer_token),
+    reward_service: RewardService = Depends(get_reward_service),
+) -> RewardsSummaryResponse:
+    """마이페이지: 리워드 전체 요약
+
+    사용자의 사용 가능한 리워드, 사용 완료된 리워드, 대기 중인 리워드를 모두 조회합니다.
+    """
+    try:
+        user_id = current_user.id
+        summary = reward_service.get_user_rewards_summary(user_id)
+        return summary
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to get rewards summary: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve rewards summary")
+
+
+@router.post("/activate/{redemption_id}", response_model=RewardActivationResponse)
+@inject
+async def activate_reward(
+    redemption_id: int = Path(..., description="교환 ID"),
+    current_user: UserSchema = Depends(verify_bearer_token),
+    reward_service: RewardService = Depends(get_reward_service),
+) -> RewardActivationResponse:
+    """리워드 사용하기 (통합 엔드포인트)
+
+    사용자가 구매한 리워드를 실제로 사용합니다.
+    SKU 타입에 따라 슬롯 리프레시, 기프티콘 발급, 포인트 지급 등의 액션이 실행됩니다.
+    """
+    try:
+        user_id = current_user.id
+        result = await reward_service.activate_reward(user_id, redemption_id)
+        return result
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to activate reward: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to activate reward")

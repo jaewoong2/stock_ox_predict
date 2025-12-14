@@ -5,6 +5,8 @@
 
 # 2025-12-09 기준, 시가총액 상위 주요 미국 주식 20개
 DEFAULT_TICKERS = [
+    "QQQ",  # Nasdaq 100 ETF
+    "SPY",  # S&P 500 ETF
     "AAPL",  # Apple
     "MSFT",  # Microsoft
     "GOOGL",  # Alphabet

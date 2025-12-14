@@ -55,7 +55,7 @@ async def get_universe_current_prices(
 async def get_trading_day_price_summary(
     trading_day: str = "",
     symbols: str = "",
-    validated_date: date = Depends(require_trading_day),
+    validated_date: date = date.today(),
     _current_user: UserSchema = Depends(get_current_active_user),
     price_service: PriceService = Depends(get_price_service),
 ) -> Any:

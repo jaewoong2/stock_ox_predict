@@ -20,6 +20,8 @@ from myapi.schemas.rewards import (
     RedemptionStats,
     RewardsInventorySnapshot,
     RewardsRedemptionSnapshot,
+    AvailableRewardResponse,
+    UsedRewardResponse,
 )
 from myapi.repositories.base import BaseRepository
 
@@ -67,8 +69,16 @@ class RewardsRepository(
             reserved=snap.reserved,
             vendor=snap.vendor,
             available_stock=available_stock,
-            created_at=(snap.created_at.strftime("%Y-%m-%d %H:%M:%S") if snap.created_at else None),
-            updated_at=(snap.updated_at.strftime("%Y-%m-%d %H:%M:%S") if snap.updated_at else None),
+            created_at=(
+                snap.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                if snap.created_at
+                else None
+            ),
+            updated_at=(
+                snap.updated_at.strftime("%Y-%m-%d %H:%M:%S")
+                if snap.updated_at
+                else None
+            ),
         )
 
     def _to_redemption_response(
@@ -89,8 +99,16 @@ class RewardsRepository(
             cost_points=snap.cost_points,
             status=status_str,
             vendor_code=snap.vendor_code,
-            created_at=(snap.created_at.strftime("%Y-%m-%d %H:%M:%S") if snap.created_at else None),
-            updated_at=(snap.updated_at.strftime("%Y-%m-%d %H:%M:%S") if snap.updated_at else None),
+            created_at=(
+                snap.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                if snap.created_at
+                else None
+            ),
+            updated_at=(
+                snap.updated_at.strftime("%Y-%m-%d %H:%M:%S")
+                if snap.updated_at
+                else None
+            ),
         )
 
     def get_reward_catalog(self, available_only: bool = True) -> RewardCatalogResponse:
@@ -302,7 +320,7 @@ class RewardsRepository(
     def process_redemption(
         self, user_id: int, sku: str, cost_points: int
     ) -> RewardRedemptionResponse:
-        """리워드 교환 처리"""
+        """리워드 교환 처리 (AVAILABLE 상태로 전환)"""
         # 재고 확인 및 예약
         if not self.is_available_for_redemption(sku, 1):
             return RewardRedemptionResponse(
@@ -329,21 +347,22 @@ class RewardsRepository(
             # 교환 기록 생성
             redemption = self.create_redemption(user_id, sku, cost_points)
 
-            # 예약 상태로 업데이트
+            # RESERVED 상태를 거쳐 AVAILABLE 상태로 즉시 전환
             self.update_redemption_status(redemption.id, RedemptionStatusEnum.RESERVED)
-            today = func.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.update_redemption_status(redemption.id, RedemptionStatusEnum.AVAILABLE)
 
             return RewardRedemptionResponse(
-                issued_at=today,
+                issued_at=None,  # 아직 사용하지 않음
                 success=True,
                 redemption_id=str(redemption.id),
-                status="RESERVED",
-                message="Redemption request processed successfully",
+                status="AVAILABLE",
+                message="구매 완료! 마이페이지에서 사용하세요.",
                 cost_points=cost_points,
             )
 
         except Exception as e:
             # 실패 시 예약 해제
+            self.db.rollback()  # 트랜잭션 오류 상태를 초기화
             self.release_reservation(sku, 1)
             return RewardRedemptionResponse(
                 success=False,
@@ -618,3 +637,127 @@ class RewardsRepository(
 
         self.db.commit()
         return deleted_count > 0
+
+    # ==================== 마이페이지용 메서드 ====================
+
+    def get_available_rewards_for_user(
+        self, user_id: int
+    ) -> List[AvailableRewardResponse]:
+        """사용자의 사용 가능한 리워드 목록 (AVAILABLE 상태)"""
+        results = (
+            self.db.query(RewardsRedemptionModel, RewardsInventoryModel)
+            .join(
+                RewardsInventoryModel,
+                RewardsRedemptionModel.sku == RewardsInventoryModel.sku,
+            )
+            .filter(
+                RewardsRedemptionModel.user_id == user_id,
+                RewardsRedemptionModel.status == RedemptionStatusEnum.AVAILABLE,
+            )
+            .order_by(desc(RewardsRedemptionModel.created_at))
+            .all()
+        )
+
+        available_rewards = []
+        for redemption, inventory in results:
+            available_rewards.append(
+                AvailableRewardResponse(
+                    redemption_id=redemption.id,
+                    sku=inventory.sku,
+                    title=inventory.title,
+                    reward_type=getattr(inventory, "reward_type", "SLOT_REFRESH"),
+                    image_url=getattr(inventory, "image_url", None),
+                    description=getattr(inventory, "description", None),
+                    purchased_at=(
+                        redemption.created_at.isoformat()
+                        if redemption.created_at
+                        else ""
+                    ),
+                    can_use_now=True,
+                )
+            )
+
+        return available_rewards
+
+    def get_used_rewards_for_user(
+        self, user_id: int, limit: int = 50
+    ) -> List[UsedRewardResponse]:
+        """사용자의 사용 완료 리워드 목록 (USED 상태)"""
+        results = (
+            self.db.query(RewardsRedemptionModel, RewardsInventoryModel)
+            .join(
+                RewardsInventoryModel,
+                RewardsRedemptionModel.sku == RewardsInventoryModel.sku,
+            )
+            .filter(
+                RewardsRedemptionModel.user_id == user_id,
+                RewardsRedemptionModel.status == RedemptionStatusEnum.USED,
+            )
+            .order_by(desc(RewardsRedemptionModel.updated_at))
+            .limit(limit)
+            .all()
+        )
+
+        used_rewards = []
+        for redemption, inventory in results:
+            used_rewards.append(
+                UsedRewardResponse(
+                    redemption_id=redemption.id,
+                    sku=inventory.sku,
+                    title=inventory.title,
+                    reward_type=getattr(inventory, "reward_type", "SLOT_REFRESH"),
+                    used_at=(
+                        redemption.updated_at.isoformat()
+                        if redemption.updated_at
+                        else ""
+                    ),
+                    cost_points=redemption.cost_points,
+                )
+            )
+
+        return used_rewards
+
+    def get_redemption_with_inventory(
+        self, redemption_id: int, user_id: int
+    ) -> Optional[tuple[RedemptionDetailResponse, RewardsInventoryResponse]]:
+        """특정 redemption과 inventory 정보 함께 조회 (소유권 검증 포함)"""
+        result = (
+            self.db.query(RewardsRedemptionModel, RewardsInventoryModel)
+            .join(
+                RewardsInventoryModel,
+                RewardsRedemptionModel.sku == RewardsInventoryModel.sku,
+            )
+            .filter(
+                RewardsRedemptionModel.id == redemption_id,
+                RewardsRedemptionModel.user_id == user_id,
+            )
+            .first()
+        )
+
+        if not result:
+            return None
+
+        redemption_model, inventory_model = result
+        return (
+            self._to_redemption_response(redemption_model),
+            self._to_inventory_response(inventory_model),
+        )
+
+    def mark_as_used(self, redemption_id: int) -> bool:
+        """리워드 사용 완료 처리"""
+        from datetime import datetime, timezone
+
+        updated_count = (
+            self.db.query(RewardsRedemptionModel)
+            .filter(RewardsRedemptionModel.id == redemption_id)
+            .update(
+                {
+                    "status": RedemptionStatusEnum.USED,
+                    "updated_at": datetime.now(timezone.utc),
+                },
+                synchronize_session=False,
+            )
+        )
+
+        self.db.commit()
+        return updated_count > 0

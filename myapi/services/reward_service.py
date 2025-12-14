@@ -22,7 +22,10 @@ from myapi.schemas.rewards import (
     InventorySummary,
     RedemptionStats,
     AdminRewardsStatsResponse,
+    RewardsSummaryResponse,
+    RewardActivationResponse,
 )
+from myapi.models.rewards import RedemptionStatusEnum
 import logging
 
 logger = logging.getLogger(__name__)
@@ -391,3 +394,122 @@ class RewardService:
         except Exception as e:
             logger.error(f"Failed to process redemption manually: {str(e)}")
             raise ValidationError(f"Failed to process redemption: {str(e)}")
+
+    # ==================== 마이페이지용 메서드 ====================
+
+    def get_user_rewards_summary(self, user_id: int) -> RewardsSummaryResponse:
+        """사용자 리워드 전체 요약
+
+        Args:
+            user_id: 사용자 ID
+
+        Returns:
+            RewardsSummaryResponse: 리워드 요약 정보
+        """
+        try:
+            available = self.rewards_repo.get_available_rewards_for_user(user_id)
+            used = self.rewards_repo.get_used_rewards_for_user(user_id, limit=50)
+
+            # pending: REQUESTED, RESERVED 상태 (기존 메서드 활용)
+            all_history_response = self.rewards_repo.get_user_redemption_history(user_id, limit=100)
+            pending = [
+                h for h in all_history_response.history
+                if h.status in ["REQUESTED", "RESERVED"]
+            ]
+
+            total_points = sum(r.cost_points for r in used)
+
+            logger.info(f"Retrieved rewards summary for user {user_id}")
+            return RewardsSummaryResponse(
+                available_rewards=available,
+                used_rewards=used,
+                pending_rewards=pending,
+                total_points_spent=total_points
+            )
+        except Exception as e:
+            logger.error(f"Failed to get rewards summary for user {user_id}: {str(e)}")
+            raise ValidationError(f"Failed to retrieve rewards summary: {str(e)}")
+
+    async def activate_reward(self, user_id: int, redemption_id: int) -> RewardActivationResponse:
+        """리워드 사용 처리 (SKU 기반 액션 판단)
+
+        Args:
+            user_id: 사용자 ID
+            redemption_id: 교환 ID
+
+        Returns:
+            RewardActivationResponse: 활성화 결과
+        """
+        try:
+            # 1. 소유권 및 상태 확인
+            result = self.rewards_repo.get_redemption_with_inventory(redemption_id, user_id)
+            if not result:
+                raise NotFoundError("리워드를 찾을 수 없습니다")
+
+            redemption, inventory = result
+
+            if redemption.status != "AVAILABLE":
+                raise ValidationError(f"사용할 수 없는 상태입니다: {redemption.status}")
+
+            # 2. SKU 기반 액션 판단 및 실행
+            reward_type = getattr(inventory, "reward_type", "SLOT_REFRESH")
+            activation_result = {}
+
+            if reward_type == "SLOT_REFRESH":
+                # 슬롯 리프레시 실행
+                # TODO: CooldownService 연동 구현 필요
+                activation_result = {
+                    "slots_added": 1,
+                    "new_slot_count": 0,  # 실제 쿨다운 서비스 연동 시 업데이트
+                    "message": "예측 슬롯이 1개 추가되었습니다"
+                }
+                logger.info(f"Activated SLOT_REFRESH reward for user {user_id}")
+
+            elif reward_type == "GIFT_VOUCHER":
+                # 기프티콘 정보 반환 (이미지 URL 등)
+                activation_data = getattr(inventory, "activation_data", {}) or {}
+                activation_result = {
+                    "voucher_code": activation_data.get("vendor_code"),
+                    "image_url": getattr(inventory, "image_url", None),
+                    "expires_at": None,
+                    "message": "기프티콘이 발급되었습니다"
+                }
+                logger.info(f"Activated GIFT_VOUCHER reward for user {user_id}")
+
+            elif reward_type == "POINTS_BONUS":
+                # 보너스 포인트 지급
+                activation_data = getattr(inventory, "activation_data", {}) or {}
+                bonus_points = activation_data.get("bonus_amount", 100)
+                ref_id = f"reward_bonus_{redemption_id}"
+
+                self.points_repo.add_points(
+                    user_id=user_id,
+                    points=bonus_points,
+                    reason="reward_bonus",
+                    ref_id=ref_id
+                )
+                activation_result = {
+                    "points_added": bonus_points,
+                    "message": f"{bonus_points} 포인트가 지급되었습니다"
+                }
+                logger.info(f"Activated POINTS_BONUS reward for user {user_id}")
+
+            else:
+                raise ValidationError(f"지원하지 않는 리워드 타입: {reward_type}")
+
+            # 3. 상태 변경: AVAILABLE → USED
+            self.rewards_repo.mark_as_used(redemption_id)
+
+            return RewardActivationResponse(
+                success=True,
+                message=activation_result.get("message", "리워드가 사용되었습니다"),
+                redemption_id=redemption_id,
+                reward_type=reward_type,
+                activation_result=activation_result
+            )
+
+        except (NotFoundError, ValidationError):
+            raise
+        except Exception as e:
+            logger.error(f"리워드 활성화 실패: {e}")
+            raise ValidationError(f"리워드 사용 중 오류가 발생했습니다: {str(e)}")
