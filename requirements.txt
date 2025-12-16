@@ -7,7 +7,7 @@ pydantic==2.10.6
 pydantic[email]==2.10.6
 pydantic_settings==2.8.1
 python-dotenv==1.0.1
-psycopg2-binary==2.9.9
+psycopg[binary]==3.2.3
 SQLAlchemy==2.0.35
 requests==2.32.3
 pytest==8.3.4

@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
         # URL encode the password to handle special characters
         encoded_password = quote_plus(self.POSTGRES_PASSWORD)
-        return f"postgresql+psycopg2://{self.POSTGRES_USERNAME}:{encoded_password}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DATABASE}"
+        return f"postgresql+psycopg://{self.POSTGRES_USERNAME}:{encoded_password}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DATABASE}"
 
     # Security
     SECRET_KEY: str = ""
