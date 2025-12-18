@@ -1,9 +1,10 @@
 from typing import Optional, List
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, date
 
 from myapi.repositories.rewards_repository import RewardsRepository
 from myapi.repositories.points_repository import PointsRepository
+from myapi.repositories.prediction_repository import UserDailyStatsRepository
 from myapi.core.exceptions import (
     ValidationError,
     NotFoundError,
@@ -38,6 +39,7 @@ class RewardService:
         self.db = db
         self.rewards_repo = RewardsRepository(db)
         self.points_repo = PointsRepository(db)
+        self.stats_repo = UserDailyStatsRepository(db)
 
     def get_reward_catalog(self, available_only: bool = True) -> RewardCatalogResponse:
         """리워드 카탈로그 조회
@@ -456,14 +458,31 @@ class RewardService:
             activation_result = {}
 
             if reward_type == "SLOT_REFRESH":
-                # 슬롯 리프레시 실행
-                # TODO: CooldownService 연동 구현 필요
+                # 1. 슬롯 용량 체크
+                today = date.today()
+                current_stats = self.stats_repo.get_or_create_user_daily_stats(user_id, today)
+
+                MAX_SLOT_CAPACITY = 3  # 정책 상수
+                if current_stats.available_predictions >= MAX_SLOT_CAPACITY:
+                    raise ValidationError(
+                        f"슬롯이 이미 꽉 찼습니다 ({MAX_SLOT_CAPACITY}개). "
+                        "예측을 사용한 후 리워드를 활성화해주세요."
+                    )
+
+                # 2. 실제 슬롯 추가
+                updated_stats = self.stats_repo.increase_max_predictions(
+                    user_id=user_id,
+                    trading_day=today,
+                    additional_slots=1
+                )
+
+                # 3. 응답 구성
                 activation_result = {
                     "slots_added": 1,
-                    "new_slot_count": 0,  # 실제 쿨다운 서비스 연동 시 업데이트
-                    "message": "예측 슬롯이 1개 추가되었습니다"
+                    "new_slot_count": updated_stats.available_predictions,
+                    "message": f"예측 슬롯이 1개 추가되었습니다 (현재 {updated_stats.available_predictions}개)"
                 }
-                logger.info(f"Activated SLOT_REFRESH reward for user {user_id}")
+                logger.info(f"Activated SLOT_REFRESH reward for user {user_id}: new count = {updated_stats.available_predictions}")
 
             elif reward_type == "GIFT_VOUCHER":
                 # 기프티콘 정보 반환 (이미지 URL 등)

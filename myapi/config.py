@@ -53,14 +53,14 @@ class Settings(BaseSettings):
     APPLE_KEY_ID: str = ""
     APPLE_PRIVATE_KEY: str = ""
     OAUTH_STATE_EXPIRE_MINUTES: int = 10
-    
+
     # Magic Link
     MAGIC_LINK_EXPIRE_MINUTES: int = 15
     # API Base URL (쿨다운 콜백 등에 사용)
     API_BASE_URL: str = ""
     API_BASE_URL_LOCAL: Optional[str] = None
     API_BASE_URL_PROD: Optional[str] = None
-    
+
     # Magic Link
     MAGIC_LINK_BASE_URL: str = ""
     MAGIC_LINK_BASE_URL_LOCAL: Optional[str] = None
@@ -180,12 +180,18 @@ class Settings(BaseSettings):
         env = (self.ENVIRONMENT or "").lower()
 
         if env in {"local", "development", "dev"}:
-            url = self.MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL or self.MAGIC_LINK_CLIENT_REDIRECT_URL
+            url = (
+                self.MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL
+                or self.MAGIC_LINK_CLIENT_REDIRECT_URL
+            )
             if url:
                 return url
 
         if env in {"production", "prod", "staging"}:
-            url = self.MAGIC_LINK_CLIENT_REDIRECT_URL_PROD or self.MAGIC_LINK_CLIENT_REDIRECT_URL
+            url = (
+                self.MAGIC_LINK_CLIENT_REDIRECT_URL_PROD
+                or self.MAGIC_LINK_CLIENT_REDIRECT_URL
+            )
             if url:
                 return url
 
