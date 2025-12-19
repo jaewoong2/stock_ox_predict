@@ -4,6 +4,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 import secrets
 import logging
+import json
 from datetime import datetime, timedelta, timezone
 from myapi.config import settings
 from myapi.services.auth_service import AuthService
@@ -172,14 +173,26 @@ def oauth_authorize(
 
         # State (CSRF & correlation)
         state = secrets.token_urlsafe(32)
-        # Save state -> client redirect mapping
+        # Save state -> client redirect mapping with JSON format
+        state_payload = {
+            "type": "oauth",
+            "provider": provider,
+            "redirect_url": client_redirect,
+        }
+        logger.info(f"🔍 Generated OAuth state: {state[:12]}... for provider={provider}, redirect={client_redirect}")
+
         oauth_state_repo = OAuthStateRepository(db)
-        oauth_state_repo.save(
-            state=state,
-            client_redirect_uri=client_redirect,
-            expires_at=datetime.now(timezone.utc)
-            + timedelta(minutes=settings.OAUTH_STATE_EXPIRE_MINUTES),
-        )
+        try:
+            oauth_state_repo.save(
+                state=state,
+                client_redirect_uri=json.dumps(state_payload),
+                expires_at=datetime.now(timezone.utc)
+                + timedelta(minutes=settings.OAUTH_STATE_EXPIRE_MINUTES),
+            )
+            logger.info(f"✅ Successfully saved OAuth state to database: {state[:12]}...")
+        except Exception as save_error:
+            logger.error(f"❌ Failed to save OAuth state: {save_error}", exc_info=True)
+            raise
 
         # Build provider auth URL and redirect the browser
         auth_url = auth_service.get_oauth_auth_url(provider, callback_url, state)
@@ -213,15 +226,25 @@ async def oauth_callback_get(
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """Provider redirects here. Exchange code -> token, then redirect to client."""
+    logger.info(f"🔍 OAuth callback received: provider={provider}, state={state[:12]}..., code={code[:20] if code else None}...")
+
     oauth_state_repo = OAuthStateRepository(db)
     client_redirect = None
 
     try:
         # Resolve client redirect from stored state and clear it
-        client_redirect = oauth_state_repo.pop(state)
-        if not client_redirect:
-            # If we can't get client_redirect, we have no choice but to raise exception
+        logger.info(f"🔍 Attempting to retrieve state from database: {state[:12]}...")
+        state_data = oauth_state_repo.pop(state)
+        if not state_data:
+            # If we can't get state_data, we have no choice but to raise exception
+            logger.error(f"❌ State not found or expired: {state[:12]}...")
             raise HTTPException(status_code=400, detail="Invalid or expired state")
+
+        logger.info(f"✅ State retrieved successfully: {state_data}")
+        client_redirect = state_data.get("redirect_url")
+        if not client_redirect:
+            logger.error(f"❌ Missing redirect_url in state_data: {state_data}")
+            raise HTTPException(status_code=400, detail="Missing redirect URL in state")
 
         domain_name = request.url._url.split(request.url.path)[0]
 

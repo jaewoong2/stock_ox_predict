@@ -25,11 +25,20 @@ from myapi.schemas.rewards import (
     AdminRewardsStatsResponse,
     RewardsSummaryResponse,
     RewardActivationResponse,
+    RewardCancellationResponse,
 )
 from myapi.models.rewards import RedemptionStatusEnum
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class RedemptionTransactionError(Exception):
+    """내부 보상 트랜잭션 실패를 나타내는 예외"""
+
+    def __init__(self, response: RewardRedemptionResponse):
+        self.response = response
+        super().__init__(response.message)
 
 
 class RewardService:
@@ -101,7 +110,6 @@ class RewardService:
                     issued_at=None,
                 )
 
-            # 재고 확인
             if not reward.is_available:
                 return RewardRedemptionResponse(
                     success=False,
@@ -112,52 +120,51 @@ class RewardService:
                     issued_at=None,
                 )
 
-            # 사용자 포인트 잔액 확인
             user_balance = self.points_repo.get_user_balance(user_id)
             if user_balance < reward.cost_points:
                 raise InsufficientBalanceError(
                     f"Insufficient points. Required: {reward.cost_points}, Available: {user_balance}"
                 )
 
-            # 포인트 차감 (교환 수수료)
-            ref_id = f"redemption_{user_id}_{request.sku}_{datetime.now().timestamp()}"
-            deduction_result = self.points_repo.deduct_points(
-                user_id=user_id,
-                points=reward.cost_points,
-                reason=f"Reward redemption: {reward.title}",
-                ref_id=ref_id,
-            )
+            redemption_result: Optional[RewardRedemptionResponse] = None
 
-            if not deduction_result.success:
-                return RewardRedemptionResponse(
-                    success=False,
-                    redemption_id="",
-                    status="FAILED",
-                    message=deduction_result.message,
-                    cost_points=reward.cost_points,
-                    issued_at=None,
-                )
+            try:
+                with self.db.begin():
+                    ref_id = f"redemption_{user_id}_{request.sku}_{datetime.now().timestamp()}"
+                    deduction_result = self.points_repo.deduct_points(
+                        user_id=user_id,
+                        points=reward.cost_points,
+                        reason=f"Reward redemption: {reward.title}",
+                        ref_id=ref_id,
+                        auto_commit=False,
+                    )
 
-            # 리워드 교환 처리
-            redemption_result = self.rewards_repo.process_redemption(
-                user_id=user_id,
-                sku=request.sku,
-                cost_points=reward.cost_points,
-            )
+                    if not deduction_result.success:
+                        raise RedemptionTransactionError(
+                            RewardRedemptionResponse(
+                                success=False,
+                                redemption_id="",
+                                status="FAILED",
+                                message=deduction_result.message,
+                                cost_points=reward.cost_points,
+                                issued_at=None,
+                            )
+                        )
 
-            if not redemption_result.success:
-                # 실패시 포인트 환원 시도
-                refund_ref_id = f"refund_{ref_id}"
-                refund_result = self.points_repo.add_points(
-                    user_id=user_id,
-                    points=reward.cost_points,
-                    reason=f"Refund for failed redemption: {reward.title}",
-                    ref_id=refund_ref_id,
-                )
+                    redemption_result = self.rewards_repo.process_redemption(
+                        user_id=user_id,
+                        sku=request.sku,
+                        cost_points=reward.cost_points,
+                        auto_commit=False,
+                    )
 
+                    if not redemption_result.success:
+                        raise RedemptionTransactionError(redemption_result)
+            except RedemptionTransactionError as flow_err:
                 logger.warning(
-                    f"Redemption failed, refund result: {refund_result.success}"
+                    f"Transactional redemption failed for user {user_id}: {flow_err.response.message}"
                 )
+                return flow_err.response
 
             logger.info(
                 f"Reward redemption processed for user {user_id}, sku {request.sku}"
@@ -413,9 +420,12 @@ class RewardService:
             used = self.rewards_repo.get_used_rewards_for_user(user_id, limit=50)
 
             # pending: REQUESTED, RESERVED 상태 (기존 메서드 활용)
-            all_history_response = self.rewards_repo.get_user_redemption_history(user_id, limit=100)
+            all_history_response = self.rewards_repo.get_user_redemption_history(
+                user_id, limit=100
+            )
             pending = [
-                h for h in all_history_response.history
+                h
+                for h in all_history_response.history
                 if h.status in ["REQUESTED", "RESERVED"]
             ]
 
@@ -426,13 +436,15 @@ class RewardService:
                 available_rewards=available,
                 used_rewards=used,
                 pending_rewards=pending,
-                total_points_spent=total_points
+                total_points_spent=total_points,
             )
         except Exception as e:
             logger.error(f"Failed to get rewards summary for user {user_id}: {str(e)}")
             raise ValidationError(f"Failed to retrieve rewards summary: {str(e)}")
 
-    async def activate_reward(self, user_id: int, redemption_id: int) -> RewardActivationResponse:
+    async def activate_reward(
+        self, user_id: int, redemption_id: int
+    ) -> RewardActivationResponse:
         """리워드 사용 처리 (SKU 기반 액션 판단)
 
         Args:
@@ -444,7 +456,9 @@ class RewardService:
         """
         try:
             # 1. 소유권 및 상태 확인
-            result = self.rewards_repo.get_redemption_with_inventory(redemption_id, user_id)
+            result = self.rewards_repo.get_redemption_with_inventory(
+                redemption_id, user_id
+            )
             if not result:
                 raise NotFoundError("리워드를 찾을 수 없습니다")
 
@@ -460,29 +474,28 @@ class RewardService:
             if reward_type == "SLOT_REFRESH":
                 # 1. 슬롯 용량 체크
                 today = date.today()
-                current_stats = self.stats_repo.get_or_create_user_daily_stats(user_id, today)
+                current_stats = self.stats_repo.get_or_create_user_daily_stats(
+                    user_id, today
+                )
 
                 MAX_SLOT_CAPACITY = 3  # 정책 상수
                 if current_stats.available_predictions >= MAX_SLOT_CAPACITY:
-                    raise ValidationError(
-                        f"슬롯이 이미 꽉 찼습니다 ({MAX_SLOT_CAPACITY}개). "
-                        "예측을 사용한 후 리워드를 활성화해주세요."
-                    )
+                    raise ValidationError(f"사용가능 한 슬롯이 모두 있어요")
 
                 # 2. 실제 슬롯 추가
                 updated_stats = self.stats_repo.increase_max_predictions(
-                    user_id=user_id,
-                    trading_day=today,
-                    additional_slots=1
+                    user_id=user_id, trading_day=today, additional_slots=1
                 )
 
                 # 3. 응답 구성
                 activation_result = {
                     "slots_added": 1,
                     "new_slot_count": updated_stats.available_predictions,
-                    "message": f"예측 슬롯이 1개 추가되었습니다 (현재 {updated_stats.available_predictions}개)"
+                    "message": f"예측 슬롯이 1개 추가되었습니다 (현재 {updated_stats.available_predictions}개)",
                 }
-                logger.info(f"Activated SLOT_REFRESH reward for user {user_id}: new count = {updated_stats.available_predictions}")
+                logger.info(
+                    f"Activated SLOT_REFRESH reward for user {user_id}: new count = {updated_stats.available_predictions}"
+                )
 
             elif reward_type == "GIFT_VOUCHER":
                 # 기프티콘 정보 반환 (이미지 URL 등)
@@ -491,7 +504,7 @@ class RewardService:
                     "voucher_code": activation_data.get("vendor_code"),
                     "image_url": getattr(inventory, "image_url", None),
                     "expires_at": None,
-                    "message": "기프티콘이 발급되었습니다"
+                    "message": "기프티콘이 발급되었습니다",
                 }
                 logger.info(f"Activated GIFT_VOUCHER reward for user {user_id}")
 
@@ -505,11 +518,11 @@ class RewardService:
                     user_id=user_id,
                     points=bonus_points,
                     reason="reward_bonus",
-                    ref_id=ref_id
+                    ref_id=ref_id,
                 )
                 activation_result = {
                     "points_added": bonus_points,
-                    "message": f"{bonus_points} 포인트가 지급되었습니다"
+                    "message": f"{bonus_points} 포인트가 지급되었습니다",
                 }
                 logger.info(f"Activated POINTS_BONUS reward for user {user_id}")
 
@@ -524,7 +537,7 @@ class RewardService:
                 message=activation_result.get("message", "리워드가 사용되었습니다"),
                 redemption_id=redemption_id,
                 reward_type=reward_type,
-                activation_result=activation_result
+                activation_result=activation_result,
             )
 
         except (NotFoundError, ValidationError):
@@ -532,3 +545,57 @@ class RewardService:
         except Exception as e:
             logger.error(f"리워드 활성화 실패: {e}")
             raise ValidationError(f"리워드 사용 중 오류가 발생했습니다: {str(e)}")
+
+    async def cancel_reward(self, user_id: int, redemption_id: int):
+        """리워드 취소 처리
+
+        Args:
+            user_id: 사용자 ID
+            redemption_id: 교환 ID
+
+        Returns:
+            RewardCancellationResponse: 취소 결과
+        """
+        try:
+            # Use explicit transaction to ensure atomicity
+            with self.db.begin():
+                # 1. 소유권 및 상태 확인
+                result = self.rewards_repo.get_redemption_with_inventory(
+                    redemption_id, user_id
+                )
+                if not result:
+                    raise NotFoundError("리워드를 찾을 수 없습니다")
+
+                redemption, inventory = result
+
+                if redemption.status != "AVAILABLE":
+                    raise ValidationError(
+                        f"사용할 수 없는 상태입니다: {redemption.status}"
+                    )
+
+                # 2. 상태 변경 (auto_commit=False to defer commit)
+                self.rewards_repo.update_redemption_status(
+                    redemption_id, RedemptionStatusEnum.CANCELLED, auto_commit=False
+                )
+
+                # 3. 포인트 환불 (auto_commit=False to defer commit)
+                self.points_repo.add_points(
+                    user_id=user_id,
+                    points=redemption.cost_points,
+                    reason=f"Refund for canceled redemption: {redemption.id}",
+                    ref_id=f"cancel_refund_{redemption_id}",
+                    auto_commit=False,
+                )
+                # Transaction commits automatically at end of 'with' block
+                # If any exception occurs, it rolls back automatically
+
+            return RewardCancellationResponse(
+                success=True,
+                message="리워드가 취소되었습니다",
+                redemption_id=redemption_id,
+            )
+        except (NotFoundError, ValidationError):
+            raise
+        except Exception as e:
+            logger.error(f"리워드 취소 실패: {e}")
+            raise ValidationError(f"리워드 취소 중 오류가 발생했습니다: {str(e)}")

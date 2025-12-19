@@ -55,7 +55,10 @@ class MagicLinkService:
                         str(request.redirect_url) if request.redirect_url else None
                     )
 
-                    state_payload = {"email": request.email}
+                    state_payload = {
+                        "type": "magic_link",
+                        "email": request.email,
+                    }
                     if redirect_target:
                         state_payload["redirect_url"] = redirect_target
 
@@ -109,12 +112,14 @@ class MagicLinkService:
         self, token: str
     ) -> Tuple[OAuthLoginResponse, Optional[str]]:
         """Verify magic link token and authenticate user"""
-        state_value = self.oauth_state_repo.pop(token)
+        state_data = self.oauth_state_repo.pop(token)
 
-        if not state_value:
+        if not state_data:
             raise AuthenticationError("Invalid or expired magic link")
 
-        email, state_redirect = self._extract_state_payload(state_value)
+        # Extract email and redirect from dict (pop() now returns dict)
+        email = state_data.get("email")
+        state_redirect = state_data.get("redirect_url")
 
         if not email:
             raise AuthenticationError("Invalid or expired magic link")
@@ -192,13 +197,13 @@ class MagicLinkService:
     async def verify_code(self, email: str, code: str) -> OAuthLoginResponse:
         """Verify 6-digit verification code and authenticate user"""
         # Pop state from DB (expires_at check included)
-        state_value = self.oauth_state_repo.pop(code)
+        state_data = self.oauth_state_repo.pop(code)
 
-        if not state_value:
+        if not state_data:
             raise AuthenticationError("유효하지 않거나 만료된 인증 코드입니다")
 
-        # Extract email from stored payload
-        stored_email, state_redirect = self._extract_state_payload(state_value)
+        # Extract email from dict (pop() now returns dict)
+        stored_email = state_data.get("email")
 
         if not stored_email:
             raise AuthenticationError("유효하지 않은 인증 코드입니다")

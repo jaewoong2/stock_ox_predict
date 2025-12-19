@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 from fastapi import HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -10,6 +11,8 @@ from myapi.services.auth_service import AuthService
 from myapi.schemas.user import User as UserSchema
 from myapi.core.exceptions import AuthenticationError
 
+
+logger = logging.getLogger(__name__)
 # JWT Bearer 토큰 스킴
 security = HTTPBearer(auto_error=False)
 
@@ -26,7 +29,8 @@ def _extract_bearer_from_internal_header(request: Request) -> Optional[str]:
     if not raw:
         return None
     try:
-        parts = raw.split(" ", 1)
+        parts = raw.split(" ")
+
         if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1].strip():
             return parts[1].strip()
     except Exception:
@@ -43,6 +47,11 @@ def get_current_user_optional(
     token: Optional[str] = None
     # 1) Prefer internal header (used when Function URL IAM auth occupies Authorization)
     internal_token = _extract_bearer_from_internal_header(request)
+
+    # Log only presence/absence of tokens, not the actual values (security)
+    logger.debug(f"internal_token present: {bool(internal_token)}")
+    logger.debug(f"credentials present: {bool(credentials)}")
+
     if internal_token:
         token = internal_token
     elif credentials:

@@ -22,6 +22,7 @@ from myapi.schemas.rewards import (
     AdminRewardsStatsResponse,
     RewardsSummaryResponse,
     RewardActivationResponse,
+    RewardCancellationResponse,
 )
 from myapi.schemas.pagination import PaginationLimits
 from myapi.core.exceptions import (
@@ -102,7 +103,12 @@ async def redeem_reward(
 @router.get("/my-redemptions", response_model=RewardRedemptionHistoryResponse)
 @inject
 async def get_my_redemption_history(
-    limit: int = Query(PaginationLimits.REWARDS_HISTORY["default"], ge=PaginationLimits.REWARDS_HISTORY["min"], le=PaginationLimits.REWARDS_HISTORY["max"], description="페이지 크기"),
+    limit: int = Query(
+        PaginationLimits.REWARDS_HISTORY["default"],
+        ge=PaginationLimits.REWARDS_HISTORY["min"],
+        le=PaginationLimits.REWARDS_HISTORY["max"],
+        description="페이지 크기",
+    ),
     offset: int = Query(0, ge=0, description="오프셋"),
     current_user: UserSchema = Depends(verify_bearer_token),
     reward_service: RewardService = Depends(get_reward_service),
@@ -288,6 +294,7 @@ async def update_redemption_status(
 
 # ==================== 마이페이지용 엔드포인트 ====================
 
+
 @router.get("/my-summary", response_model=RewardsSummaryResponse)
 @inject
 async def get_my_rewards_summary(
@@ -306,7 +313,9 @@ async def get_my_rewards_summary(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to get rewards summary: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve rewards summary")
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve rewards summary"
+        )
 
 
 @router.post("/activate/{redemption_id}", response_model=RewardActivationResponse)
@@ -332,3 +341,28 @@ async def activate_reward(
     except Exception as e:
         logger.error(f"Failed to activate reward: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to activate reward")
+
+
+@router.post("/cancel/{redemption_id}", response_model=RewardCancellationResponse)
+@inject
+async def cancel_reward(
+    redemption_id: int = Path(..., description="교환 ID"),
+    current_user: UserSchema = Depends(verify_bearer_token),
+    reward_service: RewardService = Depends(get_reward_service),
+) -> RewardCancellationResponse:
+    """리워드 취소하기
+
+    사용자가 구매한 리워드를 취소하고 포인트를 환불받습니다.
+    AVAILABLE 상태의 리워드만 취소 가능합니다.
+    """
+    try:
+        user_id = current_user.id
+        result = await reward_service.cancel_reward(user_id, redemption_id)
+        return result
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to cancel reward: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to cancel reward")

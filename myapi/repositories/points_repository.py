@@ -107,10 +107,11 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
         ref_id: str,
         trading_day: date = date.today(),
         symbol: str = "",
+        auto_commit: bool = True,
     ) -> PointsTransactionResponse:
         """포인트 추가 (멱등성 보장)"""
         return self._transact_points(
-            user_id, points, reason, ref_id, trading_day, symbol
+            user_id, points, reason, ref_id, trading_day, symbol, auto_commit
         )
 
     def deduct_points(
@@ -121,10 +122,11 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
         ref_id: str,
         trading_day: date = date.today(),
         symbol: str = "",
+        auto_commit: bool = True,
     ) -> PointsTransactionResponse:
         """포인트 차감 (멱등성 보장)"""
         return self._transact_points(
-            user_id, -points, reason, ref_id, trading_day, symbol
+            user_id, -points, reason, ref_id, trading_day, symbol, auto_commit
         )
 
     def _transact_points(
@@ -135,6 +137,7 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
         ref_id: str,
         trading_day: date = date.today(),
         symbol: str = "",
+        auto_commit: bool = True,
     ) -> PointsTransactionResponse:
         """
         포인트 거래 처리의 핵심 로직 - 멱등성과 원자성 보장
@@ -213,7 +216,9 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
             self.db.add(ledger_entry)
             self.db.flush()
             self.db.refresh(ledger_entry)
-            self.db.commit()
+
+            if auto_commit:
+                self.db.commit()
 
             return PointsTransactionResponse(
                 success=True,
@@ -224,31 +229,33 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
             )
 
         except IntegrityError as e:
-            self.db.rollback()
-            # ref_id 중복 에러인 경우 기존 항목 반환
-            if "ref_id" in str(e):
-                existing_entry = (
-                    self.db.query(self.model_class)
-                    .filter(self.model_class.ref_id == ref_id)
-                    .first()
-                )
-
-                if existing_entry:
-                    return PointsTransactionResponse(
-                        success=True,
-                        transaction_id=getattr(existing_entry, "id", None),
-                        delta_points=getattr(existing_entry, "delta_points", 0),
-                        balance_after=getattr(existing_entry, "balance_after", 0),
-                        message="Transaction already processed (idempotent, integrity error handled)",
+            if auto_commit:
+                self.db.rollback()
+                # ref_id 중복 에러인 경우 기존 항목 반환
+                if "ref_id" in str(e):
+                    existing_entry = (
+                        self.db.query(self.model_class)
+                        .filter(self.model_class.ref_id == ref_id)
+                        .first()
                     )
 
-            return PointsTransactionResponse(
-                success=False,
-                transaction_id=None,
-                delta_points=0,
-                balance_after=self.get_user_balance(user_id),
-                message=f"Transaction failed: {str(e)}",
-            )
+                    if existing_entry:
+                        return PointsTransactionResponse(
+                            success=True,
+                            transaction_id=getattr(existing_entry, "id", None),
+                            delta_points=getattr(existing_entry, "delta_points", 0),
+                            balance_after=getattr(existing_entry, "balance_after", 0),
+                            message="Transaction already processed (idempotent, integrity error handled)",
+                        )
+
+                return PointsTransactionResponse(
+                    success=False,
+                    transaction_id=None,
+                    delta_points=0,
+                    balance_after=self.get_user_balance(user_id),
+                    message=f"Transaction failed: {str(e)}",
+                )
+            raise
 
     def get_user_ledger(
         self, user_id: int, limit: int = 50, offset: int = 0

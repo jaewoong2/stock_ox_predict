@@ -1,5 +1,6 @@
+import json
 from datetime import datetime, timezone
-from typing import Optional, cast
+from typing import Dict, Optional, cast
 
 from sqlalchemy.orm import Session
 
@@ -27,11 +28,15 @@ class OAuthStateRepository:
             self.db.rollback()
             raise
 
-    def pop(self, state: str) -> Optional[str]:
-        """Fetch and delete state. Returns the client redirect URI.
+    def pop(self, state: str) -> Optional[Dict[str, str]]:
+        """Fetch and delete state. Returns state data as dict.
 
         Uses explicit commit/rollback to avoid nested transaction errors when a
         previous read implicitly opened a transaction on the Session.
+
+        Returns:
+            Dict with state data (type, provider/email, redirect_url) or None if not found/expired.
+            For backward compatibility, converts plain string redirect_uri to dict format.
         """
         rec = (
             self.db.query(OAuthStateModel)
@@ -53,7 +58,16 @@ class OAuthStateRepository:
                 raise
             return None
 
-        client_redirect = rec.redirect_uri
+        # Parse JSON or handle plain string (backward compatibility)
+        try:
+            state_data = json.loads(str(rec.redirect_uri))
+            # Ensure it's a dict
+            if not isinstance(state_data, dict):
+                state_data = {"redirect_url": str(rec.redirect_uri)}
+        except (json.JSONDecodeError, ValueError):
+            # Backward compatibility: plain string redirect_uri
+            state_data = {"redirect_url": str(rec.redirect_uri)}
+
         try:
             self.db.delete(rec)
             self.db.commit()
@@ -61,4 +75,4 @@ class OAuthStateRepository:
             self.db.rollback()
             raise
 
-        return str(client_redirect)
+        return state_data

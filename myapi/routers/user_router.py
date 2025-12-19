@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from myapi.services.user_service import UserService
 from myapi.core.auth_middleware import (
@@ -25,14 +25,18 @@ logger = logging.getLogger(__name__)
 @router.get("/me", response_model=BaseResponse)
 @inject
 def get_current_user_profile(
-    current_user: UserSchema = Depends(get_current_user_optional),
+    current_user: Optional[UserSchema] = Depends(get_current_user_optional),
 ):
     """현재 사용자 프로필 조회"""
+
     if not current_user:
         return BaseResponse(
             success=False,
-            data=None,
+            error=Error(code=ErrorCode.UNAUTHORIZED, message="Unauthorized"),
         )
+
+    # Log only user ID, not full user object (security/privacy)
+    logger.debug(f"Authenticated user_id: {current_user.id}")
 
     return BaseResponse(
         success=True,

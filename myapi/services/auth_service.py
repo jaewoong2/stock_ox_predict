@@ -212,7 +212,10 @@ class AuthService:
                 return None
 
             return TokenData(email=email_val, user_id=user_id_val)
-        except JWTError:
+        except JWTError as e:
+            # Return None to maintain backward compatibility
+            # Callers check for None rather than catching exceptions
+            logger.debug(f"JWT verification error: {str(e)}")
             return None
 
     def get_current_user(self, token: str) -> Optional[UserSchema]:

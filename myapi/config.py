@@ -149,6 +149,7 @@ class Settings(BaseSettings):
     LAMBDA_FUNCTION_URL: str | None = None
     LAMBDA_URL_TIMEOUT_SEC: int = 15
     # Internal auth forwarding when using Function URL (avoid clobbering AWS SigV4 Authorization header)
+    # Using custom header to prevent conflict with Lambda IAM authentication
     INTERNAL_AUTH_HEADER: str = "x-internal-authorization"
 
     @property

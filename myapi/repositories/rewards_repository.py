@@ -197,7 +197,9 @@ class RewardsRepository(
 
         return self._to_inventory_response(updated_model)
 
-    def reserve_item(self, sku: str, quantity: int = 1) -> bool:
+    def reserve_item(
+        self, sku: str, quantity: int = 1, auto_commit: bool = True
+    ) -> bool:
         """아이템 예약 (교환 처리 시 호출)"""
         model_instance = (
             self.db.query(RewardsInventoryModel)
@@ -224,10 +226,13 @@ class RewardsRepository(
             )
         )
 
-        self.db.commit()
+        if auto_commit:
+            self.db.commit()
         return updated_count > 0
 
-    def release_reservation(self, sku: str, quantity: int = 1) -> bool:
+    def release_reservation(
+        self, sku: str, quantity: int = 1, auto_commit: bool = True
+    ) -> bool:
         """예약 해제 (교환 취소/실패 시 호출)"""
         # SQL UPDATE를 사용하여 예약 수량 감소 (음수 방지)
         from sqlalchemy import case
@@ -249,10 +254,13 @@ class RewardsRepository(
             )
         )
 
-        self.db.commit()
+        if auto_commit:
+            self.db.commit()
         return updated_count > 0
 
-    def consume_reserved_item(self, sku: str, quantity: int = 1) -> bool:
+    def consume_reserved_item(
+        self, sku: str, quantity: int = 1, auto_commit: bool = True
+    ) -> bool:
         """예약된 아이템 소비 (교환 완료 시 호출)"""
         model_instance = (
             self.db.query(RewardsInventoryModel)
@@ -280,7 +288,8 @@ class RewardsRepository(
             )
         )
 
-        self.db.commit()
+        if auto_commit:
+            self.db.commit()
         return updated_count > 0
 
     def is_available_for_redemption(self, sku: str, quantity: int = 1) -> bool:
@@ -300,7 +309,7 @@ class RewardsRepository(
         return available >= quantity
 
     def create_redemption(
-        self, user_id: int, sku: str, cost_points: int
+        self, user_id: int, sku: str, cost_points: int, auto_commit: bool = True
     ) -> RedemptionDetailResponse:
         """교환 요청 생성"""
         redemption = RewardsRedemptionModel(
@@ -313,12 +322,17 @@ class RewardsRepository(
         self.db.add(redemption)
         self.db.flush()
         self.db.refresh(redemption)
-        self.db.commit()
+        if auto_commit:
+            self.db.commit()
 
         return self._to_redemption_response(redemption)
 
     def process_redemption(
-        self, user_id: int, sku: str, cost_points: int
+        self,
+        user_id: int,
+        sku: str,
+        cost_points: int,
+        auto_commit: bool = True,
     ) -> RewardRedemptionResponse:
         """리워드 교환 처리 (AVAILABLE 상태로 전환)"""
         # 재고 확인 및 예약
@@ -334,7 +348,7 @@ class RewardsRepository(
 
         try:
             # 재고 예약
-            if not self.reserve_item(sku, 1):
+            if not self.reserve_item(sku, 1, auto_commit=auto_commit):
                 return RewardRedemptionResponse(
                     issued_at=None,
                     success=False,
@@ -345,11 +359,21 @@ class RewardsRepository(
                 )
 
             # 교환 기록 생성
-            redemption = self.create_redemption(user_id, sku, cost_points)
+            redemption = self.create_redemption(
+                user_id, sku, cost_points, auto_commit=auto_commit
+            )
 
             # RESERVED 상태를 거쳐 AVAILABLE 상태로 즉시 전환
-            self.update_redemption_status(redemption.id, RedemptionStatusEnum.RESERVED)
-            self.update_redemption_status(redemption.id, RedemptionStatusEnum.AVAILABLE)
+            self.update_redemption_status(
+                redemption.id,
+                RedemptionStatusEnum.RESERVED,
+                auto_commit=auto_commit,
+            )
+            self.update_redemption_status(
+                redemption.id,
+                RedemptionStatusEnum.AVAILABLE,
+                auto_commit=auto_commit,
+            )
 
             return RewardRedemptionResponse(
                 issued_at=None,  # 아직 사용하지 않음
@@ -362,22 +386,25 @@ class RewardsRepository(
 
         except Exception as e:
             # 실패 시 예약 해제
-            self.db.rollback()  # 트랜잭션 오류 상태를 초기화
-            self.release_reservation(sku, 1)
-            return RewardRedemptionResponse(
-                success=False,
-                issued_at=None,
-                redemption_id="",
-                status="FAILED",
-                message=f"Redemption failed: {str(e)}",
-                cost_points=0,
-            )
+            if auto_commit:
+                self.db.rollback()  # 트랜잭션 오류 상태를 초기화
+                self.release_reservation(sku, 1, auto_commit=auto_commit)
+                return RewardRedemptionResponse(
+                    success=False,
+                    issued_at=None,
+                    redemption_id="",
+                    status="FAILED",
+                    message=f"Redemption failed: {str(e)}",
+                    cost_points=0,
+                )
+            raise
 
     def update_redemption_status(
         self,
         redemption_id: int,
         new_status: RedemptionStatusEnum,
         vendor_code: str = "",
+        auto_commit: bool = True,
     ) -> Optional[RedemptionDetailResponse]:
         """교환 상태 업데이트"""
         redemption = (
@@ -418,7 +445,8 @@ class RewardsRepository(
         if updated_count == 0:
             return None
 
-        self.db.commit()
+        if auto_commit:
+            self.db.commit()
 
         # 상태 변경에 따른 재고 처리
         if (
@@ -426,13 +454,16 @@ class RewardsRepository(
             and old_status == RedemptionStatusEnum.RESERVED
         ):
             # 발급 완료 시 예약된 재고 소비
-            self.consume_reserved_item(sku, 1)
-        elif (
-            new_status in [RedemptionStatusEnum.CANCELLED, RedemptionStatusEnum.FAILED]
-            and old_status == RedemptionStatusEnum.RESERVED
-        ):
-            # 취소/실패 시 예약 해제
-            self.release_reservation(sku, 1)
+            self.consume_reserved_item(sku, 1, auto_commit=auto_commit)
+        elif new_status in [
+            RedemptionStatusEnum.CANCELLED,
+            RedemptionStatusEnum.FAILED,
+        ] and old_status in [
+            RedemptionStatusEnum.RESERVED,
+            RedemptionStatusEnum.AVAILABLE,
+        ]:
+            # 취소/실패 시 예약 해제 (RESERVED 또는 AVAILABLE 상태에서 모두 처리)
+            self.release_reservation(sku, 1, auto_commit=auto_commit)
 
         # 업데이트된 redemption 재조회
         updated_redemption = (
