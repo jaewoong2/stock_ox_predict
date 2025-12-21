@@ -687,6 +687,7 @@ class PriceService:
 
         # 3. 현재가 데이터 조회 및 변환
         universe_models = self.universe_repo.get_universe_models_for_date(trading_day)
+
         if not universe_models:
             raise NotFoundError(
                 message="UNIVERSE_DATA_NOT_AVAILABLE",

@@ -1,3 +1,4 @@
+import datetime
 from typing import Any
 from datetime import date
 
@@ -86,9 +87,10 @@ async def get_trading_day_price_summary(
         if symbols:
             symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
 
+        trading_day_ = datetime.datetime.fromisoformat(trading_day)
         # Get summary
         summaries = price_service.get_trading_day_price_summary(
-            trading_day=validated_date, symbols=symbol_list
+            trading_day=trading_day_, symbols=symbol_list
         )
 
         return BaseResponse(
