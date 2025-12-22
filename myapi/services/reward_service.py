@@ -120,15 +120,20 @@ class RewardService:
                     issued_at=None,
                 )
 
-            user_balance = self.points_repo.get_user_balance(user_id)
-            if user_balance < reward.cost_points:
-                raise InsufficientBalanceError(
-                    f"Insufficient points. Required: {reward.cost_points}, Available: {user_balance}"
-                )
-
             redemption_result: Optional[RewardRedemptionResponse] = None
 
             try:
+                # 잔액 확인은 트랜잭션 외부에서
+                user_balance = self.points_repo.get_user_balance(user_id)
+
+                if user_balance < reward.cost_points:
+                    raise InsufficientBalanceError(
+                        f"Insufficient points. Required: {reward.cost_points}, Available: {user_balance}"
+                    )
+
+                if self.db.in_transaction():
+                    self.db.rollback()
+                # 트랜잭션 시작
                 with self.db.begin():
                     ref_id = f"redemption_{user_id}_{request.sku}_{datetime.now().timestamp()}"
                     deduction_result = self.points_repo.deduct_points(
@@ -138,6 +143,8 @@ class RewardService:
                         ref_id=ref_id,
                         auto_commit=False,
                     )
+
+                    logger.info(f"Deduction result: {deduction_result}")
 
                     if not deduction_result.success:
                         raise RedemptionTransactionError(
@@ -158,8 +165,11 @@ class RewardService:
                         auto_commit=False,
                     )
 
+                    logger.info(f"Redemption result: {redemption_result}")
+
                     if not redemption_result.success:
                         raise RedemptionTransactionError(redemption_result)
+
             except RedemptionTransactionError as flow_err:
                 logger.warning(
                     f"Transactional redemption failed for user {user_id}: {flow_err.response.message}"

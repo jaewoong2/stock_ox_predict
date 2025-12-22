@@ -72,7 +72,9 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
             balance_after=snap.balance_after,
             reason=snap.reason,
             ref_id=snap.ref_id,
-            created_at=(snap.created_at.strftime("%Y-%m-%d %H:%M:%S") if snap.created_at else ""),
+            created_at=(
+                snap.created_at.strftime("%Y-%m-%d %H:%M:%S") if snap.created_at else ""
+            ),
         )
 
     def get_user_balance(self, user_id: int) -> int:
@@ -89,7 +91,7 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
             - balance_after 필드를 사용하여 최신 거래만 조회
             - SUM 연산 없이 단일 레코드 조회로 O(1) 성능
         """
-        self._ensure_clean_session()
+
         latest_entry = (
             self.db.query(self.model_class)
             .filter(self.model_class.user_id == user_id)
@@ -97,7 +99,10 @@ class PointsRepository(BaseRepository[PointsLedgerModel, PointsLedgerEntry]):
             .first()
         )
 
-        return getattr(latest_entry, "balance_after", 0) if latest_entry else 0
+        if latest_entry is None:
+            return 0
+
+        return latest_entry.balance_after
 
     def add_points(
         self,

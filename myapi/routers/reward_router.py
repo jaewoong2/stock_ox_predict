@@ -90,6 +90,7 @@ async def redeem_reward(
         user_id = current_user.id
 
         result = reward_service.redeem_reward(user_id, request)
+        logger.info(f"Redemption result: {result}")
         return result
     except InsufficientBalanceError as e:
         raise HTTPException(status_code=400, detail=str(e))

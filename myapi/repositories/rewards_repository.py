@@ -369,6 +369,7 @@ class RewardsRepository(
                 RedemptionStatusEnum.RESERVED,
                 auto_commit=auto_commit,
             )
+
             self.update_redemption_status(
                 redemption.id,
                 RedemptionStatusEnum.AVAILABLE,
