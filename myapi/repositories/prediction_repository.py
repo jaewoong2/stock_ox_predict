@@ -890,7 +890,7 @@ class UserDailyStatsRepository(
             self.db.commit()
         return self.get_or_create_user_daily_stats(user_id, trading_day, commit=commit)
 
-    def increase_max_predictions(
+    async def increase_max_predictions(
         self, user_id: int, trading_day: date, additional_slots: int = 1
     ) -> UserDailyStatsResponse:
         """최대 예측 수 증가 (광고 시청 등)"""

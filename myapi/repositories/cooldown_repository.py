@@ -43,6 +43,7 @@ class CooldownRepository(BaseRepository[CooldownTimer, CooldownTimerSchema]):
         Returns:
             Optional[CooldownTimerSchema]: 활성 타이머 (없으면 None)
         """
+        self._ensure_clean_session()
         model_instance = (
             self.db.query(self.model_class)
             .filter(
@@ -105,6 +106,8 @@ class CooldownRepository(BaseRepository[CooldownTimer, CooldownTimerSchema]):
             bool: 완료 처리 성공 여부
         """
         try:
+            # 이전 트랜잭션 잔여물 제거 (expire_on_commit=False 환경 보완)
+            self._ensure_clean_session()
             updated_count = (
                 self.db.query(self.model_class)
                 .filter(
@@ -114,11 +117,14 @@ class CooldownRepository(BaseRepository[CooldownTimer, CooldownTimerSchema]):
                     )
                 )
                 .update(
-                    {self.model_class.status: "COMPLETED"}, synchronize_session=False
+                    {self.model_class.status: "COMPLETED"},
+                    synchronize_session="fetch",
                 )
             )
             self.db.flush()
             self.db.commit()
+            # 동일 세션 내에서 즉시 반영되도록 캐시 무효화
+            self.db.expire_all()
             return updated_count > 0
         except Exception:
             self.db.rollback()
@@ -135,6 +141,8 @@ class CooldownRepository(BaseRepository[CooldownTimer, CooldownTimerSchema]):
             bool: 취소 처리 성공 여부
         """
         try:
+            # 이전 트랜잭션 잔여물 제거 (expire_on_commit=False 환경 보완)
+            self._ensure_clean_session()
             updated_count = (
                 self.db.query(self.model_class)
                 .filter(
@@ -144,11 +152,14 @@ class CooldownRepository(BaseRepository[CooldownTimer, CooldownTimerSchema]):
                     )
                 )
                 .update(
-                    {self.model_class.status: "CANCELLED"}, synchronize_session=False
+                    {self.model_class.status: "COMPLETED"},
+                    synchronize_session="fetch",
                 )
             )
             self.db.flush()
             self.db.commit()
+            # 동일 세션 내에서 즉시 반영되도록 캐시 무효화
+            self.db.expire_all()
             return updated_count > 0
         except Exception:
             self.db.rollback()

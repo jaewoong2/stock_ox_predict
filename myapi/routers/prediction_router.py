@@ -50,7 +50,11 @@ def submit_prediction(
         logger.warning(f"[PredictionError] submit: {msg}")
         return BaseResponse(
             success=False,
-            error=Error(code=ErrorCode.INVALID_CREDENTIALS, message=msg),
+            error=Error(
+                code=ErrorCode.INVALID_CREDENTIALS,
+                message=msg,
+                details=getattr(e, "details", None),
+            ),
         )
     except NotFoundError as e:
         msg = getattr(e, "message", str(e))
@@ -364,7 +368,7 @@ def get_prediction_trends(
 
 @router.post("/increase-slots/{trading_day}", response_model=BaseResponse)
 @inject
-def increase_prediction_slots(
+async def increase_prediction_slots(
     trading_day: str,
     additional_slots: int = 1,
     current_user: UserSchema = Depends(get_current_active_user),
@@ -373,7 +377,7 @@ def increase_prediction_slots(
     """사용자의 예측 슬롯을 증가시킵니다."""
     try:
         day = date.fromisoformat(trading_day)
-        service.increase_max_predictions(current_user.id, day, additional_slots)
+        await service.increase_max_predictions(current_user.id, day, additional_slots)
         return BaseResponse(
             success=True,
             data={"message": f"Increased prediction slots by {additional_slots}"},

@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from sqlalchemy.orm import Session
 from datetime import datetime, date
 
@@ -10,19 +10,24 @@ from myapi.core.exceptions import (
     NotFoundError,
     InsufficientBalanceError,
 )
+
+from myapi.config import settings
+from myapi.services.aws_service import AwsService
+
+if TYPE_CHECKING:
+    from myapi.services.prediction_service import PredictionService
+
 from myapi.schemas.rewards import (
     RewardItem,
     RewardCatalogResponse,
     RewardRedemptionRequest,
     RewardRedemptionResponse,
-    RewardRedemptionHistory,
     RewardRedemptionHistoryResponse,
     AdminRewardCreateRequest,
     AdminStockUpdateRequest,
     RewardsInventoryResponse,
     InventorySummary,
     RedemptionStats,
-    AdminRewardsStatsResponse,
     RewardsSummaryResponse,
     RewardActivationResponse,
     RewardCancellationResponse,
@@ -44,11 +49,18 @@ class RedemptionTransactionError(Exception):
 class RewardService:
     """리워드 관련 비즈니스 로직을 담당하는 서비스"""
 
-    def __init__(self, db: Session):
+    def __init__(
+        self,
+        db: Session,
+        prediction_service: Optional["PredictionService"] = None,
+        aws_service: Optional["AwsService"] = None,
+    ):
         self.db = db
         self.rewards_repo = RewardsRepository(db)
         self.points_repo = PointsRepository(db)
         self.stats_repo = UserDailyStatsRepository(db)
+        self.prediction_service = prediction_service
+        self.aws_service = aws_service
 
     def get_reward_catalog(self, available_only: bool = True) -> RewardCatalogResponse:
         """리워드 카탈로그 조회
@@ -484,18 +496,48 @@ class RewardService:
             if reward_type == "SLOT_REFRESH":
                 # 1. 슬롯 용량 체크
                 today = date.today()
-                current_stats = self.stats_repo.get_or_create_user_daily_stats(
-                    user_id, today
-                )
 
-                MAX_SLOT_CAPACITY = 3  # 정책 상수
-                if current_stats.available_predictions >= MAX_SLOT_CAPACITY:
+                if (
+                    self.prediction_service
+                    and self.prediction_service.is_max_slots_available(user_id, today)
+                ):
                     raise ValidationError(f"사용가능 한 슬롯이 모두 있어요")
 
                 # 2. 실제 슬롯 추가
-                updated_stats = self.stats_repo.increase_max_predictions(
+                updated_stats = await self.stats_repo.increase_max_predictions(
                     user_id=user_id, trading_day=today, additional_slots=1
                 )
+
+                # 2-1. 슬롯이 임계값 이상이면 활성 쿨다운 취소
+                if (
+                    self.prediction_service
+                    and self.prediction_service.is_max_slots_available(user_id, today)
+                ):
+                    from myapi.repositories.cooldown_repository import (
+                        CooldownRepository,
+                    )
+
+                    cooldown_repo = CooldownRepository(self.db)
+                    active_timer = cooldown_repo.get_active_timer(user_id, today)
+
+                    logger.info(
+                        f"Checking cooldown cancellation for user {user_id} after SLOT_REFRESH "
+                    )
+
+                    if active_timer:
+                        # DB에서 타이머 취소
+                        cooldown_repo.cancel_timer(active_timer.id)
+
+                        # AWS EventBridge 스케줄 삭제
+                        if active_timer.eventbridge_rule_arn and self.aws_service:
+                            self.aws_service.cancel_scheduled_event(
+                                active_timer.eventbridge_rule_arn
+                            )
+
+                        logger.info(
+                            f"Cancelled cooldown timer {active_timer.id} for user {user_id} "
+                            f"after SLOT_REFRESH (slots: {updated_stats.available_predictions})"
+                        )
 
                 # 3. 응답 구성
                 activation_result = {

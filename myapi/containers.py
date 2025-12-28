@@ -50,7 +50,12 @@ class ServiceModule(containers.DeclarativeContainer):
     settlement_service = providers.Factory(
         SettlementService, db=repositories.get_db, settings=config.config
     )
-    reward_service = providers.Factory(RewardService, db=repositories.get_db)
+    reward_service = providers.Factory(
+        RewardService,
+        db=repositories.get_db,
+        prediction_service=prediction_service,
+        aws_service=aws_service,
+    )
     point_service = providers.Factory(PointService, db=repositories.get_db)
     ad_unlock_service = providers.Factory(AdUnlockService, db=repositories.get_db)
     cooldown_service = providers.Factory(

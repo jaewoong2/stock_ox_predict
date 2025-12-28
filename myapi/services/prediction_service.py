@@ -97,6 +97,10 @@ class PredictionService:
             raise BusinessLogicError(
                 error_code="PREDICTION_CLOSED",
                 message="Predictions are not open for this trading day.",
+                details={
+                    "trading_day": trading_day.isoformat(),
+                    "code": "PREDICTION_CLOSED",
+                },
             )
         # 서버가 관리하는 거래일 사용
         trading_day = session.trading_day
@@ -254,7 +258,35 @@ class PredictionService:
             # 쿨다운 시작 실패해도 예측 제출은 성공으로 처리
             print(f"Failed to check cooldown for user {user_id}: {str(e)}")
 
-    # 비동기 버전 제거됨 (사용되지 않음, 동기 버전만 사용)
+    def is_max_slots_available(self, user_id: int, trading_day: date) -> bool:
+        """
+        사용자가 최대 슬롯을 모두 보유하고 있는지 확인
+        """
+        stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
+        max_slots = self.settings.COOLDOWN_TRIGGER_THRESHOLD
+
+        return stats.available_predictions >= max_slots
+
+    def should_cancel_cooldown(self, available_slots: int) -> bool:
+        """
+        쿨다운 타이머를 취소해야 하는지 여부 확인
+
+        쿨다운은 슬롯이 COOLDOWN_TRIGGER_THRESHOLD 미만일 때만 의미가 있습니다.
+        슬롯이 임계값 이상이면 쿨다운을 취소하여 불필요한 타이머 실행을 방지합니다.
+
+        Args:
+            available_slots: 현재 사용 가능한 슬롯 수
+
+        Returns:
+            bool: True면 쿨다운 취소 필요, False면 쿨다운 유지
+
+        Example:
+            >>> service.should_cancel_cooldown(2)
+            False  # 쿨다운 필요 (2 < 3)
+            >>> service.should_cancel_cooldown(3)
+            True   # 쿨다운 불필요 (3 >= 3)
+        """
+        return available_slots >= self.settings.COOLDOWN_TRIGGER_THRESHOLD
 
     def update_prediction(
         self, user_id: int, prediction_id: int, payload: PredictionUpdate
@@ -473,12 +505,14 @@ class PredictionService:
     def get_remaining_predictions(self, user_id: int, trading_day: date) -> int:
         return self.stats_repo.get_remaining_predictions(user_id, trading_day)
 
-    def increase_max_predictions(
+    async def increase_max_predictions(
         self, user_id: int, trading_day: date, additional_slots: int = 1
     ) -> None:
         if additional_slots <= 0:
             raise ValidationError("additional_slots must be positive")
-        self.stats_repo.increase_max_predictions(user_id, trading_day, additional_slots)
+        await self.stats_repo.increase_max_predictions(
+            user_id, trading_day, additional_slots
+        )
 
     # 트렌드 조회
     def get_prediction_trends(

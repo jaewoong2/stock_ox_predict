@@ -8,19 +8,6 @@ from myapi.config import settings
 from myapi.database.connection import engine
 from myapi.models.base import Base
 
-# Ensure all models are imported so Base.metadata is populated
-from myapi.models import (  # noqa: F401
-    user,
-    prediction,
-    session,
-    price,
-    rewards,
-    points,
-    settlement,
-    oauth,
-    internal,
-)
-
 
 def _normalize_type(t: object) -> str:
     s = str(t).lower().strip()

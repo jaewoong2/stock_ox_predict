@@ -1,7 +1,6 @@
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 from datetime import date
-from typing import Optional
 
 from myapi.database.session import get_db
 from myapi.config import settings
@@ -49,7 +48,13 @@ def get_settlement_service(db: Session = Depends(get_db)) -> SettlementService:
 
 
 def get_reward_service(db: Session = Depends(get_db)) -> RewardService:
-    return RewardService(db=db)
+    from myapi.services.aws_service import AwsService
+
+    prediction_service = PredictionService(db=db, settings=settings)
+    aws_service = AwsService(settings=settings)
+    return RewardService(
+        db=db, prediction_service=prediction_service, aws_service=aws_service
+    )
 
 
 def get_point_service(db: Session = Depends(get_db)) -> PointService:
@@ -80,6 +85,7 @@ def get_favorites_service(db: Session = Depends(get_db)) -> FavoritesService:
 # Trading Day Validation Dependencies
 # ============================================================================
 
+
 def _get_day_type(check_date: date) -> str:
     """주어진 날짜가 어떤 타입인지 반환 (holiday, weekend, 또는 trading)"""
     if check_date.weekday() >= 5:
@@ -89,10 +95,7 @@ def _get_day_type(check_date: date) -> str:
     return "trading"
 
 
-def validate_trading_day(
-    allow_past: bool = True,
-    allow_future: bool = False
-):
+def validate_trading_day(allow_past: bool = True, allow_future: bool = False):
     """
     Trading day 검증 dependency factory
 
@@ -106,6 +109,7 @@ def validate_trading_day(
     Raises:
         NonTradingDayError: 비거래일인 경우 422 에러
     """
+
     def _validate(request: Request) -> date:
         # Query parameter에서 trading_day 추출
         trading_day_str = request.query_params.get("trading_day", "")
@@ -118,7 +122,7 @@ def validate_trading_day(
                 raise NonTradingDayError(
                     requested_date=trading_day_str,
                     day_type="invalid_format",
-                    next_trading_day=str(USMarketHours.get_kst_trading_day())
+                    next_trading_day=str(USMarketHours.get_kst_trading_day()),
                 )
         else:
             check_date = USMarketHours.get_kst_trading_day()
@@ -130,7 +134,7 @@ def validate_trading_day(
             raise NonTradingDayError(
                 requested_date=str(check_date),
                 day_type=day_type,
-                next_trading_day=str(next_trading_day)
+                next_trading_day=str(next_trading_day),
             )
 
         # 과거/미래 날짜 검증
@@ -141,14 +145,14 @@ def validate_trading_day(
             raise NonTradingDayError(
                 requested_date=str(check_date),
                 day_type="past_not_allowed",
-                next_trading_day=str(next_trading_day)
+                next_trading_day=str(next_trading_day),
             )
 
         if not allow_future and check_date > today:
             raise NonTradingDayError(
                 requested_date=str(check_date),
                 day_type="future_not_allowed",
-                next_trading_day=str(today)
+                next_trading_day=str(today),
             )
 
         return check_date
