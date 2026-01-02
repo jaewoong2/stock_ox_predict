@@ -1,13 +1,12 @@
 import datetime as dt
-import json
 import pytz
-from typing import Literal, cast
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from dependency_injector.wiring import inject, Provide
 
 from myapi.containers import Container
 from myapi.services.aws_service import AwsService
+from myapi.services.job_api_service import JobApiService
 from myapi.schemas.batch import (
     BatchJobResult,
     BatchQueueResponse,
@@ -50,12 +49,12 @@ def _resolve_dispatch_mode(path: str, explicit: str | None, settings: Settings) 
             prefix = key[:-1]
             if path.startswith(prefix):
                 return val.upper()
-    return (settings.BATCH_DISPATCH_MODE or "SQS").upper()
+    return (settings.BATCH_DISPATCH_MODE or "LAMBDA_INVOKE").upper()
 
 
-def _dispatch_job(
+def _enqueue_job_via_common_api(
     *,
-    aws_service: AwsService,
+    job_api_service: JobApiService,
     settings: Settings,
     path: str,
     method: str,
@@ -64,55 +63,56 @@ def _dispatch_job(
     deduplication_id: str,
     dispatch_mode: str | None = None,
 ):
-    """Dispatch a job via SQS, direct Lambda invoke, or Lambda Function URL based on settings."""
-    # Prepare proxy event payload for Lambda-based handlers
-    message_body = aws_service.generate_queue_message_http(
+    """Send job to Common Job API (SQS mode) using resolved dispatch preferences."""
+    resolved_dispatch = _resolve_dispatch_mode(path, dispatch_mode, settings)
+    return job_api_service.create_job(
         path=path,
-        method=cast(Literal["GET", "POST", "PUT", "DELETE"], method.upper()),
-        body=json.dumps(body),
-        auth_token=settings.AUTH_TOKEN,
+        method=method,
+        body=body,
+        group_id=group_id,
+        deduplication_id=deduplication_id,
+        dispatch_mode=resolved_dispatch,
     )
-
-    # Priority: explicit per-job -> per-path policy -> global default
-    mode = _resolve_dispatch_mode(path, dispatch_mode, settings)
-    if mode == "SQS":
-        queue_url = settings.SQS_MAIN_QUEUE_URL
-        return aws_service.send_sqs_fifo_message(
-            queue_url=queue_url,
-            message_body=json.dumps(message_body.model_dump()),
-            message_group_id=group_id,
-            message_deduplication_id=deduplication_id,
-        )
-    elif mode == "LAMBDA_INVOKE":
-        fn_name = settings.LAMBDA_FUNCTION_NAME_DIRECT or settings.LAMBDA_FUNCTION_NAME
-        return aws_service.invoke_lambda(
-            function_name=fn_name,
-            payload=message_body.model_dump(),
-            asynchronous=True,
-        )
-    elif mode == "LAMBDA_URL":
-        if not settings.LAMBDA_FUNCTION_URL:
-            raise HTTPException(
-                status_code=500, detail="LAMBDA_FUNCTION_URL is not configured"
-            )
-        return aws_service.invoke_lambda_function_url(
-            function_url=settings.LAMBDA_FUNCTION_URL,
-            path=path,
-            method=cast(Literal["GET", "POST", "PUT", "DELETE"], method),
-            body=json.dumps(body),
-            internal_auth_bearer=settings.AUTH_TOKEN,
-            timeout_sec=settings.LAMBDA_URL_TIMEOUT_SEC,
-        )
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unsupported BATCH_DISPATCH_MODE: {settings.BATCH_DISPATCH_MODE}",
-        )
 
 
 # ====================================================================================
 # 예측 시스템 스케줄링 엔드포인트 - AWS EventBridge로 호출됨
 # ====================================================================================
+
+
+@router.get(
+    "/execute-test",
+    response_model=BatchQueueResponse,
+)
+@inject
+def execute_test(
+    job_api_service: JobApiService = Depends(
+        Provide[Container.services.job_api_service]
+    ),
+    settings: Settings = Depends(Provide[Container.config.config]),
+):
+
+    job = {
+        "path": "/health",
+        "method": "GET",
+        "body": {},
+        "group_id": "health-check",
+        "deduplication_id": "health-check",
+        "dispatch": "LAMBDA_URL",
+    }
+
+    response = _enqueue_job_via_common_api(
+        job_api_service=job_api_service,
+        settings=settings,
+        path=job["path"],
+        method=job["method"],
+        body=job["body"],
+        group_id=job["group_id"],
+        deduplication_id=job["deduplication_id"],
+        dispatch_mode=job.get("dispatch"),
+    )
+
+    return response
 
 
 @router.post(
@@ -122,7 +122,9 @@ def _dispatch_job(
 )
 @inject
 def enqueue_universe_refresh_prices(
-    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
+    job_api_service: JobApiService = Depends(
+        Provide[Container.services.job_api_service]
+    ),
     settings: Settings = Depends(Provide[Container.config.config]),
     db: Session = Depends(get_db),
 ):
@@ -146,8 +148,8 @@ def enqueue_universe_refresh_prices(
             "dispatch": "LAMBDA_INVOKE",
         }
 
-        response = _dispatch_job(
-            aws_service=aws_service,
+        response = _enqueue_job_via_common_api(
+            job_api_service=job_api_service,
             settings=settings,
             path=job["path"],
             method=job["method"],
@@ -181,7 +183,9 @@ def enqueue_universe_refresh_prices(
 )
 @inject
 def execute_all_jobs(
-    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
+    job_api_service: JobApiService = Depends(
+        Provide[Container.services.job_api_service]
+    ),
     settings: Settings = Depends(Provide[Container.config.config]),
 ):
     """
@@ -225,7 +229,7 @@ def execute_all_jobs(
             "description": f"Collect EOD data for {yesterday_trading_day.isoformat()}",
             "deduplication_id": f"eod-collection-{yesterday_trading_day.strftime('%Y%m%d')}",
             "sequence": 1,
-            "dispatch": "SQS",
+            "dispatch": "LAMBDA_INVOKE",
         }
     )
 
@@ -239,7 +243,7 @@ def execute_all_jobs(
             "description": f"Settlement for {yesterday_trading_day.isoformat()}",
             "deduplication_id": f"settlement-{yesterday_trading_day.strftime('%Y%m%d')}",
             "sequence": 2,
-            "dispatch": "SQS",
+            "dispatch": "LAMBDA_INVOKE",
         }
     )
 
@@ -257,7 +261,7 @@ def execute_all_jobs(
                 ),
                 "deduplication_id": f"session-start-{today_kst.strftime('%Y%m%d')}",
                 "sequence": 3,
-                "dispatch": "SQS",
+                "dispatch": "LAMBDA_INVOKE",
             }
         )
 
@@ -278,7 +282,7 @@ def execute_all_jobs(
                 ),
                 "deduplication_id": f"universe-setup-{today_kst.strftime('%Y%m%d')}",
                 "sequence": 4,
-                "dispatch": "SQS",
+                "dispatch": "LAMBDA_INVOKE",
             }
         )
 
@@ -296,7 +300,7 @@ def execute_all_jobs(
                 "description": "Close prediction session",
                 "deduplication_id": f"session-close-{today_kst.strftime('%Y%m%d')}",
                 "sequence": 1,
-                "dispatch": "SQS",
+                "dispatch": "LAMBDA_INVOKE",
             }
         )
 
@@ -317,8 +321,8 @@ def execute_all_jobs(
     responses = []
     for job in sorted_jobs:
         try:
-            response = _dispatch_job(
-                aws_service=aws_service,
+            response = _enqueue_job_via_common_api(
+                job_api_service=job_api_service,
                 settings=settings,
                 path=job["path"],
                 method=job["method"],
@@ -375,7 +379,9 @@ def execute_all_jobs(
 )
 @inject
 def execute_prediction_settlement(
-    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
+    job_api_service: JobApiService = Depends(
+        Provide[Container.services.job_api_service]
+    ),
     settings: Settings = Depends(Provide[Container.config.config]),
 ):
     """
@@ -395,7 +401,7 @@ def execute_prediction_settlement(
             "body": {},
             "group_id": "settlement",
             "description": f"Settlement for {yesterday}",
-            "dispatch": "SQS",
+            "dispatch": "LAMBDA_INVOKE",
         }
     ]
 
@@ -403,8 +409,8 @@ def execute_prediction_settlement(
     for job in jobs:
         try:
             deduplication_id = f"settlement-{yesterday}-{today_str}"
-            response = _dispatch_job(
-                aws_service=aws_service,
+            response = _enqueue_job_via_common_api(
+                job_api_service=job_api_service,
                 settings=settings,
                 path=job["path"],
                 method=job["method"],
@@ -436,7 +442,9 @@ def execute_prediction_settlement(
 )
 @inject
 def execute_session_start(
-    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
+    job_api_service: JobApiService = Depends(
+        Provide[Container.services.job_api_service]
+    ),
     settings: Settings = Depends(Provide[Container.config.config]),
 ):
     """
@@ -453,7 +461,7 @@ def execute_session_start(
             "body": {},
             "group_id": "session",
             "description": "Start new prediction session",
-            "dispatch": "SQS",
+            "dispatch": "LAMBDA_INVOKE",
         }
     ]
 
@@ -461,8 +469,8 @@ def execute_session_start(
     for job in jobs:
         try:
             deduplication_id = f"session-start-{today_str}"
-            response = _dispatch_job(
-                aws_service=aws_service,
+            response = _enqueue_job_via_common_api(
+                job_api_service=job_api_service,
                 settings=settings,
                 path=job["path"],
                 method=job["method"],
@@ -493,7 +501,9 @@ def execute_session_start(
 )
 @inject
 def execute_universe_setup(
-    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
+    job_api_service: JobApiService = Depends(
+        Provide[Container.services.job_api_service]
+    ),
     settings: Settings = Depends(Provide[Container.config.config]),
 ):
     """
@@ -515,7 +525,7 @@ def execute_universe_setup(
             "body": {"trading_day": today, "symbols": default_symbols},
             "group_id": "universe",
             "description": f"Setup universe for {today} with {len(default_symbols)} symbols",
-            "dispatch": "SQS",
+            "dispatch": "LAMBDA_INVOKE",
         }
     ]
 
@@ -523,8 +533,8 @@ def execute_universe_setup(
     for job in jobs:
         try:
             deduplication_id = f"universe-setup-{today_str}"
-            response = _dispatch_job(
-                aws_service=aws_service,
+            response = _enqueue_job_via_common_api(
+                job_api_service=job_api_service,
                 settings=settings,
                 path=job["path"],
                 method=job["method"],
@@ -555,7 +565,9 @@ def execute_universe_setup(
 )
 @inject
 def execute_session_close(
-    aws_service: AwsService = Depends(Provide[Container.services.aws_service]),
+    job_api_service: JobApiService = Depends(
+        Provide[Container.services.job_api_service]
+    ),
     settings: Settings = Depends(Provide[Container.config.config]),
 ):
     """
@@ -572,7 +584,7 @@ def execute_session_close(
             "body": {},
             "group_id": "session",
             "description": "Close prediction session",
-            "dispatch": "SQS",
+            "dispatch": "LAMBDA_INVOKE",
         }
     ]
 
@@ -580,8 +592,8 @@ def execute_session_close(
     for job in jobs:
         try:
             deduplication_id = f"session-close-{today_str}"
-            response = _dispatch_job(
-                aws_service=aws_service,
+            response = _enqueue_job_via_common_api(
+                job_api_service=job_api_service,
                 settings=settings,
                 path=job["path"],
                 method=job["method"],

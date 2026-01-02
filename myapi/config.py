@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     MAGIC_LINK_CLIENT_REDIRECT_URL_LOCAL: Optional[str] = None
     MAGIC_LINK_CLIENT_REDIRECT_URL_PROD: Optional[str] = None
     SES_FROM_EMAIL: str = ""
+    # Common Job API (Function URL)
+    JOB_API_BASE_URL: str = ""
+    JOB_API_AUTH_TOKEN: Optional[str] = None
+    JOB_API_APP_ID: Optional[str] = None
+    JOB_API_TIMEOUT_SEC: int = 10
+    JOB_API_USE_SIGV4: bool = False
 
     # External APIs
     ALPHA_VANTAGE_API_KEY: str = "demo"  # Default demo key

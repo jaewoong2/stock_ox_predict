@@ -12,6 +12,7 @@ from myapi.services.settlement_service import SettlementService
 from myapi.services.reward_service import RewardService
 from myapi.services.point_service import PointService
 from myapi.services.ad_unlock_service import AdUnlockService
+from myapi.services.job_api_service import JobApiService
 from myapi.config import Settings
 from myapi.services.cooldown_service import CooldownService
 
@@ -58,6 +59,9 @@ class ServiceModule(containers.DeclarativeContainer):
     )
     point_service = providers.Factory(PointService, db=repositories.get_db)
     ad_unlock_service = providers.Factory(AdUnlockService, db=repositories.get_db)
+    job_api_service = providers.Factory(
+        JobApiService, settings=config.config, aws_service=aws_service
+    )
     cooldown_service = providers.Factory(
         CooldownService, db=repositories.get_db, settings=config.config
     )
