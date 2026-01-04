@@ -15,6 +15,7 @@ from myapi.services.ad_unlock_service import AdUnlockService
 from myapi.services.job_api_service import JobApiService
 from myapi.config import Settings
 from myapi.services.cooldown_service import CooldownService
+from myapi.services.binance_service import BinanceService
 
 
 class ConfigModule(containers.DeclarativeContainer):
@@ -65,6 +66,9 @@ class ServiceModule(containers.DeclarativeContainer):
     cooldown_service = providers.Factory(
         CooldownService, db=repositories.get_db, settings=config.config
     )
+    binance_service = providers.Factory(
+        BinanceService, settings=config.config
+    )
 
 
 class Container(containers.DeclarativeContainer):
@@ -84,6 +88,7 @@ class Container(containers.DeclarativeContainer):
             "myapi.routers.reward_router",
             "myapi.routers.point_router",
             "myapi.routers.ad_unlock_router",
+            "myapi.routers.binance_router",
         ],
     )
 

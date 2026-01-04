@@ -21,6 +21,7 @@ from myapi.services.cooldown_service import CooldownService
 from myapi.services.auth_service import AuthService
 from myapi.services.magic_link_service import MagicLinkService
 from myapi.services.favorites_service import FavoritesService
+from myapi.services.binance_service import BinanceService
 
 
 def get_user_service(db: Session = Depends(get_db)) -> UserService:
@@ -79,6 +80,10 @@ def get_magic_link_service(db: Session = Depends(get_db)) -> MagicLinkService:
 
 def get_favorites_service(db: Session = Depends(get_db)) -> FavoritesService:
     return FavoritesService(db=db)
+
+
+def get_binance_service() -> BinanceService:
+    return BinanceService(settings=settings)
 
 
 # ============================================================================

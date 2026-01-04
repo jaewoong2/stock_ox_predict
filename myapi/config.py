@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     # External APIs
     ALPHA_VANTAGE_API_KEY: str = "demo"  # Default demo key
     EOD_FETCH_RETRY_COUNT: int = 3
+    BINANCE_API_BASE_URL: str = "https://api.binance.com"
+    BINANCE_API_KEY: Optional[str] = None
+    BINANCE_API_SECRET: Optional[str] = None
+    BINANCE_FUTURES_API_KEY: Optional[str] = None
+    BINANCE_FUTURES_API_SECRET: Optional[str] = None
+    BINANCE_TIMEOUT_SECONDS: float = 10.0
 
     # AWS
     AWS_REGION: str = "ap-northeast-2"
