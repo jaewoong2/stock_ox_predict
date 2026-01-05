@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
 from myapi.config import Settings
 from myapi.schemas.auth import ErrorCode
 from myapi.schemas.binance import BinanceKline, BinanceKlinesResponse
+from myapi.services.redis_service import RedisService
+from myapi.utils.cache_utils import generate_klines_cache_key, calculate_hour_aligned_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +32,12 @@ class BinanceService:
 
     _KLINES_PATH = "/api/v3/klines"
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, redis_service: Optional[RedisService] = None):
         self._settings = settings
         self._base_url = settings.BINANCE_API_BASE_URL.rstrip("/")
         self._timeout = httpx.Timeout(settings.BINANCE_TIMEOUT_SECONDS, connect=5.0)
         self._api_key = settings.BINANCE_API_KEY
+        self._redis = redis_service  # Optional for graceful degradation
 
     async def fetch_klines(
         self,
@@ -43,8 +46,35 @@ class BinanceService:
         limit: int,
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
-    ) -> Tuple[BinanceKlinesResponse, Dict[str, int]]:
-        """바이낸스 Klines 데이터를 조회하고 스키마로 변환합니다."""
+    ) -> Tuple[BinanceKlinesResponse, Dict[str, Any]]:
+        """바이낸스 Klines 데이터를 조회하고 스키마로 변환합니다. (with Redis caching)"""
+
+        # 1. Generate cache key
+        cache_key = generate_klines_cache_key(
+            symbol=symbol,
+            interval=interval,
+            limit=limit,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+        # 2. Try cache hit (if Redis available)
+        cached_data = None
+        if self._redis:
+            cached_data = await self._redis.get(cache_key)
+
+        if cached_data:
+            logger.info(f"Cache HIT: {cache_key}")
+            response = BinanceKlinesResponse(**cached_data)
+            meta = {
+                "cacheHit": True,
+                "binanceResponseTime": 0,
+            }
+            return response, meta
+
+        # 3. Cache miss - fetch from Binance API
+        logger.info(f"Cache MISS: {cache_key}")
+
         params = {
             "symbol": symbol.upper(),
             "interval": interval,
@@ -131,7 +161,23 @@ class BinanceService:
         response_data = BinanceKlinesResponse(
             klines=klines, symbol=symbol.upper(), interval=interval, count=len(klines)
         )
-        meta = {"binanceResponseTime": elapsed_ms}
+
+        # 4. Cache the successful response (if Redis available)
+        ttl = None
+        if self._redis:
+            ttl = calculate_hour_aligned_ttl()
+            cache_data = response_data.model_dump()
+            success = await self._redis.set(cache_key, cache_data, ttl)
+            if success:
+                logger.info(f"Cached {cache_key} with TTL {ttl}s")
+
+        # 5. Add cache metadata
+        meta = {
+            "cacheHit": False,
+            "binanceResponseTime": elapsed_ms,
+            "cacheTTL": ttl,
+        }
+
         return response_data, meta
 
     def _transform_kline(self, kline: list) -> BinanceKline:

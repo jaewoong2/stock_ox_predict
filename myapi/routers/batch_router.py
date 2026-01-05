@@ -112,7 +112,15 @@ def execute_test(
         dispatch_mode=job.get("dispatch"),
     )
 
-    return response
+    return BatchQueueResponse(
+        message="Health check job queued",
+        details=[
+            BatchJobResult(job="Health check", status="queued", response=response)
+        ],
+        current_time=dt.datetime.now(pytz.timezone("Asia/Seoul")).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+    )
 
 
 @router.post(

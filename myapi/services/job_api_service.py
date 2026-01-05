@@ -53,8 +53,8 @@ class JobApiService:
         else:
             scheduled_time = scheduled_time.astimezone(timezone.utc)
 
-        scheduled_at = (
-            scheduled_time.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        scheduled_at = scheduled_time.isoformat(timespec="milliseconds").replace(
+            "+00:00", "Z"
         )
         expression_base = (
             scheduled_time.isoformat(timespec="seconds")
@@ -124,6 +124,9 @@ class JobApiService:
 
         data = json.dumps(payload)
         headers = {"Content-Type": "application/json"}
+        if self.settings.JOB_API_AUTH_TOKEN:
+            headers["JWT_AUTH"] = f"Bearer {self.settings.JOB_API_AUTH_TOKEN}"
+
         aws_request = AWSRequest(method="POST", url=url, data=data, headers=headers)
         SigV4Auth(frozen, "lambda", self.settings.AWS_REGION).add_auth(aws_request)
 
@@ -142,8 +145,10 @@ class JobApiService:
             try:
                 return resp.json()
             except ValueError:
+                logger.error(f"Job API error: {resp.text}")
                 return None
-        except HTTPException:
+        except HTTPException as e:
+            logger.error(f"Job API error: {e}")
             raise
         except Exception as exc:
             logger.exception("Failed to enqueue job via Job API (SigV4)")
@@ -166,7 +171,9 @@ class JobApiService:
         timeout = self.settings.JOB_API_TIMEOUT_SEC or 10
 
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            response = requests.post(
+                url, json=payload, headers=headers, timeout=timeout
+            )
             if response.status_code >= 400:
                 raise HTTPException(
                     status_code=response.status_code,
@@ -247,9 +254,7 @@ class JobApiService:
         # Use proxy message so downstream Lambda can read event["body"] as before
         target_lambda_proxy_message = self.aws_service.generate_queue_message_http(
             path=target_path,
-            method=cast(
-                Literal["GET", "POST", "PUT", "DELETE"], target_method.upper()
-            ),
+            method=cast(Literal["GET", "POST", "PUT", "DELETE"], target_method.upper()),
             body=json.dumps(payload),
             auth_token=self.settings.AUTH_TOKEN,
         )

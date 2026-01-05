@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 from datetime import date
@@ -22,6 +23,18 @@ from myapi.services.auth_service import AuthService
 from myapi.services.magic_link_service import MagicLinkService
 from myapi.services.favorites_service import FavoritesService
 from myapi.services.binance_service import BinanceService
+from myapi.services.redis_service import RedisService
+
+
+_redis_service: Optional[RedisService] = None
+
+
+def get_redis_service() -> Optional[RedisService]:
+    """Get or create Redis service singleton"""
+    global _redis_service
+    if _redis_service is None and settings.REDIS_ENABLED:
+        _redis_service = RedisService(settings=settings)
+    return _redis_service
 
 
 def get_user_service(db: Session = Depends(get_db)) -> UserService:
@@ -82,8 +95,10 @@ def get_favorites_service(db: Session = Depends(get_db)) -> FavoritesService:
     return FavoritesService(db=db)
 
 
-def get_binance_service() -> BinanceService:
-    return BinanceService(settings=settings)
+def get_binance_service(
+    redis_service: Optional[RedisService] = Depends(get_redis_service),
+) -> BinanceService:
+    return BinanceService(settings=settings, redis_service=redis_service)
 
 
 # ============================================================================

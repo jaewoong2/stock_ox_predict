@@ -25,3 +25,4 @@ yfinance
 python-json-logger==2.0.7
 PyJWT==2.8.0
 cryptography
+redis[hiredis]==5.2.0

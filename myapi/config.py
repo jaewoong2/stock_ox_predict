@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     BINANCE_FUTURES_API_SECRET: Optional[str] = None
     BINANCE_TIMEOUT_SECONDS: float = 10.0
 
+    # Redis Configuration
+    REDIS_HOST: str = ""
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_PASSWORD: Optional[str] = None
+    REDIS_ENABLED: bool = True  # Feature flag for easy disable
+
     # AWS
     AWS_REGION: str = "ap-northeast-2"
     AWS_ACCESS_KEY_ID: Optional[str] = None

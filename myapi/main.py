@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from myapi.logging_config import setup_logging
+from myapi.deps import get_redis_service
 
 setup_logging()
 
@@ -89,6 +90,15 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+@app.on_event("shutdown")
+async def shutdown_redis():
+    """Close Redis connection pool on app shutdown"""
+    redis_service = get_redis_service()
+    if redis_service:
+        await redis_service.close()
+        logger.info("Redis connection pool closed")
 
 
 # Lambda handler for AWS Lambda deployment
