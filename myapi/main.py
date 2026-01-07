@@ -24,6 +24,7 @@ from myapi.routers import (
     session_router,
     universe_router,
     batch_router,
+    crypto_prediction_router,
 )
 from myapi.routers import price_router, settlement_router, binance_router
 from myapi.routers import cooldown_router
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router.router, prefix=settings.API_V1_STR)
     app.include_router(favorites_router.router, prefix=settings.API_V1_STR)
     app.include_router(binance_router.router, prefix=settings.API_V1_STR)
+    app.include_router(crypto_prediction_router.router, prefix=settings.API_V1_STR)
 
     # Exception handlers (last so they apply globally)
     app.add_exception_handler(BaseAPIException, handle_base_api_exception)

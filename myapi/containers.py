@@ -89,6 +89,7 @@ class Container(containers.DeclarativeContainer):
             "myapi.routers.point_router",
             "myapi.routers.ad_unlock_router",
             "myapi.routers.binance_router",
+            "myapi.routers.crypto_prediction_router",
         ],
     )
 

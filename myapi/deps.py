@@ -24,6 +24,7 @@ from myapi.services.magic_link_service import MagicLinkService
 from myapi.services.favorites_service import FavoritesService
 from myapi.services.binance_service import BinanceService
 from myapi.services.redis_service import RedisService
+from myapi.services.crypto_prediction_service import CryptoPredictionService
 
 
 _redis_service: Optional[RedisService] = None
@@ -99,6 +100,15 @@ def get_binance_service(
     redis_service: Optional[RedisService] = Depends(get_redis_service),
 ) -> BinanceService:
     return BinanceService(settings=settings, redis_service=redis_service)
+
+
+def get_crypto_prediction_service(
+    db: Session = Depends(get_db),
+    binance_service: BinanceService = Depends(get_binance_service),
+) -> CryptoPredictionService:
+    return CryptoPredictionService(
+        db=db, settings=settings, binance_service=binance_service
+    )
 
 
 # ============================================================================

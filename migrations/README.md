@@ -37,6 +37,10 @@ psql "<your-database-url>" -f migrations/001_create_user_favorites_table_rollbac
   - `user_id` → `crypto.users.id`
   - `symbol` → `crypto.tickers_reference.symbol`
 
+### 002_create_crypto_band_predictions.sql
+- **Created**: 2026-01-07
+- **Description**: Adds `crypto.crypto_band_predictions` to store BTC price band predictions with idempotency on user+target_open_time+row.
+
 ## Future: Alembic Setup
 
 This project is Alembic-ready (as mentioned in CLAUDE.md). To set up Alembic for automatic migrations:
