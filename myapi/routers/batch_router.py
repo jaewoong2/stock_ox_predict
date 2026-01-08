@@ -185,6 +185,63 @@ def enqueue_universe_refresh_prices(
 
 
 @router.post(
+    "/crypto-range-settlement",
+    dependencies=[Depends(require_admin)],
+    response_model=BatchQueueResponse,
+)
+@inject
+def enqueue_crypto_range_settlement(
+    job_api_service: JobApiService = Depends(
+        Provide[Container.services.job_api_service]
+    ),
+    settings: Settings = Depends(Provide[Container.config.config]),
+):
+    """
+    크립토 RANGE 예측 정산 작업을 큐잉합니다. (관리자 전용)
+    1시간 주기 스케줄러가 호출하도록 설계되었습니다.
+    """
+    try:
+        kst = pytz.timezone("Asia/Seoul")
+        now = dt.datetime.now(kst)
+
+        job = {
+            "path": "api/v1/crypto-predictions/settle",
+            "method": "POST",
+            "body": {},
+            "group_id": "crypto-range-settlement",
+            "description": "Settle crypto range predictions",
+            "deduplication_id": f"crypto-range-settle-{now.strftime('%Y%m%d%H')}",
+            "dispatch": "LAMBDA_INVOKE",
+        }
+
+        response = _enqueue_job_via_common_api(
+            job_api_service=job_api_service,
+            settings=settings,
+            path=job["path"],
+            method=job["method"],
+            body=job["body"],
+            group_id=job["group_id"],
+            deduplication_id=job["deduplication_id"],
+            dispatch_mode=job.get("dispatch"),
+        )
+
+        return BatchQueueResponse(
+            message=(
+                f"Crypto range settlement queued at {now.strftime('%H:%M')} KST."
+            ),
+            details=[
+                BatchJobResult(
+                    job=job["description"], status="queued", response=response
+                )
+            ],
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to queue crypto settlement: {str(e)}"
+        )
+
+
+@router.post(
     "/all-jobs",
     dependencies=[Depends(require_admin)],
     response_model=BatchQueueResponse,

@@ -1,3 +1,5 @@
+"""Range prediction repository - handles price range predictions."""
+
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
@@ -5,37 +7,30 @@ from typing import List, Optional
 from sqlalchemy import and_, desc
 from sqlalchemy.orm import Session
 
-from myapi.models.prediction import Prediction as PredictionModel
 from myapi.models.prediction import PredictionTypeEnum, StatusEnum
-from myapi.repositories.base import BaseRepository
-from myapi.schemas.crypto_prediction import (
-    CryptoPredictionListResponse,
-    CryptoPredictionSchema,
+from myapi.repositories.base_prediction_repository import BasePredictionRepository
+from myapi.schemas.range_prediction import (
+    RangePredictionListResponse,
+    RangePredictionResponse,
 )
 
 
-class CryptoPredictionRepository(
-    BaseRepository[PredictionModel, CryptoPredictionSchema]
-):
-    """크립토 예측 리포지토리 (predictions 테이블 사용)."""
+class RangePredictionRepository(BasePredictionRepository[RangePredictionResponse]):
+    """Repository for RANGE type predictions (price_low/price_high)."""
 
     def __init__(self, db: Session):
-        super().__init__(PredictionModel, CryptoPredictionSchema, db)
+        super().__init__(
+            schema_class=RangePredictionResponse,
+            db=db,
+            prediction_type=PredictionTypeEnum.RANGE,
+        )
 
     def prediction_exists(self, user_id: int, target_open_time_ms: int) -> bool:
-        """동일 유저/타겟 시간 중복 여부."""
-        self._ensure_clean_session()
-        return (
-            self.db.query(self.model_class)
-            .filter(
-                and_(
-                    self.model_class.user_id == user_id,
-                    self.model_class.target_open_time_ms == target_open_time_ms,
-                    self.model_class.prediction_type == PredictionTypeEnum.RANGE,
-                )
-            )
-            .first()
-            is not None
+        """Check if RANGE prediction exists for user and time window."""
+        return super().prediction_exists(
+            user_id,
+            trading_day=date.min,  # Not used for RANGE (uses target_open_time_ms)
+            target_open_time_ms=target_open_time_ms,
         )
 
     def create_prediction(
@@ -49,8 +44,8 @@ class CryptoPredictionRepository(
         target_open_time_ms: int,
         target_close_time_ms: int,
         submitted_at: datetime,
-    ) -> Optional[CryptoPredictionSchema]:
-        """신규 크립토 예측 생성."""
+    ) -> Optional[RangePredictionResponse]:
+        """Create new RANGE prediction."""
         return self.create(
             user_id=user_id,
             trading_day=trading_day,
@@ -65,6 +60,35 @@ class CryptoPredictionRepository(
             points_earned=0,
         )
 
+    def update_range_bounds(
+        self,
+        prediction_id: int,
+        price_low: Optional[Decimal] = None,
+        price_high: Optional[Decimal] = None,
+    ) -> Optional[RangePredictionResponse]:
+        """
+        Update RANGE prediction bounds.
+        
+        Only allowed for PENDING predictions that are not locked.
+        Similar to DirectionPredictionRepository.update_prediction_choice.
+        
+        Args:
+            prediction_id: Prediction ID
+            price_low: New lower bound (optional)
+            price_high: New upper bound (optional)
+            
+        Returns:
+            Updated prediction or None if not found
+        """
+        updates = {"updated_at": datetime.now(timezone.utc)}
+
+        if price_low is not None:
+            updates["price_low"] = price_low
+        if price_high is not None:
+            updates["price_high"] = price_high
+
+        return self.update(prediction_id, **updates)
+
     def list_user_predictions(
         self,
         user_id: int,
@@ -72,32 +96,28 @@ class CryptoPredictionRepository(
         *,
         limit: int,
         offset: int,
-    ) -> CryptoPredictionListResponse:
-        """사용자 예측 목록 조회 (최근순)."""
+    ) -> RangePredictionListResponse:
+        """List user's RANGE predictions (latest first)."""
         self._ensure_clean_session()
-        query = (
-            self.db.query(self.model_class)
-            .filter(
-                and_(
-                    self.model_class.user_id == user_id,
-                    self.model_class.prediction_type == PredictionTypeEnum.RANGE,
-                )
-            )
-            .order_by(desc(self.model_class.submitted_at))
-        )
+
+        filters = [self.model_class.user_id == user_id]
         if symbol:
-            query = query.filter(self.model_class.symbol == symbol)
+            filters.append(self.model_class.symbol == symbol)
+
+        query = self._filter_by_type(*filters).order_by(
+            desc(self.model_class.submitted_at)
+        )
 
         total_count = query.count()
         items = query.limit(limit + 1).offset(offset).all()
 
-        schemas: List[CryptoPredictionSchema] = [
+        schemas: List[RangePredictionResponse] = [
             schema for schema in (self._to_schema(item) for item in items) if schema
         ]
         has_next = len(schemas) > limit
         predictions = schemas[:limit]
 
-        return CryptoPredictionListResponse(
+        return RangePredictionListResponse(
             predictions=predictions,
             total_count=total_count,
             limit=limit,
@@ -107,17 +127,13 @@ class CryptoPredictionRepository(
 
     def get_pending_for_settlement(
         self, *, now_ms: int, limit: int = 200
-    ) -> List[CryptoPredictionSchema]:
-        """정산 대상 pending 예측 조회."""
+    ) -> List[RangePredictionResponse]:
+        """Get pending RANGE predictions ready for settlement."""
         self._ensure_clean_session()
         items = (
-            self.db.query(self.model_class)
-            .filter(
-                and_(
-                    self.model_class.prediction_type == PredictionTypeEnum.RANGE,
-                    self.model_class.status == StatusEnum.PENDING,
-                    self.model_class.target_open_time_ms <= now_ms,
-                )
+            self._filter_by_type(
+                self.model_class.status == StatusEnum.PENDING,
+                self.model_class.target_open_time_ms <= now_ms,
             )
             .order_by(self.model_class.target_open_time_ms)
             .limit(limit)
@@ -132,19 +148,11 @@ class CryptoPredictionRepository(
         *,
         settlement_price: Decimal,
         points_earned: int,
-    ) -> Optional[CryptoPredictionSchema]:
-        """정산 결과 업데이트."""
+    ) -> Optional[RangePredictionResponse]:
+        """Update RANGE prediction status (for settlement)."""
         self._ensure_clean_session()
-        instance = (
-            self.db.query(self.model_class)
-            .filter(
-                and_(
-                    self.model_class.id == prediction_id,
-                    self.model_class.prediction_type == PredictionTypeEnum.RANGE,
-                )
-            )
-            .first()
-        )
+        instance = self._filter_by_type(self.model_class.id == prediction_id).first()
+
         if not instance:
             return None
 
@@ -162,3 +170,4 @@ class CryptoPredictionRepository(
             raise
 
         return self._to_schema(instance)
+

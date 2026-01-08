@@ -11,6 +11,8 @@ from myapi.utils.market_hours import USMarketHours
 # Services
 from myapi.services.user_service import UserService
 from myapi.services.prediction_service import PredictionService
+from myapi.services.direction_prediction_service import DirectionPredictionService
+from myapi.services.range_prediction_service import RangePredictionService
 from myapi.services.session_service import SessionService
 from myapi.services.universe_service import UniverseService
 from myapi.services.price_service import PriceService
@@ -43,7 +45,13 @@ def get_user_service(db: Session = Depends(get_db)) -> UserService:
 
 
 def get_prediction_service(db: Session = Depends(get_db)) -> PredictionService:
-    return PredictionService(db=db, settings=settings)
+    """Legacy: Returns DirectionPredictionService for backward compatibility."""
+    return DirectionPredictionService(db=db, settings=settings)
+
+
+def get_direction_prediction_service(db: Session = Depends(get_db)) -> DirectionPredictionService:
+    """Get DIRECTION prediction service (UP/DOWN predictions)."""
+    return DirectionPredictionService(db=db, settings=settings)
 
 
 def get_session_service(db: Session = Depends(get_db)) -> SessionService:
@@ -102,12 +110,35 @@ def get_binance_service(
     return BinanceService(settings=settings, redis_service=redis_service)
 
 
+def get_range_prediction_service(
+    db: Session = Depends(get_db),
+    binance_service: BinanceService = Depends(get_binance_service),
+) -> RangePredictionService:
+    """Get RANGE prediction service (price range predictions)."""
+    allowed_symbols = set(settings.ALLOWED_RANGE_SYMBOLS_CRYPTO + settings.ALLOWED_RANGE_SYMBOLS_STOCK)
+    return RangePredictionService(
+        db=db,
+        settings=settings,
+        binance_service=binance_service,
+        allowed_symbols=allowed_symbols if allowed_symbols else None,
+    )
+
+
 def get_crypto_prediction_service(
     db: Session = Depends(get_db),
     binance_service: BinanceService = Depends(get_binance_service),
-) -> CryptoPredictionService:
-    return CryptoPredictionService(
-        db=db, settings=settings, binance_service=binance_service
+) -> RangePredictionService:
+    """
+    Deprecated: Use get_range_prediction_service instead.
+    
+    Returns RangePredictionService for backward compatibility.
+    """
+    allowed_symbols = set(settings.ALLOWED_RANGE_SYMBOLS_CRYPTO)
+    return RangePredictionService(
+        db=db,
+        settings=settings,
+        binance_service=binance_service,
+        allowed_symbols=allowed_symbols if allowed_symbols else None,
     )
 
 

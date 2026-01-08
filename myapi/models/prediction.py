@@ -16,9 +16,14 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.schema import PrimaryKeyConstraint, UniqueConstraint
+from sqlalchemy.schema import PrimaryKeyConstraint
 
 from myapi.models.base import BaseModel
+
+
+class PredictionTypeEnum(enum.Enum):
+    DIRECTION = "DIRECTION"
+    RANGE = "RANGE"
 
 
 class ChoiceEnum(enum.Enum):
@@ -36,10 +41,7 @@ class StatusEnum(enum.Enum):
 
 class Prediction(BaseModel):
     __tablename__ = "predictions"
-    __table_args__ = (
-        UniqueConstraint("trading_day", "user_id", "symbol"),
-        {"schema": "crypto"},
-    )
+    __table_args__ = {"schema": "crypto"}
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     trading_day: Mapped[date] = mapped_column(Date, nullable=False)
@@ -47,7 +49,14 @@ class Prediction(BaseModel):
         BigInteger, ForeignKey("crypto.users.id"), nullable=False
     )
     symbol: Mapped[str] = mapped_column(Text, nullable=False)
-    choice: Mapped[ChoiceEnum] = mapped_column(Enum(ChoiceEnum), nullable=False)
+    prediction_type: Mapped[PredictionTypeEnum] = mapped_column(
+        Enum(PredictionTypeEnum, native_enum=False),
+        default=PredictionTypeEnum.DIRECTION,
+        nullable=False,
+    )
+    choice: Mapped[Optional[ChoiceEnum]] = mapped_column(
+        Enum(ChoiceEnum), nullable=True
+    )
     status: Mapped[StatusEnum] = mapped_column(
         Enum(StatusEnum), default=StatusEnum.PENDING, nullable=False
     )
@@ -62,6 +71,19 @@ class Prediction(BaseModel):
         DateTime(timezone=True), nullable=True
     )
     prediction_price_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    # Crypto range prediction fields
+    price_low: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    price_high: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    target_open_time_ms: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True
+    )
+    target_close_time_ms: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True
+    )
+    settlement_price: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
 
 
 class UserDailyStats(BaseModel):

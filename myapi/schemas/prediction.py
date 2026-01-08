@@ -10,6 +10,11 @@ class PredictionChoice(str, Enum):
     DOWN = "DOWN"
 
 
+class PredictionType(str, Enum):
+    DIRECTION = "DIRECTION"
+    RANGE = "RANGE"
+
+
 class PredictionStatus(str, Enum):
     PENDING = "PENDING"
     CORRECT = "CORRECT"
@@ -19,6 +24,8 @@ class PredictionStatus(str, Enum):
 
 
 class PredictionCreate(BaseModel):
+    """Create DIRECTION prediction request (UP/DOWN)."""
+
     symbol: str = Field(
         ..., pattern=r"^[A-Z]{1,5}$", description="Stock symbol (e.g., AAPL)"
     )
@@ -31,7 +38,14 @@ class PredictionCreate(BaseModel):
 
 
 class PredictionUpdate(BaseModel):
+    """Update DIRECTION prediction choice."""
+
     choice: PredictionChoice = Field(..., description="Updated prediction choice")
+
+
+# Aliases for clarity
+DirectionPredictionCreate = PredictionCreate
+DirectionPredictionUpdate = PredictionUpdate
 
 
 class PredictHistoryMonth(BaseModel):
@@ -48,11 +62,13 @@ class PredictionResponse(BaseModel):
     user_id: int
     trading_day: date
     symbol: str
+    prediction_type: PredictionType = PredictionType.DIRECTION
     choice: PredictionChoice
     status: PredictionStatus
     submitted_at: datetime
     updated_at: Optional[datetime] = None
     points_earned: Optional[int] = None
+    settlement_price: Optional[Decimal] = None
     # New: price snapshot at prediction time
     prediction_price: Optional[Decimal] = None
     prediction_price_at: Optional[datetime] = None

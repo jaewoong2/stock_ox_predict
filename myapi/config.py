@@ -135,6 +135,11 @@ class Settings(BaseSettings):
     )
     SETTLEMENT_TIMEOUT_MINUTES: int = 30  # 정산 작업 타임아웃 (분)
 
+    # Range Prediction Settings (Asset-agnostic)
+    ALLOWED_RANGE_SYMBOLS_CRYPTO: List[str] = ["BTCUSDT"]  # Allowed crypto symbols for RANGE
+    ALLOWED_RANGE_SYMBOLS_STOCK: List[str] = []  # Allowed stock symbols for RANGE (future)
+    RANGE_PREDICTION_TIME_WINDOW_HOURS: int = 1  # Time window for RANGE predictions (hours)
+
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_REQUESTS_PER_MINUTE: int = 60

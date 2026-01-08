@@ -41,6 +41,10 @@ psql "<your-database-url>" -f migrations/001_create_user_favorites_table_rollbac
 - **Created**: 2026-01-07
 - **Description**: Adds `crypto.crypto_band_predictions` to store BTC price band predictions with idempotency on user+target_open_time+row.
 
+### 003_extend_predictions_for_crypto.sql
+- **Created**: 2026-01-08
+- **Description**: Extends `crypto.predictions` to support crypto range predictions (prediction_type, price range, hourly targets).
+
 ## Future: Alembic Setup
 
 This project is Alembic-ready (as mentioned in CLAUDE.md). To set up Alembic for automatic migrations:

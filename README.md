@@ -189,6 +189,7 @@
 ## 참고 문서
 - 서비스 플로우 & 정책: `docs/service_flow.md`
 - 프론트엔드 연동 가이드: `docs/frontend-api.md`
+- 크립토 RANGE 예측 변경 노트: `docs/frontend-api.md`
 - OAuth 셋업 가이드: `docs/oauth-setup-guide.md`
 - 티커 정책 및 관리: `docs/tickers.md`
 - 라우터/서비스 리뷰 노트: `docs/review-routers-services-repositories.md`

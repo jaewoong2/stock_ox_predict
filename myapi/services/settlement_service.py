@@ -190,6 +190,7 @@ class SettlementService:
                     trading_day,
                     symbol,
                     "Missing snapshot price at prediction time",
+                    settlement_price=price_data.settlement_price,
                 )
                 processed_count -= 1
                 continue
@@ -204,6 +205,7 @@ class SettlementService:
                     trading_day,
                     symbol,
                     "Invalid snapshot price format",
+                    settlement_price=price_data.settlement_price,
                 )
                 processed_count -= 1
                 continue
@@ -214,6 +216,7 @@ class SettlementService:
                     trading_day,
                     symbol,
                     "Invalid snapshot price (<= 0)",
+                    settlement_price=price_data.settlement_price,
                 )
                 processed_count -= 1
                 continue
@@ -238,19 +241,28 @@ class SettlementService:
                     prediction.user_id,
                     trading_day,
                     symbol,
-                    f"FLAT price movement with VOID policy",
+                    "FLAT price movement with VOID policy",
+                    settlement_price=price_data.settlement_price,
                 )
                 processed_count -= 1  # VOID는 처리 수에서 제외
             elif is_correct:
                 correct_count += 1
                 # 정답 예측 처리 (포인트 지급 등)
                 await self._award_correct_prediction(
-                    prediction.id, prediction.user_id, trading_day, symbol
+                    prediction.id,
+                    prediction.user_id,
+                    trading_day,
+                    symbol,
+                    settlement_price=price_data.settlement_price,
                 )
             else:
                 # 오답 예측 처리
                 await self._handle_incorrect_prediction(
-                    prediction.id, prediction.user_id, trading_day, symbol
+                    prediction.id,
+                    prediction.user_id,
+                    trading_day,
+                    symbol,
+                    settlement_price=price_data.settlement_price,
                 )
 
         return SymbolSettlementResult(
@@ -305,7 +317,12 @@ class SettlementService:
         return predicted == actual
 
     async def _award_correct_prediction(
-        self, prediction_id: int, user_id: int, trading_day: date, symbol: str
+        self,
+        prediction_id: int,
+        user_id: int,
+        trading_day: date,
+        symbol: str,
+        settlement_price: Optional[Decimal] = None,
     ) -> None:
         """정답 예측에 대한 보상 처리"""
         try:
@@ -314,6 +331,7 @@ class SettlementService:
                 prediction_id=prediction_id,
                 status=StatusEnum.CORRECT,
                 points_earned=self.CORRECT_PREDICTION_POINTS,
+                settlement_price=settlement_price,
                 commit=True,
             )
 
@@ -355,11 +373,20 @@ class SettlementService:
             # 포인트 지급 실패해도 예측 결과는 유지
 
     async def _handle_incorrect_prediction(
-        self, prediction_id: int, user_id: int, trading_day: date, symbol: str
+        self,
+        prediction_id: int,
+        user_id: int,
+        trading_day: date,
+        symbol: str,
+        settlement_price: Optional[Decimal] = None,
     ) -> None:
         """오답 예측 처리"""
         # 예측 상태를 INCORRECT로 변경
-        self.pred_repo.update_prediction_status(prediction_id, StatusEnum.INCORRECT)
+        self.pred_repo.update_prediction_status(
+            prediction_id,
+            StatusEnum.INCORRECT,
+            settlement_price=settlement_price,
+        )
 
         print(f"Marked prediction {prediction_id} as incorrect for user {user_id}")
 
@@ -370,11 +397,16 @@ class SettlementService:
         trading_day: date,
         symbol: str,
         void_reason: Optional[str],
+        settlement_price: Optional[Decimal] = None,
     ) -> None:
         """예측 무효 처리"""
         try:
             # 예측 상태를 VOID로 변경
-            self.pred_repo.update_prediction_status(prediction_id, StatusEnum.VOID)
+            self.pred_repo.update_prediction_status(
+                prediction_id,
+                StatusEnum.VOID,
+                settlement_price=settlement_price,
+            )
 
             # VOID 처리 시에는 예측 수수료를 환불해줌 (비즈니스 규칙)
             try:
@@ -515,11 +547,13 @@ class SettlementService:
     ) -> ManualSettlementResult:
         """특정 종목에 대해 수동으로 정산을 수행합니다."""
         try:
+            settlement_price: Optional[Decimal] = None
             if not override_price_validation:
                 # 가격 데이터 검증
                 async with self.price_service as price_svc:
                     try:
                         eod_price = await price_svc.get_eod_price(symbol, trading_day)
+                        settlement_price = eod_price.close_price
                         actual_movement = price_svc._calculate_price_movement(
                             eod_price.close_price, eod_price.previous_close
                         )
@@ -537,6 +571,7 @@ class SettlementService:
                 symbol,
                 ChoiceEnum(correct_choice.value),
                 points_per_correct=self.CORRECT_PREDICTION_POINTS,
+                settlement_price=settlement_price,
             )
 
             # 수동 정산에서도 포인트 지급 (자동 정산과 동일하게 처리)

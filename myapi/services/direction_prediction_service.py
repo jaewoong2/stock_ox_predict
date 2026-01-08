@@ -1,83 +1,63 @@
+"""Direction prediction service - handles UP/DOWN prediction business logic."""
+
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
 from calendar import monthrange
+from datetime import date, datetime, timezone
 from typing import List, Optional, Tuple, cast
 
 from sqlalchemy.orm import Session
-from myapi.models.prediction import (
-    Prediction as PredictionModel,
-)
-from myapi.services.cooldown_service import CooldownService
 
+from myapi.config import Settings
 from myapi.core.exceptions import (
+    BusinessLogicError,
     ConflictError,
     NotFoundError,
     ValidationError,
-    BusinessLogicError,
-    RateLimitError,
 )
-from myapi.config import Settings
 from myapi.models.prediction import (
-    Prediction as PredictionModel,
     ChoiceEnum,
-    StatusEnum,
+    Prediction as PredictionModel,
     PredictionTypeEnum,
-)
-from myapi.repositories.prediction_repository import (
-    PredictionRepository,
-    UserDailyStatsRepository,
+    StatusEnum,
 )
 from myapi.repositories.active_universe_repository import ActiveUniverseRepository
-from myapi.repositories.session_repository import SessionRepository
+from myapi.repositories.direction_prediction_repository import (
+    DirectionPredictionRepository,
+)
 from myapi.repositories.price_repository import PriceRepository
-from myapi.services.point_service import PointService
+from myapi.repositories.session_repository import SessionRepository
 from myapi.schemas.prediction import (
-    PredictHistoryMonth,
-    PredictionCreate,
-    PredictionResponse,
-    PredictionStatus,
-    PredictionUpdate,
-    UserPredictionsResponse,
-    PredictionStats,
-    PredictionSummary,
-    PredictionChoice,
-    PredictionTrendsResponse,
     MostLongPredictionItem,
     MostShortPredictionItem,
+    PredictHistoryMonth,
+    PredictionChoice,
+    PredictionCreate,
+    PredictionResponse,
+    PredictionStats,
+    PredictionStatus,
+    PredictionSummary,
+    PredictionTrendsResponse,
+    PredictionUpdate,
+    UserPredictionsResponse,
 )
-from myapi.services.error_log_service import ErrorLogService
-from myapi.utils.date_utils import to_date
 from myapi.schemas.universe import ActiveUniverseSnapshot
+from myapi.services.base_prediction_service import BasePredictionService
 from myapi.utils.date_utils import to_date
 
 
-class PredictionService:
-    """예측 관련 비즈니스 로직 서비스"""
+class DirectionPredictionService(BasePredictionService):
+    """Service for DIRECTION type predictions (UP/DOWN)."""
 
     def __init__(self, db: Session, settings: Settings):
-        self.db = db
-        self.pred_repo = PredictionRepository(db)
-        self.stats_repo = UserDailyStatsRepository(db)
+        super().__init__(db, settings)
+        self.pred_repo = DirectionPredictionRepository(db)
         self.universe_repo = ActiveUniverseRepository(db)
         self.session_repo = SessionRepository(db)
         self.price_repo = PriceRepository(db)
-        self.point_service = PointService(db)
-        self.error_log_service = ErrorLogService(db)
-        self.settings = settings
-
-        # 포인트 설정 (비즈니스 설정)
-        self.PREDICTION_FEE_POINTS = settings.PREDICTION_FEE_POINTS
-        self.PREDICTION_CANCEL_REFUND = True  # 취소 시 수수료 환불 여부
-        self.CANCEL_WINDOW_MINUTES = 5  # 취소 허용 시간(분)
 
     def _safe_transaction(self, operation):
-        """
-        안전한 트랜잭션 실행을 위한 헬퍼 메서드 (간단/안전 버전)
-
-        과거 in_transaction 체크로 인해 커밋이 누락될 수 있어,
-        항상 operation 실행 후 명시적으로 commit/rollback 처리합니다.
-        """
+        """Safe transaction execution helper."""
         try:
             result = operation()
             self.db.commit()
@@ -86,11 +66,11 @@ class PredictionService:
             self.db.rollback()
             raise
 
-    # 제출/수정/취소
     def submit_prediction(
         self, user_id: int, trading_day: date, payload: PredictionCreate
     ) -> PredictionResponse:
-        # 세션 상태 확인 (예측 가능 여부)
+        """Submit new DIRECTION prediction."""
+        # Check session state
         session = self.session_repo.get_session_by_date(trading_day)
         if not session:
             session = self.session_repo.get_current_session()
@@ -103,72 +83,43 @@ class PredictionService:
                     "code": "PREDICTION_CLOSED",
                 },
             )
-        # 서버가 관리하는 거래일 사용
-        trading_day = session.trading_day
 
+        # Use server-managed trading day
+        trading_day = session.trading_day
         symbol = payload.symbol.upper()
 
-        # 심볼 유효성: 오늘의 유니버스 포함 여부
+        # Validate symbol in universe
         if not self.universe_repo.symbol_exists_in_universe(trading_day, symbol):
             raise NotFoundError(
                 message=f"Symbol not available for predictions: {symbol}"
             )
 
-        # 중복 제출 방지
+        # Check for duplicate
         if self.pred_repo.prediction_exists(user_id, trading_day, symbol):
             raise ConflictError("Prediction already submitted for this symbol")
 
-        # 가용 슬롯 확인 (남은 슬롯 > 0)
-        if not self.stats_repo.can_make_prediction(user_id, trading_day):
-            remaining = self.stats_repo.get_remaining_predictions(user_id, trading_day)
-            raise RateLimitError(
-                message="Daily prediction limit reached",
-                details={"remaining": remaining},
-            )
+        # Check and consume slot
+        self._check_slots(user_id, trading_day)
+        self._consume_slot(user_id, trading_day)
 
-        # 간단/안전한 커밋 흐름으로 변경
-        # 1) 슬롯 차감 (원자적 UPDATE + 커밋) → 실패 시 RateLimitError
-        stats_before = self.stats_repo.get_or_create_user_daily_stats(
-            user_id, trading_day
-        )
-
-        if stats_before.available_predictions <= 0:
-            raise RateLimitError(
-                message="Daily prediction limit reached",
-                details={"remaining": 0},
-            )
-
-        stats_after = self.stats_repo.consume_available_prediction(
-            user_id, trading_day, amount=1
-        )
-
-        if stats_after.available_predictions != max(
-            0, stats_before.available_predictions - 1
-        ):
-            # 경합 등으로 소비 실패한 경우
-            remaining = self.stats_repo.get_remaining_predictions(user_id, trading_day)
-            raise RateLimitError(
-                message="Daily prediction limit reached",
-                details={"remaining": remaining},
-            )
-
-        # 2) 예측 생성 (커밋 포함). 실패 시 슬롯 환불(compensating) 후 에러 전파
+        # Create prediction
         choice = ChoiceEnum(payload.choice.value)
         now = datetime.now(timezone.utc)
         model: Optional[PredictionModel] = None
+
         try:
+            # Get price snapshot
             uni_item = self.universe_repo.get_universe_item_model(trading_day, symbol)
             snap_price = None
             snap_at = None
             price_source = None
+
             if uni_item:
                 snap = ActiveUniverseSnapshot.model_validate(uni_item)
                 if snap.current_price is not None:
                     snap_price = snap.current_price
                     snap_at = snap.last_price_updated or now
                     price_source = "universe"
-            else:
-                pass
 
             def _create():
                 instance = PredictionModel(
@@ -189,20 +140,10 @@ class PredictionService:
 
             model = self._safe_transaction(_create)
         except Exception as e:
-            # 슬롯 환불 시도
-            try:
-                self.stats_repo.refund_prediction(user_id, trading_day, amount=1)
-            except Exception as refund_err:
-                # 환불 실패도 로깅
-                self.error_log_service.log_prediction_error(
-                    user_id=user_id,
-                    trading_day=trading_day,
-                    symbol=symbol,
-                    error_message=f"Slot refund failed after prediction create error: {str(refund_err)}",
-                    prediction_details={"choice": payload.choice.value},
-                )
-
-            # 에러 로깅 후 전파
+            # Refund slot on error
+            self._refund_slot(
+                user_id, trading_day, symbol, reason=f"Prediction creation failed: {str(e)}"
+            )
             self.error_log_service.log_prediction_error(
                 user_id=user_id,
                 trading_day=trading_day,
@@ -212,88 +153,22 @@ class PredictionService:
             )
             raise
 
-        # 트랜잭션 성공 시 Pydantic 스키마로 변환
+        # Convert to schema
         created = self.pred_repo._to_schema(model)
 
-        # 자동 쿨다운 트리거
-        try:
-            # 동기적으로 쿨다운 체크 및 트리거
-            self._check_and_trigger_cooldown_sync(user_id, trading_day)
-        except Exception as e:
-            self.error_log_service.log_prediction_error(
-                user_id=user_id,
-                trading_day=trading_day,
-                symbol=symbol,
-                error_message=f"Cooldown trigger failed: {str(e)}",
-            )
+        # Trigger cooldown if needed
+        self._check_and_trigger_cooldown(user_id, trading_day)
 
         if not created:
             raise ValidationError("Failed to create prediction")
 
         return created
 
-    def _check_and_trigger_cooldown_sync(self, user_id: int, trading_day: date) -> None:
-        """
-        예측 제출 후 슬롯 수를 확인하여 필요시 자동 쿨다운 시작 (동기 버전)
-
-        Args:
-            user_id: 사용자 ID
-            trading_day: 거래일
-        """
-        try:
-            # 현재 사용 가능한 슬롯 수 확인 (가용=현재 available_predictions)
-            stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
-            available_slots = max(0, stats.available_predictions)
-
-            # 쿨다운 트리거 정책
-            # - 이미 활성 쿨다운이 있으면 아무 것도 하지 않음
-            # - 사용 가능한 슬롯이 임계값보다 적고 타이머가 없으면 자동 회복 시작
-            if available_slots < self.settings.COOLDOWN_TRIGGER_THRESHOLD:
-
-                cooldown_service = CooldownService(self.db, self.settings)
-                active = cooldown_service.cooldown_repo.get_active_timer(
-                    user_id, trading_day
-                )
-                if not active:
-                    cooldown_service.start_auto_cooldown_sync(user_id, trading_day)
-        except Exception as e:
-            # 쿨다운 시작 실패해도 예측 제출은 성공으로 처리
-            print(f"Failed to check cooldown for user {user_id}: {str(e)}")
-
-    def is_max_slots_available(self, user_id: int, trading_day: date) -> bool:
-        """
-        사용자가 최대 슬롯을 모두 보유하고 있는지 확인
-        """
-        stats = self.stats_repo.get_or_create_user_daily_stats(user_id, trading_day)
-        max_slots = self.settings.COOLDOWN_TRIGGER_THRESHOLD
-
-        return stats.available_predictions >= max_slots
-
-    def should_cancel_cooldown(self, available_slots: int) -> bool:
-        """
-        쿨다운 타이머를 취소해야 하는지 여부 확인
-
-        쿨다운은 슬롯이 COOLDOWN_TRIGGER_THRESHOLD 미만일 때만 의미가 있습니다.
-        슬롯이 임계값 이상이면 쿨다운을 취소하여 불필요한 타이머 실행을 방지합니다.
-
-        Args:
-            available_slots: 현재 사용 가능한 슬롯 수
-
-        Returns:
-            bool: True면 쿨다운 취소 필요, False면 쿨다운 유지
-
-        Example:
-            >>> service.should_cancel_cooldown(2)
-            False  # 쿨다운 필요 (2 < 3)
-            >>> service.should_cancel_cooldown(3)
-            True   # 쿨다운 불필요 (3 >= 3)
-        """
-        return available_slots >= self.settings.COOLDOWN_TRIGGER_THRESHOLD
-
     def update_prediction(
         self, user_id: int, prediction_id: int, payload: PredictionUpdate
     ) -> PredictionResponse:
-        # 본인 소유/상태 확인을 위해 모델 직접 조회
+        """Update DIRECTION prediction choice."""
+        # Get prediction for ownership verification
         model: Optional[PredictionModel] = (
             self.db.query(PredictionModel)
             .filter(
@@ -327,76 +202,23 @@ class PredictionService:
 
         new_choice = ChoiceEnum(payload.choice.value)
         updated = self.pred_repo.update_prediction_choice(prediction_id, new_choice)
+
         if not updated:
             raise ValidationError("Failed to update prediction")
+
         return updated
 
-        # 예측 취소 기능 제거됨 (정책 변경)_prediction
-
-        canceled = self._safe_transaction(_cancel_operation)
-
-        # 정책 변경: 예측 취소 시에도 쿨다운은 유지 (슬롯 회복 계속 진행)
-        # 쿨다운 취소 로직 제거됨
-
-        # 취소 시 수수료 환불 (비즈니스 규칙에 따라)
-        if self.PREDICTION_CANCEL_REFUND:
-            try:
-                from myapi.schemas.points import PointsTransactionRequest
-
-                refund_request = PointsTransactionRequest(
-                    amount=self.PREDICTION_FEE_POINTS,
-                    reason=f"Refund for canceled prediction {prediction_id}",
-                    ref_id=f"cancel_refund_{prediction_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
-                )
-
-                refund_result = self.point_service.add_points(
-                    user_id=user_id,
-                    request=refund_request,
-                    trading_day=to_date(model.trading_day) or date.today(),
-                )
-
-                if refund_result.success:
-                    print(
-                        f"✅ Refunded {self.PREDICTION_FEE_POINTS} points for canceled prediction {prediction_id}"
-                    )
-                else:
-                    # 취소 환불 실패 에러 로깅
-                    self.error_log_service.log_point_transaction_error(
-                        user_id=user_id,
-                        transaction_type="PREDICTION_CANCEL_REFUND",
-                        amount=self.PREDICTION_FEE_POINTS,
-                        error_message=refund_result.message,
-                        ref_id=f"cancel_refund_{prediction_id}",
-                        trading_day=to_date(model.trading_day) or date.today(),
-                    )
-                    print(
-                        f"❌ Failed to refund points for canceled prediction {prediction_id}: {refund_result.message}"
-                    )
-            except Exception as e:
-                # 취소 환불 시스템 에러 로깅
-                self.error_log_service.log_point_transaction_error(
-                    user_id=user_id,
-                    transaction_type="PREDICTION_CANCEL_REFUND",
-                    amount=self.PREDICTION_FEE_POINTS,
-                    error_message=str(e),
-                    ref_id=f"cancel_refund_{prediction_id}",
-                    trading_day=to_date(model.trading_day) or date.today(),
-                )
-                print(
-                    f"❌ Error refunding points for canceled prediction {prediction_id}: {str(e)}"
-                )
-
-        return canceled
-
-    # 조회/통계
+    # Query methods
     def get_user_predictions_for_day(
         self, user_id: int, trading_day: date
     ) -> UserPredictionsResponse:
+        """Get user's predictions for a trading day."""
         return self.pred_repo.get_user_predictions_for_day(user_id, trading_day)
 
     def get_predictions_by_symbol_and_date(
         self, symbol: str, trading_day: date, status_filter: Optional[StatusEnum] = None
     ) -> List[PredictionResponse]:
+        """Get predictions by symbol and date."""
         return self.pred_repo.get_predictions_by_symbol_and_date(
             symbol=symbol.upper(),
             trading_day=trading_day,
@@ -404,16 +226,19 @@ class PredictionService:
         )
 
     def get_prediction_stats(self, trading_day: date) -> PredictionStats:
+        """Get prediction statistics."""
         return self.pred_repo.get_prediction_stats(trading_day)
 
     def get_user_prediction_summary(
         self, user_id: int, trading_day: date
     ) -> PredictionSummary:
+        """Get user's prediction summary."""
         return self.pred_repo.get_user_prediction_summary(user_id, trading_day)
 
     def get_user_prediction_history(
         self, user_id: int, limit: int = 50, offset: int = 0
     ) -> List[PredictionResponse]:
+        """Get user's prediction history."""
         return self.pred_repo.get_user_prediction_history(
             user_id, limit=limit, offset=offset
         )
@@ -421,6 +246,7 @@ class PredictionService:
     def get_user_prediction_history_by_month(
         self, user_id: int, month: str
     ) -> PredictHistoryMonth:
+        """Get user's prediction history for a month."""
         normalized = month.replace("-", "")
         if not normalized.isdigit() or len(normalized) not in (6, 8):
             raise ValueError(
@@ -466,25 +292,25 @@ class PredictionService:
     def get_user_prediction_history_paginated(
         self, user_id: int, limit: int = 50, offset: int = 0
     ) -> Tuple[List[PredictionResponse], int, bool]:
-        """사용자 예측 이력 조회 (페이지네이션 정보 포함)"""
-        if limit > 100:  # 최대 제한
+        """Get user's prediction history with pagination."""
+        if limit > 100:
             limit = 100
 
         predictions = self.pred_repo.get_user_prediction_history(
             user_id, limit=limit + 1, offset=offset
-        )  # +1로 다음 페이지 존재 여부 확인
+        )
 
         has_next = len(predictions) > limit
         if has_next:
-            predictions = predictions[:limit]  # 실제 요청한 limit 만큼만 반환
+            predictions = predictions[:limit]
 
-        # 전체 카운트는 별도 쿼리로 조회
         total_count = self.pred_repo.count_user_predictions(user_id)
 
         return predictions, total_count, has_next
 
-    # 정산 관련
+    # Settlement methods
     def lock_predictions_for_settlement(self, trading_day: date) -> int:
+        """Lock predictions for settlement."""
         return self.pred_repo.lock_predictions_for_settlement(trading_day)
 
     def bulk_update_predictions_status(
@@ -494,6 +320,7 @@ class PredictionService:
         correct_choice: PredictionChoice,
         points_per_correct: int = 10,
     ) -> Tuple[int, int]:
+        """Bulk update prediction status for settlement."""
         return self.pred_repo.bulk_update_predictions_status(
             trading_day=trading_day,
             symbol=symbol.upper(),
@@ -504,51 +331,28 @@ class PredictionService:
     def get_pending_predictions_for_settlement(
         self, trading_day: date
     ) -> List[PredictionResponse]:
+        """Get pending predictions for settlement."""
         return self.pred_repo.get_pending_predictions_for_settlement(trading_day)
 
-    # 유저 일일 슬롯 관리
-    def get_remaining_predictions(self, user_id: int, trading_day: date) -> int:
-        return self.stats_repo.get_remaining_predictions(user_id, trading_day)
-
-    async def increase_max_predictions(
-        self, user_id: int, trading_day: date, additional_slots: int = 1
-    ) -> None:
-        if additional_slots <= 0:
-            raise ValidationError("additional_slots must be positive")
-        await self.stats_repo.increase_max_predictions(
-            user_id, trading_day, additional_slots
-        )
-
-    # 트렌드 조회
+    # Trends
     def get_prediction_trends(
         self, trading_day: date, limit: int = 5
     ) -> PredictionTrendsResponse:
-        """
-        예측 트렌드 조회 (롱/숏 예측이 많은 종목)
-
-        Args:
-            trading_day: 조회할 거래일
-            limit: 각 카테고리별 최대 종목 수 (1-10)
-
-        Returns:
-            PredictionTrendsResponse
-        """
-        # limit 범위 검증
+        """Get prediction trends (most long/short predicted symbols)."""
         limit = max(1, min(limit, 10))
 
-        # 롱 예측 많은 종목 조회
+        # Get most long predictions
         long_data = self.pred_repo.get_most_long_predictions(trading_day, limit)
 
-        # 숏 예측 많은 종목 조회
+        # Get most short predictions
         short_data = self.pred_repo.get_most_short_predictions(trading_day, limit)
 
-        # 가격 정보 조회를 위한 심볼 목록
+        # Get price info
         all_tickers = set(
             [ticker for ticker, _, _, _ in long_data]
             + [ticker for ticker, _, _, _ in short_data]
         )
 
-        # 가격 정보 조회 (최신 가격)
         price_map = {}
         for ticker in all_tickers:
             try:
@@ -559,10 +363,9 @@ class PredictionService:
                         "change_percent": price_data.change_percent,
                     }
             except Exception:
-                # 가격 조회 실패 시 None으로 처리
                 pass
 
-        # 회사명 정보 조회 (universe에서)
+        # Get company names
         company_name_map = {}
         for ticker in all_tickers:
             try:
@@ -572,10 +375,9 @@ class PredictionService:
                 if universe_item_model and hasattr(universe_item_model, "company_name"):
                     company_name_map[ticker] = universe_item_model.company_name
             except Exception:
-                # 회사명 조회 실패 시 None으로 처리
                 pass
 
-        # 롱 예측 아이템 생성
+        # Build response items
         most_long_items = []
         for ticker, count, win_rate, avg_profit in long_data:
             price_info = price_map.get(ticker, {})
@@ -595,7 +397,6 @@ class PredictionService:
                 )
             )
 
-        # 숏 예측 아이템 생성
         most_short_items = []
         for ticker, count, win_rate, avg_profit in short_data:
             price_info = price_map.get(ticker, {})
@@ -620,3 +421,19 @@ class PredictionService:
             most_short_predictions=most_short_items,
             updated_at=datetime.now(timezone.utc),
         )
+
+    # Slot management (exposed methods)
+    def get_remaining_predictions(self, user_id: int, trading_day: date) -> int:
+        """Get remaining prediction slots."""
+        return self.stats_repo.get_remaining_predictions(user_id, trading_day)
+
+    async def increase_max_predictions(
+        self, user_id: int, trading_day: date, additional_slots: int = 1
+    ) -> None:
+        """Increase max prediction slots."""
+        if additional_slots <= 0:
+            raise ValidationError("additional_slots must be positive")
+        await self.stats_repo.increase_max_predictions(
+            user_id, trading_day, additional_slots
+        )
+

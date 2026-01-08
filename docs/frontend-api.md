@@ -517,11 +517,13 @@ interface Prediction {
   id: number;
   user_id: number;
   symbol: string;
+  prediction_type?: "DIRECTION" | "RANGE"; // 현재는 DIRECTION만 사용
   choice: PredictionChoice;
   status: PredictionStatus;
   trading_day: string; // YYYY-MM-DD
   created_at: string; // ISO 8601
   points_awarded?: number;
+  settlement_price?: string; // Decimal string (정산 완료 시)
 }
 
 interface PredictionCreate {
@@ -532,6 +534,120 @@ interface PredictionCreate {
 interface PredictionUpdate {
   choice: PredictionChoice;
 }
+```
+
+### 크립토 가격 범위 예측 (RANGE)
+
+#### 변경 노트 (FE 대응 요약)
+- 엔드포인트 유지: `POST /crypto-predictions`, `GET /crypto-predictions`, `GET /crypto-predictions/history`
+- 요청 변경: `price_low`, `price_high`만 전송 (서버가 다음 정각 타겟 시간 계산)
+- 제거됨: `interval`, `target_open_time_ms`, `target_close_time_ms`, `row`
+- 정산 기준: `target_open_time_ms` 시각에 생성된 1h 캔들의 **시가(open)** 로 비교
+- prediction_type 확장 기반이라 향후 주식 RANGE 예측에도 동일 타입/필드 사용 예정
+
+#### 타입 정의
+
+```typescript
+type CryptoPredictionType = "RANGE";
+
+interface CryptoPrediction {
+  id: number;
+  user_id: number;
+  trading_day: string; // YYYY-MM-DD (KST 기준)
+  symbol: string; // 예: BTCUSDT
+  prediction_type: CryptoPredictionType; // "RANGE"
+  price_low: string; // Decimal string 권장
+  price_high: string; // Decimal string 권장
+  target_open_time_ms: number; // 타겟 캔들 시작 (UTC ms)
+  target_close_time_ms: number; // 타겟 캔들 종료 (UTC ms)
+  status: PredictionStatus; // PENDING | CORRECT | INCORRECT | CANCELLED | VOID
+  settlement_price?: string; // Decimal string
+  points_earned: number;
+  submitted_at: string; // ISO 8601
+  updated_at?: string; // ISO 8601
+}
+
+interface CryptoPredictionCreate {
+  symbol?: string; // 기본값: "BTCUSDT"
+  price_low: string; // Decimal string 권장
+  price_high: string; // Decimal string 권장
+}
+```
+
+#### 매핑 헬퍼 (UI 표기)
+
+```typescript
+const formatKstTime = (ms: number) =>
+  new Date(ms).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+
+const getCryptoPredictionWindow = (p: CryptoPrediction) => ({
+  startKst: formatKstTime(p.target_open_time_ms),
+  endKst: formatKstTime(p.target_close_time_ms),
+});
+
+const mapCryptoStatusLabel = (status: PredictionStatus) => {
+  switch (status) {
+    case "PENDING":
+      return "정산 대기";
+    case "CORRECT":
+      return "적중";
+    case "INCORRECT":
+      return "미적중";
+    case "VOID":
+      return "무효";
+    default:
+      return "알 수 없음";
+  }
+};
+```
+
+#### 생성 요청 예시
+
+```typescript
+// POST /crypto-predictions
+const createCryptoPrediction = async (
+  token: string,
+  payload: CryptoPredictionCreate
+): Promise<CryptoPrediction> => {
+  const response = await fetch(`${API_BASE_URL}/crypto-predictions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const result: BaseResponse<{ prediction: CryptoPrediction }> =
+    await response.json();
+  if (!result.success) throw new Error(result.error?.message);
+  return result.data!.prediction;
+};
+```
+
+#### 목록 조회 예시
+
+```typescript
+// GET /crypto-predictions?symbol=BTCUSDT&limit=50&offset=0
+const getCryptoPredictions = async (
+  token: string,
+  params: { symbol?: string; limit?: number; offset?: number }
+): Promise<CryptoPrediction[]> => {
+  const qs = new URLSearchParams();
+  if (params.symbol) qs.set("symbol", params.symbol);
+  if (params.limit) qs.set("limit", String(params.limit));
+  if (params.offset) qs.set("offset", String(params.offset));
+
+  const response = await fetch(
+    `${API_BASE_URL}/crypto-predictions?${qs.toString()}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  const result: BaseResponse<{ predictions: CryptoPrediction[] }> =
+    await response.json();
+  if (!result.success) throw new Error(result.error?.message);
+  return result.data!.predictions;
+};
 ```
 
 ### 예측 제출
