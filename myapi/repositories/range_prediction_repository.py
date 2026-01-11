@@ -33,6 +33,26 @@ class RangePredictionRepository(BasePredictionRepository[RangePredictionResponse
             target_open_time_ms=target_open_time_ms,
         )
 
+    def get_existing_prediction(
+        self, user_id: int, target_open_time_ms: int
+    ) -> Optional[RangePredictionResponse]:
+        """
+        Get existing RANGE prediction for user and time window.
+
+        Args:
+            user_id: User ID
+            target_open_time_ms: Target candle open time in milliseconds
+
+        Returns:
+            Existing prediction or None
+        """
+        self._ensure_clean_session()
+        instance = self._filter_by_type(
+            self.model_class.user_id == user_id,
+            self.model_class.target_open_time_ms == target_open_time_ms,
+        ).first()
+        return self._to_schema(instance)
+
     def create_prediction(
         self,
         *,
@@ -59,6 +79,53 @@ class RangePredictionRepository(BasePredictionRepository[RangePredictionResponse
             submitted_at=submitted_at,
             points_earned=0,
         )
+
+    def update_existing_prediction(
+        self,
+        prediction_id: int,
+        *,
+        price_low: Decimal,
+        price_high: Decimal,
+        submitted_at: datetime,
+    ) -> Optional[RangePredictionResponse]:
+        """
+        Update existing RANGE prediction (when duplicate detected).
+
+        Only updates if prediction is still PENDING and not locked.
+
+        Args:
+            prediction_id: Prediction ID
+            price_low: New lower bound
+            price_high: New upper bound
+            submitted_at: New submission time
+
+        Returns:
+            Updated prediction or None if not updatable
+        """
+        self._ensure_clean_session()
+        instance = self._filter_by_type(
+            self.model_class.id == prediction_id,
+            self.model_class.status == StatusEnum.PENDING,
+            self.model_class.locked_at.is_(None),
+        ).first()
+
+        if not instance:
+            return None
+
+        instance.price_low = price_low
+        instance.price_high = price_high
+        instance.submitted_at = submitted_at
+        instance.updated_at = datetime.now(timezone.utc)
+
+        try:
+            self.db.flush()
+            self.db.refresh(instance)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+        return self._to_schema(instance)
 
     def update_range_bounds(
         self,

@@ -14,7 +14,10 @@ async def main():
 
     # 1. Check settings
     print(f"\n1. Configuration Settings:")
-    print(f"   REDIS_HOST: {settings.REDIS_HOST}")
+    print(f"   ENVIRONMENT: {settings.ENVIRONMENT}")
+    print(f"   REDIS_HOST (active): {settings.redis_host}")
+    print(f"   REDIS_HOST_LOCAL: {settings.REDIS_HOST_LOCAL or '(not set)'}")
+    print(f"   REDIS_HOST_PROD: {settings.REDIS_HOST_PROD or '(not set)'}")
     print(f"   REDIS_PORT: {settings.REDIS_PORT}")
     print(f"   REDIS_DB: {settings.REDIS_DB}")
     print(f"   REDIS_PASSWORD: {'(not set)' if not settings.REDIS_PASSWORD else '***'}")

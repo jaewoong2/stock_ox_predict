@@ -48,7 +48,7 @@ class SettlementDataUnavailable(Exception):
 class RangePredictionService(BasePredictionService):
     """
     Service for RANGE type predictions (price_low/price_high).
-    
+
     Asset-agnostic design - symbol validation handled via config.
     """
 
@@ -63,7 +63,7 @@ class RangePredictionService(BasePredictionService):
     ):
         """
         Initialize RANGE prediction service.
-        
+
         Args:
             db: Database session
             settings: Application settings
@@ -89,7 +89,7 @@ class RangePredictionService(BasePredictionService):
     def _get_current_hour_window_ms(self) -> Tuple[int, int]:
         """
         Get next hour time window (KST) in UTC ms.
-        
+
         Returns:
             Tuple of (open_time_ms, close_time_ms)
         """
@@ -138,8 +138,14 @@ class RangePredictionService(BasePredictionService):
             active_cd = self.cooldown_repo.get_active_timer(user_id, trading_day)
             raise RangePredictionError(
                 status_code=403 if active_cd else 429,
-                error_code=ErrorCode.COOLDOWN_ACTIVE if active_cd else ErrorCode.NO_SLOTS,
-                message="쿨다운 진행 중입니다." if active_cd else "사용 가능한 슬롯이 없습니다.",
+                error_code=(
+                    ErrorCode.COOLDOWN_ACTIVE if active_cd else ErrorCode.NO_SLOTS
+                ),
+                message=(
+                    "쿨다운 진행 중입니다."
+                    if active_cd
+                    else "사용 가능한 슬롯이 없습니다."
+                ),
                 details={"remaining": stats.available_predictions},
             )
 
@@ -154,7 +160,8 @@ class RangePredictionService(BasePredictionService):
                 message="슬롯 차감 중 오류가 발생했습니다.",
             )
 
-        # Create prediction
+        # Create prediction with duplicate handling
+        submitted_at = datetime.now(timezone.utc)
         try:
             created = self.repo.create_prediction(
                 user_id=user_id,
@@ -164,15 +171,50 @@ class RangePredictionService(BasePredictionService):
                 price_high=payload.price_high,
                 target_open_time_ms=target_open_ms,
                 target_close_time_ms=target_close_ms,
-                submitted_at=datetime.now(timezone.utc),
+                submitted_at=submitted_at,
             )
             if not created:
                 raise RuntimeError("예측 생성에 실패했습니다.")
-        except RangePredictionError:
-            self._refund_slot(user_id, trading_day, symbol)
-            raise
         except Exception as exc:
+            # Check if it's a duplicate constraint violation
+            error_msg = str(exc)
+            if (
+                "uq_predictions_range" in error_msg
+                or "duplicate key" in error_msg.lower()
+            ):
+                # Refund the slot that was consumed
+                self._refund_slot(user_id, trading_day, symbol)
+
+                # Try to get and update existing prediction
+                existing = self.repo.get_existing_prediction(user_id, target_open_ms)
+
+                if (
+                    existing
+                    and existing.status == StatusEnum.PENDING
+                    and existing.locked_at is None
+                ):
+                    # Update existing prediction instead of creating new
+                    updated = self.repo.update_existing_prediction(
+                        existing.id,
+                        price_low=payload.price_low,
+                        price_high=payload.price_high,
+                        submitted_at=submitted_at,
+                    )
+                    if updated:
+                        return updated
+
+                # If we can't update, raise proper error
+                raise RangePredictionError(
+                    status_code=409,
+                    error_code=ErrorCode.DUPLICATE_PREDICTION,
+                    message="동일한 시간대 예측이 이미 존재하며 수정할 수 없습니다.",
+                )
+
+            # For other exceptions, refund and re-raise
             self._refund_slot(user_id, trading_day, symbol)
+            if isinstance(exc, RangePredictionError):
+                raise
+
             self.error_log_service.log_prediction_error(
                 user_id=user_id,
                 trading_day=trading_day,
@@ -195,17 +237,17 @@ class RangePredictionService(BasePredictionService):
     ) -> RangePredictionResponse:
         """
         Update RANGE prediction bounds.
-        
+
         Similar to DirectionPredictionService.update_prediction.
-        
+
         Args:
             user_id: User ID
             prediction_id: Prediction ID
             payload: Update payload
-            
+
         Returns:
             Updated prediction
-            
+
         Raises:
             NotFoundError: Prediction not found
             BusinessLogicError: Cannot modify (ownership/status/locked)
@@ -239,8 +281,12 @@ class RangePredictionService(BasePredictionService):
             )
 
         # Validate range
-        price_low = payload.price_low if payload.price_low is not None else model.price_low
-        price_high = payload.price_high if payload.price_high is not None else model.price_high
+        price_low = (
+            payload.price_low if payload.price_low is not None else model.price_low
+        )
+        price_high = (
+            payload.price_high if payload.price_high is not None else model.price_high
+        )
 
         if price_low >= price_high:
             raise ValidationError("price_low must be less than price_high")
@@ -269,6 +315,7 @@ class RangePredictionService(BasePredictionService):
         normalized_symbol = symbol.upper() if symbol else None
         if normalized_symbol:
             self._validate_symbol(normalized_symbol)
+
         return self.repo.list_user_predictions(
             user_id=user_id,
             symbol=normalized_symbol,
@@ -374,4 +421,3 @@ class RangePredictionService(BasePredictionService):
         if low <= settlement_price <= high:
             return StatusEnum.CORRECT
         return StatusEnum.INCORRECT
-

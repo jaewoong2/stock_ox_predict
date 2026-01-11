@@ -88,6 +88,8 @@ class Settings(BaseSettings):
 
     # Redis Configuration
     REDIS_HOST: str = ""
+    REDIS_HOST_LOCAL: Optional[str] = None
+    REDIS_HOST_PROD: Optional[str] = None
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: Optional[str] = None
@@ -221,6 +223,19 @@ class Settings(BaseSettings):
                 return url
 
         return self.MAGIC_LINK_CLIENT_REDIRECT_URL
+
+    @property
+    def redis_host(self) -> str:
+        """Return environment-appropriate Redis host."""
+        env = (self.ENVIRONMENT or "").lower()
+
+        if env in {"local", "development", "dev"}:
+            return self.REDIS_HOST_LOCAL or self.REDIS_HOST
+
+        if env in {"production", "prod", "staging"}:
+            return self.REDIS_HOST_PROD or self.REDIS_HOST
+
+        return self.REDIS_HOST
 
 
 settings = Settings()

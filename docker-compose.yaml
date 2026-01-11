@@ -1,5 +1,29 @@
 version: "3.8"
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: ox_redis_local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    command:
+      - "redis-server"
+      - "--requirepass"
+      - "BiizBiiz*"
+      - "--maxmemory"
+      - "384mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--appendonly"
+      - "no"
+      - "--save"
+      - ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "BiizBiiz*", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   ox-universe:
     platform: linux/amd64
     image: ox-universe-lambda:latest

@@ -26,7 +26,7 @@ class RedisService:
             try:
                 # Prepare connection kwargs
                 redis_kwargs = {
-                    "host": self._settings.REDIS_HOST,
+                    "host": self._settings.redis_host,  # Use environment-aware property
                     "port": self._settings.REDIS_PORT,
                     "db": self._settings.REDIS_DB,
                     "decode_responses": True,

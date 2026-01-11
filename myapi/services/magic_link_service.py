@@ -342,6 +342,7 @@ class MagicLinkService:
             self.settings.magic_link_client_redirect_url,
             "bamtoly://auth-callback",
             "exp://auth-callback",
+            "biizbiiz://auth-callback",
         ]
 
         hosts: Set[str] = set()

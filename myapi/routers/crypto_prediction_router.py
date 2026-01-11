@@ -55,6 +55,21 @@ async def create_crypto_prediction(
     Create crypto price range prediction.
     """
     try:
+        current_prediction = await service.list_user_predictions(
+            user_id=current_user.id, symbol=payload.symbol, limit=1, offset=0
+        )
+
+        if len(current_prediction.predictions) > 0:
+            prediction = await service.update_range_prediction(
+                user_id=current_user.id,
+                prediction_id=current_prediction.predictions[0].id,
+                payload=payload,
+            )
+
+            return BaseResponse(
+                success=True, data={"prediction": prediction.model_dump()}
+            )
+
         prediction: CryptoPredictionSchema = await service.create_prediction(
             current_user.id, payload
         )
